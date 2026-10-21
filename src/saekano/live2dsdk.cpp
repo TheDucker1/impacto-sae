@@ -6,8 +6,10 @@
 #include <Live2D.h>
 #include <Live2DModelWinGL.h>
 #include <motion/Live2DMotion.h>
+#include <motion/EyeBlinkMotion.h>
 #include <motion/MotionQueueManager.h>
 #include <util/UtSystem.h>
+#include <util/Json.h>
 #include <L2DExpressionMotion.h>
 #include <L2DPose.h>
 
@@ -85,6 +87,8 @@ struct Cubism2Model::Impl {
   std::vector<std::unique_ptr<live2d::framework::L2DExpressionMotion>>
       Expressions;
   std::unique_ptr<live2d::framework::L2DPose> Pose;
+  std::vector<std::array<float, 4>> EyeTargets;
+  live2d::EyeBlinkMotion Blink;
   // Queues are destroyed before motions; autoDelete is always false.
   std::array<live2d::MotionQueueManager, 4> Queues;
   live2d::MotionQueueManager ExpressionQueue;
@@ -141,6 +145,14 @@ float Cubism2Model::Parameter(std::string_view name) const {
   impl_->Context->CheckError();
   return result;
 }
+void Cubism2Model::AddParameter(std::string_view name, float value,
+                                float weight) {
+  impl_->Context->CheckThread();
+  Finite(value);
+  Finite(weight);
+  impl_->Model->addToParamFloat(ParameterName(name).c_str(), value, weight);
+  impl_->Context->CheckError();
+}
 void Cubism2Model::Update() {
   impl_->Context->CheckThread();
   impl_->Model->update();
@@ -158,13 +170,46 @@ void Cubism2Model::RestoreParameters() {
 }
 size_t Cubism2Model::LoadExpression(std::span<const uint8_t> json) {
   impl_->Context->CheckThread();
+  // Game-side eye transitions query expression targets separately. Reuse the
+  // SDK JSON reader; L2DExpressionMotion still owns expression evaluation.
+  std::unique_ptr<live2d::Json> metadata(live2d::Json::parseFromBytes(
+      reinterpret_cast<const char*>(json.data()), InputSize(json)));
+  if (!metadata || metadata->getError())
+    throw FormatError("invalid Cubism2 expression metadata");
+  std::array<float, 4> targets{1, 1, 1, 1};
+  constexpr std::array<const char*, 4> names{
+      "PARAM_EYE_L_OPEN", "PARAM_EYE_R_OPEN", "PARAM_EYE_BALL_X",
+      "PARAM_EYE_BALL_Y"};
+  auto& params = metadata->getRoot()["params"];
+  if (!params.isArray())
+    throw FormatError("expression params are not an array");
+  for (int p = 0; p < params.size(); ++p) {
+    auto& parameter = params[p];
+    for (size_t eye = 0; eye < names.size(); ++eye) {
+      if (!parameter["id"].equals(names[eye])) continue;
+      auto& calc = parameter["calc"];
+      if (!calc.isNull() && !calc.equals("add"))
+        throw FormatError("unverified expression eye target calculation");
+      auto& value = parameter["val"];
+      if (!value.isDouble()) throw FormatError("invalid expression eye target");
+      targets[eye] = static_cast<float>(value.toDouble());
+      Finite(targets[eye]);
+      break;
+    }
+  }
   std::unique_ptr<live2d::framework::L2DExpressionMotion> expression(
       live2d::framework::L2DExpressionMotion::loadJson(json.data(),
                                                        InputSize(json)));
   impl_->Context->CheckError();
   if (!expression) throw FormatError("Cubism2 failed to load expression");
   impl_->Expressions.push_back(std::move(expression));
+  impl_->EyeTargets.push_back(targets);
   return impl_->Expressions.size() - 1;
+}
+std::array<float, 4> Cubism2Model::ExpressionEyeTargets(
+    size_t expression) const {
+  impl_->Context->CheckThread();
+  return impl_->EyeTargets.at(expression);
 }
 int Cubism2Model::StartExpression(size_t expression) {
   impl_->Context->CheckThread();
@@ -215,6 +260,10 @@ int Cubism2Model::StartMotion(size_t motion, size_t channel) {
   impl_->Context->CheckError();
   return result;
 }
+void Cubism2Model::SetMotionLoop(size_t motion, bool loop) {
+  impl_->Context->CheckThread();
+  impl_->Motions.at(motion)->setLoop(loop);
+}
 bool Cubism2Model::MotionFinished(size_t channel, int handle) const {
   impl_->Context->CheckThread();
   return impl_->Queues.at(channel).isFinished(handle);
@@ -227,6 +276,19 @@ void Cubism2Model::ApplyMotionChannel(size_t channel) {
 void Cubism2Model::StopMotionChannel(size_t channel) {
   impl_->Context->CheckThread();
   impl_->Queues.at(channel).stopAllMotions();
+}
+void Cubism2Model::ConfigureBlink(int interval,
+                                  const std::array<int32_t, 3>& motion) {
+  impl_->Context->CheckThread();
+  if (interval < 0 || motion[0] < 0 || motion[1] < 0 || motion[2] < 0)
+    throw FormatError("invalid Cubism2 blink timing");
+  impl_->Blink.setInterval(interval);
+  impl_->Blink.setEyeMotion(motion[0], motion[1], motion[2]);
+}
+void Cubism2Model::ApplyBlink() {
+  impl_->Context->CheckThread();
+  impl_->Blink.setParam(impl_->Model.get());
+  impl_->Context->CheckError();
 }
 void Cubism2Model::BindTexture(size_t index, uint32_t openGlTexture) {
   impl_->Context->CheckThread();

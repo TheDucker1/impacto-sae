@@ -34,11 +34,13 @@ class Cubism2Model {
   float CanvasWidth() const;
   float CanvasHeight() const;
   void SetParameter(std::string_view name, float value, float weight = 1.0f);
+  void AddParameter(std::string_view name, float value, float weight = 1.0f);
   float Parameter(std::string_view name) const;
   void Update();
   void SaveParameters();
   void RestoreParameters();
   size_t LoadExpression(std::span<const uint8_t> json);
+  std::array<float, 4> ExpressionEyeTargets(size_t expression) const;
   int StartExpression(size_t expression);
   void ApplyExpression();
   void StopExpressions();
@@ -50,10 +52,13 @@ class Cubism2Model {
   // The four managers correspond to independent SDK motion queues, allowing the
   // game to apply base and overlay channels in its verified native order.
   size_t LoadMotion(std::span<const uint8_t> mtn, bool loop);
+  void SetMotionLoop(size_t motion, bool loop);
   int StartMotion(size_t motion, size_t channel);
   bool MotionFinished(size_t channel, int handle) const;
   void ApplyMotionChannel(size_t channel);
   void StopMotionChannel(size_t channel);
+  void ConfigureBlink(int interval, const std::array<int32_t, 3>& motion);
+  void ApplyBlink();
 
   // OpenGL textures use straight (not premultiplied) RGBA pixels.
   void BindTexture(size_t index, uint32_t openGlTexture);

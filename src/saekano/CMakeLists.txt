@@ -1,5 +1,5 @@
 find_package(ZLIB REQUIRED)
-add_library(saekano_core STATIC formats.cpp commands.cpp flow.cpp vm.cpp resources.cpp live2dstate.cpp)
+add_library(saekano_core STATIC formats.cpp commands.cpp flow.cpp vm.cpp resources.cpp live2dstate.cpp live2denv.cpp)
 target_link_libraries(saekano_core PUBLIC ZLIB::ZLIB)
 target_include_directories(saekano_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_features(saekano_core PUBLIC cxx_std_20)
@@ -32,8 +32,13 @@ if(SAEKANO_CUBISM2_SDK_ROOT)
     target_link_libraries(saekano_cubism2 PRIVATE
         "${SAEKANO_CUBISM2_SDK_ROOT}/lib/live2d_opengl.lib" opengl32)
     target_link_options(saekano_cubism2 INTERFACE /LTCG)
+    add_library(saekano_live2d_driver STATIC live2ddriver.cpp modelscene.cpp)
+    target_link_libraries(saekano_live2d_driver PUBLIC saekano_core saekano_cubism2)
+    target_compile_options(saekano_live2d_driver PRIVATE /W4 /permissive- /utf-8)
     add_executable(saekano_sdk_probe ../../tools/saekano/sdk_probe.cpp)
     target_link_libraries(saekano_sdk_probe PRIVATE saekano_cubism2)
+    add_executable(saekano_model_scene_probe ../../tools/saekano/model_scene_probe.cpp)
+    target_link_libraries(saekano_model_scene_probe PRIVATE saekano_live2d_driver)
 endif()
 
 add_executable(saekano_inspect inspect.cpp)
@@ -61,13 +66,16 @@ add_test(NAME saekano_host_allocation COMMAND saekano_io_tests)
 add_executable(saekano_live2d_tests ../../tests/saekano/live2d_test.cpp)
 target_link_libraries(saekano_live2d_tests PRIVATE saekano_core)
 add_test(NAME saekano_live2d_lifecycle COMMAND saekano_live2d_tests)
+add_executable(saekano_live2denv_tests ../../tests/saekano/live2denv_test.cpp)
+target_link_libraries(saekano_live2denv_tests PRIVATE saekano_core)
+add_test(NAME saekano_live2d_environment COMMAND saekano_live2denv_tests)
 
 # Optional shared-library deployment for standalone Windows development builds.
 # A packaged/static toolchain can leave this unset.
 set(SAEKANO_ZLIB_RUNTIME "" CACHE FILEPATH "Zlib DLL to deploy beside Saekano tools")
 if(WIN32 AND SAEKANO_ZLIB_RUNTIME)
     foreach(target saekano_inspect saekano_core_tests saekano_command_tests
-                   saekano_flow_tests saekano_vm_tests saekano_headless saekano_resource_tests saekano_io_tests saekano_live2d_tests)
+                   saekano_flow_tests saekano_vm_tests saekano_headless saekano_resource_tests saekano_io_tests saekano_live2d_tests saekano_live2denv_tests)
         add_custom_command(TARGET ${target} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${SAEKANO_ZLIB_RUNTIME}" "$<TARGET_FILE_DIR:${target}>")

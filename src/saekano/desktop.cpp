@@ -1,6 +1,7 @@
 #include "desktop.h"
 
 #include "live2dsdk.h"
+#include "modelscene.h"
 #include "resources.h"
 #include "../io/memorystream.h"
 #include "../texture/texture.h"
@@ -67,9 +68,49 @@ struct ViewerWindow {
   ~ViewerWindow() { Cleanup(); }
 };
 
+struct ModelTextures {
+  std::vector<uint32_t> Handles;
+  ModelTextures(Cubism2Model& model, const Live2dModelAssets& assets) {
+    try {
+      const auto& textures = assets.Get(Live2dSection::Textures);
+      for (size_t index = 0; index < textures.size(); ++index) {
+        Texture texture;
+        const auto& data = textures[index].Data;
+        Io::MemoryStream stream(const_cast<uint8_t*>(data.data()), data.size());
+        if (!texture.Load(&stream))
+          throw FormatError("cannot decode model GXT texture");
+        if (texture.Format != TexFmt_RGBA)
+          throw FormatError("unsupported model texture pixel format");
+        GLuint handle = 0;
+        glGenTextures(1, &handle);
+        Handles.push_back(handle);
+        glBindTexture(GL_TEXTURE_2D, handle);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, texture.Width, texture.Height,
+                     0, GL_RGBA, GL_UNSIGNED_BYTE, texture.Buffer.data());
+        model.BindTexture(index, handle);
+      }
+      GlCheck("model textures");
+    } catch (...) {
+      Release();
+      throw;
+    }
+  }
+  void Release() {
+    if (!Handles.empty())
+      glDeleteTextures(static_cast<GLsizei>(Handles.size()), Handles.data());
+    Handles.clear();
+  }
+  ~ModelTextures() { Release(); }
+};
+
 struct ViewerModel {
   std::unique_ptr<Cubism2Model> Model;
-  std::vector<uint32_t> Textures;
+  std::unique_ptr<ModelTextures> Textures;
   int IdleHandle = -1;
   size_t IdleMotion = 0;
   std::vector<size_t> Expressions;
@@ -82,27 +123,7 @@ struct ViewerModel {
     Model = sdk.LoadModel(mocs[0].Data, textureAssets.size());
     Name.assign(assets.Name.begin(), assets.Name.end());
     try {
-      for (size_t index = 0; index < textureAssets.size(); ++index) {
-        Texture texture;
-        const auto& data = textureAssets[index].Data;
-        Io::MemoryStream stream(const_cast<uint8_t*>(data.data()), data.size());
-        if (!texture.Load(&stream))
-          throw FormatError("cannot decode model GXT texture");
-        if (texture.Format != TexFmt_RGBA)
-          throw FormatError("unsupported model texture pixel format");
-        GLuint handle = 0;
-        glGenTextures(1, &handle);
-        Textures.push_back(handle);
-        glBindTexture(GL_TEXTURE_2D, handle);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, texture.Width, texture.Height,
-                     0, GL_RGBA, GL_UNSIGNED_BYTE, texture.Buffer.data());
-        Model->BindTexture(index, handle);
-      }
+      Textures = std::make_unique<ModelTextures>(*Model, assets);
       const auto& motions = assets.Get(Live2dSection::LoopMotions);
       if (motions.empty())
         throw FormatError("model has no authored loop motions");
@@ -133,9 +154,7 @@ struct ViewerModel {
   }
   void Release() {
     Model.reset();
-    if (!Textures.empty())
-      glDeleteTextures(static_cast<GLsizei>(Textures.size()), Textures.data());
-    Textures.clear();
+    Textures.reset();
   }
   ~ViewerModel() { Release(); }
   std::string Title() const {
@@ -258,6 +277,109 @@ int RunModelViewer(const std::filesystem::path& resourceDat,
     return 0;
   } catch (const std::exception& error) {
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Saekano viewer: %s",
+                 error.what());
+    return 1;
+  }
+}
+
+int RunModelScenes(const std::filesystem::path& resourceDat,
+                   const std::filesystem::path& environmentDat,
+                   const std::filesystem::path& captureDirectory) {
+  try {
+    const auto read = [](const std::filesystem::path& path) {
+      std::ifstream file(path, std::ios::binary);
+      if (!file) throw std::runtime_error("cannot open scene input");
+      return Bytes{std::istreambuf_iterator<char>(file), {}};
+    };
+    GameResources resources(read(resourceDat));
+    const auto environment = Live2dEnvironment::Decode(read(environmentDat));
+    const auto scenes = FindModelSetupScenes(resources);
+    if (scenes.empty()) throw FormatError("no authored model setup scenes");
+    const bool capture = !captureDirectory.empty();
+    ViewerWindow window(capture);
+    if (capture) std::filesystem::create_directories(captureDirectory);
+    struct Scene {
+      // Driver releases SDK objects before their textures and GL context.
+      std::vector<std::unique_ptr<ModelTextures>> Textures;
+      SdkLive2dDriver Driver;
+      SemanticState State;
+      uint64_t Frames = 0;
+      Scene(GameResources& resources, const Live2dEnvironment& environment,
+            const ModelSetupScene& setup)
+          : Driver(resources, environment) {
+        State = RunModelSetupScene(resources, Driver, setup);
+        for (const auto& record : State.Live2d.Records) {
+          const auto id = *record.ResourceId;
+          Textures.push_back(std::make_unique<ModelTextures>(
+              Driver.Model(id), Driver.Assets(id)));
+        }
+      }
+      void Tick(uint64_t elapsed) {
+        while (Frames * 1000 / 60 <= elapsed) {
+          Driver.Frame(State.Live2d, Frames * 1000 / 60);
+          ++Frames;
+        }
+      }
+    };
+    size_t selected = 0;
+    bool quit = false;
+    std::unique_ptr<Scene> scene;
+    uint64_t epoch = 0;
+    while (!quit) {
+      if (!scene) {
+        scene =
+            std::make_unique<Scene>(resources, environment, scenes[selected]);
+        const auto& name =
+            resources.ScriptName(size_t(scenes[selected].Script));
+        const auto title =
+            "Saekano model setup: " + std::string(name.begin(), name.end()) +
+            " | Left/Right: scene | Escape: close";
+        SDL_SetWindowTitle(window.Window, title.c_str());
+        epoch = SDL_GetTicks();
+      }
+      SDL_Event event;
+      while (SDL_PollEvent(&event)) {
+        if (event.type == SDL_EVENT_QUIT) quit = true;
+        if (event.type != SDL_EVENT_KEY_DOWN || event.key.repeat) continue;
+        if (event.key.key == SDLK_ESCAPE) quit = true;
+        if (event.key.key == SDLK_LEFT || event.key.key == SDLK_RIGHT) {
+          selected = (selected + scenes.size() +
+                      (event.key.key == SDLK_RIGHT ? 1 : -1)) %
+                     scenes.size();
+          scene.reset();
+        }
+      }
+      if (quit || !scene) continue;
+      int width = 0, height = 0;
+      SdlCheck(SDL_GetWindowSizeInPixels(window.Window, &width, &height),
+               "window pixel size");
+      if (width <= 0 || height <= 0) {
+        SDL_Delay(10);
+        continue;
+      }
+      scene->Tick(capture ? 500 : SDL_GetTicks() - epoch);
+      glViewport(0, 0, width, height);
+      glClearColor(32.0f / 255, 32.0f / 255, 32.0f / 255, 1);
+      glClear(GL_COLOR_BUFFER_BIT);
+      const auto scale = std::min(float(width) / 960, float(height) / 544);
+      const auto viewWidth = int(960 * scale), viewHeight = int(544 * scale);
+      glViewport((width - viewWidth) / 2, (height - viewHeight) / 2, viewWidth,
+                 viewHeight);
+      scene->Driver.Draw(scene->State.Live2d);
+      GlCheck("authored model scene draw");
+      if (capture) {
+        const auto script = scenes[selected].Script;
+        Capture(captureDirectory / (std::to_string(script) + ".bmp"), width,
+                height);
+        SDL_Log("Saekano VM drew model setup script %d", script);
+        scene.reset();
+        if (++selected == scenes.size()) quit = true;
+      }
+      SDL_GL_SwapWindow(window.Window);
+    }
+    return 0;
+  } catch (const std::exception& error) {
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Saekano model scenes: %s",
                  error.what());
     return 1;
   }

@@ -197,6 +197,14 @@ int main(int argc, char* argv[]) {
   LogInit();
 
 #ifdef IMPACTO_HAS_SAEKANO
+  if (argc >= 2 && std::string_view(argv[1]) == "--saekano-model-scenes") {
+    if (argc == 4) return Saekano::RunModelScenes(argv[2], argv[3]);
+    if (argc == 6 && std::string_view(argv[4]) == "--capture")
+      return Saekano::RunModelScenes(argv[2], argv[3], argv[5]);
+    ImpLog(LogLevel::Error, LogChannel::General,
+           "Usage: --saekano-model-scenes RESOURCE.DAT ENV_LIVE2D.DAT [--capture DIRECTORY]\n");
+    return 1;
+  }
   if (argc >= 2 && std::string_view(argv[1]) == "--saekano-model-viewer") {
     if (argc == 3) return Saekano::RunModelViewer(argv[2]);
     if (argc == 5 && std::string_view(argv[3]) == "--capture")

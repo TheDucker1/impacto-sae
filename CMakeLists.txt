@@ -1313,7 +1313,7 @@ if(IMPACTO_ENABLE_SAEKANO)
     if(NOT TARGET saekano_cubism2)
         message(FATAL_ERROR "Saekano PC build requires SAEKANO_CUBISM2_SDK_ROOT")
     endif()
-    target_link_libraries(impacto PRIVATE saekano_core saekano_cubism2)
+    target_link_libraries(impacto PRIVATE saekano_live2d_driver)
     target_sources(impacto PRIVATE src/saekano/desktop.cpp)
     target_compile_definitions(impacto PRIVATE IMPACTO_HAS_SAEKANO)
     add_custom_command(TARGET impacto POST_BUILD
