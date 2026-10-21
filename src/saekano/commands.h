@@ -80,6 +80,9 @@ struct ApproachEntry {
 ChoiceMenu DecodeChoice(std::span<const uint8_t> payload, bool battle);
 std::vector<ApproachEntry> DecodeApproach(std::span<const uint8_t> payload);
 int32_t EvaluateNumeric(const SemanticState& state, const std::u16string& value);
+// Comparison and homogeneous &&/|| chains cover all 51 expressions in the
+// supplied corpus. Unverified mixed precedence/parenthesis syntax is rejected.
+bool EvaluateCondition(const SemanticState& state, const std::u16string& value);
 
 enum class UpdateRoute { Normal, Skipping };
 struct CommandInput {

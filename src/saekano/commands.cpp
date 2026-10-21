@@ -110,6 +110,37 @@ int32_t EvaluateNumeric(const SemanticState& state, const std::u16string& value)
   return Decimal(value, 0);
 }
 
+bool EvaluateCondition(const SemanticState& state, const std::u16string& value) {
+  const bool conjunction = value.find(u"&&") != std::u16string::npos;
+  const bool disjunction = value.find(u"||") != std::u16string::npos;
+  if ((conjunction && disjunction) || value.find_first_of(u"()") != std::u16string::npos)
+    throw UnsupportedCommand("unverified divergence expression grammar");
+  const auto separator = conjunction ? u"&&" : u"||";
+  bool result = conjunction;
+  size_t start = 0;
+  while (true) {
+    const auto end = value.find(separator, start);
+    const auto term = value.substr(start, end == std::u16string::npos ? end : end - start);
+    bool termValue = false, found = false;
+    for (const auto* op : {u"==", u"!=", u"<=", u">=", u"<", u">"}) {
+      const auto position = term.find(op);
+      if (position == std::u16string::npos) continue;
+      const auto left = EvaluateNumeric(state, term.substr(0, position));
+      const auto right = EvaluateNumeric(state, term.substr(position + std::char_traits<char16_t>::length(op)));
+      const std::u16string operation(op);
+      termValue = operation == u"==" ? left == right : operation == u"!=" ? left != right
+          : operation == u"<=" ? left <= right : operation == u">=" ? left >= right
+          : operation == u"<" ? left < right : left > right;
+      found = true;
+      break;
+    }
+    if (!found) throw UnsupportedCommand("divergence term requires a comparison");
+    result = conjunction ? result && termValue : result || termValue;
+    if (end == std::u16string::npos) return result;
+    start = end + 2;
+  }
+}
+
 void CompleteCommand(SemanticState& state, uint16_t opcode,
                      std::span<const uint8_t> payload, const CommandInput& input) {
   PayloadReader reader(payload);
@@ -128,6 +159,13 @@ void CompleteCommand(SemanticState& state, uint16_t opcode,
           ? uint32_t(int32_t(destination)) + operand
           : uint32_t(int32_t(destination)) - operand;
       destination = std::bit_cast<int16_t>(uint16_t(result));
+      return;
+    }
+    case 0x0001: {
+      const auto expression = reader.String();
+      std::array<int32_t, 3> boundaries{reader.I32(), reader.I32(), reader.I32()};
+      if (!EvaluateCondition(state, expression)) boundaries[0] = -1;
+      state.DivergenceStack.push_back(boundaries);
       return;
     }
     case 0x0065: {
