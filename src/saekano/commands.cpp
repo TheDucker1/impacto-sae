@@ -30,6 +30,13 @@ std::u16string PayloadReader::String() {
   for (uint32_t i = 0; i < count; ++i) text.push_back(char16_t(U16()));
   return text;
 }
+Bytes PayloadReader::Blob() {
+  const auto size = U32();
+  if (size > Remaining()) throw FormatError("truncated binary blob");
+  Bytes bytes(bytes_.begin() + cursor_, bytes_.begin() + cursor_ + size);
+  cursor_ += size;
+  return bytes;
+}
 
 ChoiceMenu DecodeChoice(std::span<const uint8_t> payload, bool battle) {
   PayloadReader reader(payload);
@@ -50,6 +57,20 @@ ChoiceMenu DecodeChoice(std::span<const uint8_t> payload, bool battle) {
     menu.Entries.push_back(std::move(entry));
   }
   return menu;
+}
+
+MessageCommand DecodeMessage(std::span<const uint8_t> payload) {
+  PayloadReader reader(payload);
+  MessageCommand message;
+  message.Route = reader.U32();
+  message.Selector = reader.U32();
+  message.VoiceId = reader.I32();
+  message.SpeakerId = reader.I32();
+  message.Text = reader.String();
+  message.CompletionPolicy = reader.U32();
+  message.Lane = reader.U32();
+  if (message.Lane >= 5) throw FormatError("message lane exceeds engine lane count");
+  return message;
 }
 
 std::vector<ApproachEntry> DecodeApproach(std::span<const uint8_t> payload) {
@@ -182,6 +203,18 @@ void CompleteCommand(SemanticState& state, uint16_t opcode,
       state.ActiveText.clear();
       state.Messages[0].clear();
       return;
+    case 0x01fb: {
+      const auto character = reader.U16();
+      state.Characters[character].Priority = reader.U16();
+      return;
+    }
+    case 0x03ea: {
+      const auto enabled = reader.U32();
+      const std::array<int32_t, 2> components{reader.I32(), reader.I32()};
+      state.DayEnabled = enabled != 0;
+      state.TimeComponents = components;
+      return;
+    }
     case 0x0202: {
       // Intentional correction: the compiler serialized a numeric ID. Native
       // instead reads it as a string length and may overread the next record.

@@ -10,6 +10,18 @@ impacto is currently being developed for **64-bit Windows 10 and desktop Linux P
 
 ## Building
 
+### Saekano / PCSG00543 port
+
+The `saekano` branch contains an in-progress PS Vita command-engine backend.
+It is not playable yet. The implementation plan, measured native-reference
+coverage and next work are in [doc/saekano/STATUS.md](doc/saekano/STATUS.md) and
+[doc/saekano/PLAN.md](doc/saekano/PLAN.md).
+
+On the documented Windows Build Tools installation, build and test its standalone
+C++ core with `./tools/saekano/build.ps1`. This does not require the graphical
+application's dependencies. See [the VM bridge documentation](doc/saekano/VM_PROTOCOL.md)
+for headless execution and the preserved native-reference comparison contract.
+
 For building on Windows with Visual Studio 2019 or newer, please refer to the [building instructions](doc/windows_build.md).
 
 For building on Linux, see the [instructions for Ubuntu Desktop](doc/ubuntu_build.md) and adapt to your distribution if necessary.

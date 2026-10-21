@@ -11,6 +11,7 @@ namespace Impacto::Saekano {
 
 struct CharacterState {
   std::vector<uint32_t> PoseHistory;
+  uint16_t Priority = 0;
 };
 
 struct SemanticState {
@@ -39,6 +40,8 @@ struct SemanticState {
   std::array<std::vector<std::u16string>, 2> Messages;
   std::vector<std::u16string> Titles;
   std::map<uint16_t, CharacterState> Characters;
+  std::array<uint32_t, 2> WindowOpenness{};
+  std::array<uint32_t, 2> WindowTypes{};
 };
 
 class UnsupportedCommand : public std::runtime_error {
@@ -53,6 +56,7 @@ class PayloadReader {
   uint32_t U32();
   int32_t I32();
   std::u16string String();
+  Bytes Blob();
   size_t Remaining() const { return bytes_.size() - cursor_; }
   void CheckCount(uint32_t count, size_t minimumBytes) const;
 
@@ -90,7 +94,19 @@ struct CommandInput {
   std::optional<size_t> Choice;
   std::optional<size_t> Child;
   bool BattleTimeout = false;
+  bool Advance = false;
 };
+
+struct MessageCommand {
+  uint32_t Route;
+  uint32_t Selector;
+  int32_t VoiceId;
+  int32_t SpeakerId;
+  std::u16string Text;
+  uint32_t CompletionPolicy;
+  uint32_t Lane;
+};
+MessageCommand DecodeMessage(std::span<const uint8_t> payload);
 
 // Executes the supported command's semantic effects to its completion boundary.
 // Presentation gates are supplied as already satisfied by a headless backend.

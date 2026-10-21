@@ -56,6 +56,32 @@ void PruneDivergenceForJump(SemanticState& state, int32_t target) {
   });
 }
 
+void ProcessLanes(SemanticState& state, DispatchState& dispatcher,
+                  const std::function<bool(size_t, UpdateRoute)>& update) {
+  for (size_t lane = 0; lane < dispatcher.LaneQueues.size(); ++lane) {
+    auto& queue = dispatcher.LaneQueues[lane];
+    auto& cursor = state.LaneCommandIndex[lane];
+    if (dispatcher.FlushLanes && !queue.empty() && cursor == -1) cursor = 0;
+    if (cursor == -1) continue;
+    if (cursor < 0 || size_t(cursor) > queue.size())
+      throw FormatError("asynchronous cursor outside queued commands");
+    if (queue.empty()) { cursor = -1; continue; }
+    if (state.SkipPhase != 0 || dispatcher.FlushLanes) {
+      while (size_t(cursor) < queue.size()) {
+        update(queue[size_t(cursor)], UpdateRoute::Skipping);
+        ++cursor;
+      }
+    } else if (size_t(cursor) < queue.size()) {
+      if (update(queue[size_t(cursor)], UpdateRoute::Normal)) ++cursor;
+    }
+    if (size_t(cursor) >= queue.size()) {
+      cursor = -1;
+      queue.clear();
+    }
+  }
+  dispatcher.FlushLanes = false;
+}
+
 DispatchResult DispatchCompleted(SemanticState& state, DispatchState& dispatcher,
                                  size_t commandCount, CompletedCommand command) {
   if (commandCount > size_t(std::numeric_limits<int32_t>::max()))

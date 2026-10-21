@@ -1,0 +1,25 @@
+#pragma once
+
+#include "vm.h"
+
+namespace Impacto::Saekano {
+
+// A deterministic text backend, sharing the VM's lifecycle with a graphical
+// frontend. Presentation commands need a separate implemented backend; this
+// class does not claim to draw, decode media or complete unknown opcodes.
+class HeadlessBackend : public VmBackend {
+ public:
+  bool AutoReveal = true;
+  bool AutoAdvance = true;
+  void BeginMessage(size_t command, const MessageCommand&, size_t, uint64_t) override {
+    revealed_[command] = AutoReveal;
+  }
+  bool MessageRevealed(size_t command, uint64_t) override { return revealed_.at(command); }
+  bool MessageAdvanceAllowed(size_t, uint64_t) override { return AutoAdvance; }
+  void RevealMessage(size_t command) override { revealed_.at(command) = true; }
+
+ private:
+  std::map<size_t, bool> revealed_;
+};
+
+}  // namespace Impacto::Saekano
