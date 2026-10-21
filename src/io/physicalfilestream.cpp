@@ -90,7 +90,7 @@ int64_t PhysicalFileStream::Read(void* buffer, int64_t sz) {
   if (sz < 0 || !(Flags & READ)) return IoError_Fail;
   if (Position >= Meta.Size) return IoError_Eof;
 
-  size_t bytesToRead = std::min(sz, Meta.Size - Position);
+  size_t bytesToRead = MemorySize(std::min(sz, Meta.Size - Position));
   FileStream.read((char*)buffer, bytesToRead);
   auto read = FileStream.gcount();
 

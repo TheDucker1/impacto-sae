@@ -212,7 +212,7 @@ void Configure() {
 
     using CF = Io::PhysicalFileStream::CreateFlagsMode;
     auto userConfigFile = openTomlFile(CF::READ | CF::CREATE);
-    fileContents.resize(userConfigFile->Meta.Size, '\0');
+    fileContents.resize(Io::MemorySize(userConfigFile->Meta.Size), '\0');
     userConfigFile->Read(fileContents.data(), userConfigFile->Meta.Size);
   }
 
@@ -295,7 +295,7 @@ void WriteUserConfig() {
 
   ImpLog(LogLevel::Debug, LogChannel::Config, "Reparsing config file\n");
   auto userConfigFile = openTomlFile(CF::READ | CF::WRITE);
-  std::string fileContents(userConfigFile->Meta.Size, '\0');
+  std::string fileContents(Io::MemorySize(userConfigFile->Meta.Size), '\0');
   userConfigFile->Read(fileContents.data(), userConfigFile->Meta.Size);
 
   auto parseResult = toml::try_parse_str<toml::ordered_type_config>(

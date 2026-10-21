@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.28)
 # The Vita command engine can be developed and verified before installing the
 # graphical application's dependencies. Both frontends will link this core.
 option(IMPACTO_SAEKANO_CORE_ONLY "Build only the Saekano core and its tests" OFF)
+option(IMPACTO_ENABLE_SAEKANO "Include the Saekano VM and legacy Live2D backend" OFF)
 if(IMPACTO_SAEKANO_CORE_ONLY)
     # Keep debug records in object files: this also avoids requiring a matching
     # running mspdbsrv when using a standalone Build Tools installation.
@@ -1304,6 +1305,21 @@ elseif(APPLE)
     add_executable(impacto MACOSX_BUNDLE ${Impacto_Src} ${Impacto_Header})
 else()
     add_executable(impacto ${Impacto_Src} ${Impacto_Header})
+endif()
+
+if(IMPACTO_ENABLE_SAEKANO)
+    enable_testing()
+    add_subdirectory(src/saekano)
+    if(NOT TARGET saekano_cubism2)
+        message(FATAL_ERROR "Saekano PC build requires SAEKANO_CUBISM2_SDK_ROOT")
+    endif()
+    target_link_libraries(impacto PRIVATE saekano_core saekano_cubism2)
+    target_sources(impacto PRIVATE src/saekano/desktop.cpp)
+    target_compile_definitions(impacto PRIVATE IMPACTO_HAS_SAEKANO)
+    add_custom_command(TARGET impacto POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:impacto> $<TARGET_FILE_DIR:impacto>
+        COMMAND_EXPAND_LISTS VERBATIM)
 endif()
 
 if (APPLE)

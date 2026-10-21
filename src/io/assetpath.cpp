@@ -22,7 +22,7 @@ IoError AssetPath::Slurp(void*& outMemory, int64_t& outSize) {
     Stream* stream;
     IoError err = PhysicalFileStream::Create(FileName, &stream);
     if (err != IoError_OK) return err;
-    outMemory = malloc(stream->Meta.Size);
+    outMemory = malloc(MemorySize(stream->Meta.Size));
     outSize = stream->Meta.Size;
     int64_t readErr = stream->Read(outMemory, outSize);
     // TODO should size output by Read() go into outSize, even though it may be

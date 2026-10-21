@@ -82,9 +82,9 @@ static void ParseScriptDebugData(uint32_t scriptId) {
   std::vector<std::string> sourceLines;
 
   std::string content;
-  content.resize(stream->Meta.Size);
+  content.resize(Io::MemorySize(stream->Meta.Size));
   int64_t size = stream->Read(&content[0], stream->Meta.Size);
-  content.resize(size);
+  content.resize(Io::MemorySize(size));
 
   std::istringstream ss = std::istringstream(content, std::ios::in);
   int lineId = 0;

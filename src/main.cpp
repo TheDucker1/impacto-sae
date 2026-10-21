@@ -18,6 +18,10 @@
 #include "io/physicalfilestream.h"
 #include "io/filemeta.h"
 
+#ifdef IMPACTO_HAS_SAEKANO
+#include "saekano/desktop.h"
+#endif
+
 using namespace Impacto;
 
 static uint64_t t;
@@ -192,6 +196,17 @@ int main(int argc, char* argv[]) {
   std::string profilePath;
   LogInit();
 
+#ifdef IMPACTO_HAS_SAEKANO
+  if (argc >= 2 && std::string_view(argv[1]) == "--saekano-model-viewer") {
+    if (argc == 3) return Saekano::RunModelViewer(argv[2]);
+    if (argc == 5 && std::string_view(argv[3]) == "--capture")
+      return Saekano::RunModelViewer(argv[2], argv[4]);
+    ImpLog(LogLevel::Error, LogChannel::General,
+           "Usage: --saekano-model-viewer RESOURCE.DAT [--capture DIRECTORY]\n");
+    return 1;
+  }
+#endif
+
   std::vector<std::string_view> arguments;
   for (int i = 1; i < argc; ++i) {
     arguments.push_back(argv[i]);
@@ -202,7 +217,7 @@ int main(int argc, char* argv[]) {
     Io::Stream* stream;
     IoError err = Io::PhysicalFileStream::Create("args.txt", &stream);
     if (err == IoError_OK) {
-      std::string fileContents(stream->Meta.Size, '\0');
+      std::string fileContents(Io::MemorySize(stream->Meta.Size), '\0');
       stream->Read(fileContents.data(), stream->Meta.Size);
       arguments.clear();
       for (auto&& part : std::views::split(fileContents, ' ')) {

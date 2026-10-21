@@ -11,6 +11,7 @@ MemoryStream::~MemoryStream() {
 
 MemoryStream::MemoryStream(void* mem, int64_t size, bool freeOnClose)
     : Memory(mem), FreeOnClose(freeOnClose) {
+  MemorySize(size);
   Meta.Size = size;
   IsMemory = true;
 }
@@ -19,7 +20,7 @@ int64_t MemoryStream::Read(void* buffer, int64_t sz) {
   if (sz < 0) return IoError_Fail;
   if (Position == Meta.Size) return IoError_Eof;
   sz = std::min(Meta.Size - Position, sz);
-  memcpy(buffer, (uint8_t*)Memory + Position, sz);
+  memcpy(buffer, (uint8_t*)Memory + Position, MemorySize(sz));
   Position += sz;
   return sz;
 }
@@ -28,7 +29,7 @@ int64_t MemoryStream::Write(const void* buffer, int64_t sz, size_t cnt) {
   if (sz < 0) return IoError_Fail;
   if (Position == Meta.Size) return IoError_Eof;
   int64_t bytesToWrite = std::min(Meta.Size - Position, sz * (int64_t)cnt);
-  memcpy((uint8_t*)Memory + Position, buffer, bytesToWrite);
+  memcpy((uint8_t*)Memory + Position, buffer, MemorySize(bytesToWrite));
   Position += bytesToWrite;
   return bytesToWrite;
 }

@@ -30,7 +30,7 @@ static std::vector<float> EnsureGetAdvanceWidths(const std::string_view name,
     }
     assert(widthSz % bytesPerGlyph == 0);
 
-    const size_t widthCount = widthSz / bytesPerGlyph;
+    const size_t widthCount = Io::MemorySize(widthSz) / bytesPerGlyph;
     advanceWidths.reserve(widthCount);
     const auto readEntry = [&](size_t idx) -> uint64_t {
       uint64_t value = 0;

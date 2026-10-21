@@ -9,6 +9,27 @@ else()
     target_compile_options(saekano_core PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+set(SAEKANO_CUBISM2_SDK_ROOT "" CACHE PATH "Legacy Cubism2.1 Windows OpenGL SDK subset")
+if(SAEKANO_CUBISM2_SDK_ROOT)
+    if(NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
+        message(FATAL_ERROR "The downloaded Cubism2.1 SDK requires a Windows x86 target")
+    endif()
+    if(NOT EXISTS "${SAEKANO_CUBISM2_SDK_ROOT}/lib/live2d_opengl.lib")
+        message(FATAL_ERROR "Missing Cubism2.1 OpenGL library; run fetch_live2d_sdk.py")
+    endif()
+    add_library(saekano_cubism2 STATIC live2dsdk.cpp)
+    target_include_directories(saekano_cubism2 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    target_include_directories(saekano_cubism2 SYSTEM PRIVATE "${SAEKANO_CUBISM2_SDK_ROOT}/include")
+    target_compile_features(saekano_cubism2 PUBLIC cxx_std_20)
+    target_compile_definitions(saekano_cubism2 PRIVATE L2D_TARGET_WIN_GL)
+    target_compile_options(saekano_cubism2 PRIVATE /utf-8)
+    target_link_libraries(saekano_cubism2 PRIVATE
+        "${SAEKANO_CUBISM2_SDK_ROOT}/lib/live2d_opengl.lib" opengl32)
+    target_link_options(saekano_cubism2 INTERFACE /LTCG)
+    add_executable(saekano_sdk_probe ../../tools/saekano/sdk_probe.cpp)
+    target_link_libraries(saekano_sdk_probe PRIVATE saekano_cubism2)
+endif()
+
 add_executable(saekano_inspect inspect.cpp)
 target_link_libraries(saekano_inspect PRIVATE saekano_core)
 add_executable(saekano_core_tests ../../tests/saekano/formats_test.cpp)
@@ -28,13 +49,16 @@ target_link_libraries(saekano_headless PRIVATE saekano_core)
 add_executable(saekano_resource_tests ../../tests/saekano/resources_test.cpp)
 target_link_libraries(saekano_resource_tests PRIVATE saekano_core)
 add_test(NAME saekano_resources COMMAND saekano_resource_tests)
+add_executable(saekano_io_tests ../../tests/saekano/memorysize_test.cpp)
+target_link_libraries(saekano_io_tests PRIVATE saekano_core)
+add_test(NAME saekano_host_allocation COMMAND saekano_io_tests)
 
 # Optional shared-library deployment for standalone Windows development builds.
 # A packaged/static toolchain can leave this unset.
 set(SAEKANO_ZLIB_RUNTIME "" CACHE FILEPATH "Zlib DLL to deploy beside Saekano tools")
 if(WIN32 AND SAEKANO_ZLIB_RUNTIME)
     foreach(target saekano_inspect saekano_core_tests saekano_command_tests
-                   saekano_flow_tests saekano_vm_tests saekano_headless saekano_resource_tests)
+                   saekano_flow_tests saekano_vm_tests saekano_headless saekano_resource_tests saekano_io_tests)
         add_custom_command(TARGET ${target} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${SAEKANO_ZLIB_RUNTIME}" "$<TARGET_FILE_DIR:${target}>")

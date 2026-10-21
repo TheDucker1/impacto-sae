@@ -38,7 +38,7 @@ EdgeDetectedSingleVariableWidthSheetFont::
 
   constexpr size_t glyphDataSize = 8 * sizeof(int16_t);
   assert(stream->Meta.Size % glyphDataSize == 0);
-  const size_t glyphCount = stream->Meta.Size / glyphDataSize;
+  const size_t glyphCount = Io::MemorySize(stream->Meta.Size / glyphDataSize);
 
   Data.reserve(glyphCount);
   for (size_t idx = 0; idx < glyphCount; idx++) {

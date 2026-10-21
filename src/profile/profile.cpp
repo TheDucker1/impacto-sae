@@ -94,7 +94,8 @@ static int LuaInclude(lua_State* ctx) {
   char const prefix[] = "do\n";
   char const suffix[] = "\nend";
 
-  size_t script_len = strlen(prefix) + stream->Meta.Size + strlen(suffix) + 1;
+  size_t script_len =
+      Io::MemorySize(stream->Meta.Size, strlen(prefix) + strlen(suffix) + 1);
   auto script = std::make_unique<char[]>(script_len);
 
   script[script_len - 1] = '\0';

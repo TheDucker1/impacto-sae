@@ -168,9 +168,9 @@ static bool ReadUtfBlock(
           cell = std::vector<uint8_t>();
         } else {
           int64_t dataPos = ReadBE<uint32_t>(utfStream.get()) + dataOffset;
-          uint64_t dataSize = ReadBE<uint32_t>(utfStream.get());
+          int64_t dataSize = ReadBE<uint32_t>(utfStream.get());
           uint64_t retAddr = utfStream->Position;
-          std::vector<uint8_t> dataBuf(dataSize + sizeof(uint64_t));
+          std::vector<uint8_t> dataBuf(MemorySize(dataSize, sizeof(uint64_t)));
           utfStream->Seek(dataPos, IoSeek::Set);
           utfStream->Read(dataBuf.data(), dataSize);
           utfStream->Seek(retAddr, IoSeek::Set);
@@ -232,8 +232,8 @@ IoError CpkArchive::ReadItoc(int64_t itocOffset, int64_t contentOffset,
     return IoError_Fail;
   }
   BaseStream->Seek(4, IoSeek::Cur);
-  uint64_t utfSize = ReadLE<uint64_t>(BaseStream);
-  std::vector<uint8_t> utfBlock(utfSize);
+  int64_t utfSize = ReadLE<int64_t>(BaseStream);
+  std::vector<uint8_t> utfBlock(MemorySize(utfSize));
   BaseStream->Read(utfBlock.data(), utfSize);
   std::vector<ankerl::unordered_dense::map<std::string, CpkCell, string_hash,
                                            std::equal_to<>>>
@@ -329,8 +329,8 @@ IoError CpkArchive::ReadToc(int64_t tocOffset, int64_t contentOffset) {
     return IoError_Fail;
   }
   BaseStream->Seek(4, IoSeek::Cur);
-  uint64_t utfSize = ReadLE<uint64_t>(BaseStream);
-  std::vector<uint8_t> utfBlock(utfSize);
+  int64_t utfSize = ReadLE<int64_t>(BaseStream);
+  std::vector<uint8_t> utfBlock(MemorySize(utfSize));
   BaseStream->Read(utfBlock.data(), utfSize);
   std::vector<ankerl::unordered_dense::map<std::string, CpkCell, string_hash,
                                            std::equal_to<>>>
@@ -383,8 +383,8 @@ IoError CpkArchive::ReadEtoc(int64_t etocOffset) {
     return IoError_Fail;
   }
   BaseStream->Seek(4, IoSeek::Cur);
-  uint64_t utfSize = ReadLE<uint64_t>(BaseStream);
-  std::vector<uint8_t> utfBlock(utfSize);
+  int64_t utfSize = ReadLE<int64_t>(BaseStream);
+  std::vector<uint8_t> utfBlock(MemorySize(utfSize));
   BaseStream->Read(utfBlock.data(), utfSize);
   std::vector<ankerl::unordered_dense::map<std::string, CpkCell, string_hash,
                                            std::equal_to<>>>
@@ -428,8 +428,8 @@ IoError CpkArchive::Create(Stream* stream, VfsArchive** outArchive) {
 
   bool encrypted = ReadLE<uint32_t>(stream) == 0;
   {
-    uint64_t utfSize = ReadLE<uint64_t>(stream);
-    std::vector<uint8_t> utfBlock(utfSize);
+    int64_t utfSize = ReadLE<int64_t>(stream);
+    std::vector<uint8_t> utfBlock(MemorySize(utfSize));
     if (encrypted) {
       uint8_t key = 0x5F;
       for (auto& elem : utfBlock) {
@@ -608,7 +608,7 @@ IoError CpkArchive::Slurp(FileMeta* file, void*& outBuffer, int64_t& outSize) {
            entry->FileName, BaseStream->Meta.FileName);
     return IoError_Fail;
   }
-  char* compressedData = (char*)malloc(entry->CompressedSize);
+  char* compressedData = (char*)malloc(MemorySize(entry->CompressedSize));
   int64_t read = BaseStream->Read(compressedData, entry->CompressedSize);
   if (read != entry->CompressedSize) {
     ImpLog(LogLevel::Error, LogChannel::IO,
@@ -621,7 +621,7 @@ IoError CpkArchive::Slurp(FileMeta* file, void*& outBuffer, int64_t& outSize) {
   }
 
   outSize = entry->Size;
-  outBuffer = malloc(outSize);
+  outBuffer = malloc(MemorySize(outSize));
 
   IoError err = DecompressLayla(compressedData, entry->CompressedSize,
                                 (char*)outBuffer, outSize);

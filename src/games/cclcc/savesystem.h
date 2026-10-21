@@ -28,7 +28,7 @@ struct SaveLayout {
   size_t SysScrWorkDst1;
   size_t SysScrWorkLen1;
 
-  int64_t FlagWork2Src;
+  ptrdiff_t FlagWork2Src;
   int64_t MainThreadOffset;
   int64_t MainThreadBufIdOffset;
   int64_t WaveOffset;

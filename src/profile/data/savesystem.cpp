@@ -143,7 +143,10 @@ void Configure() {
     AssertIs(LUA_TTABLE);
 
     auto dataCount = lua_rawlen(LuaState, -1);
-    ScriptMessageData.resize(dataCount);
+    if (dataCount > ScriptMessageData.max_size()) {
+      throw std::length_error("ScriptMessageData exceeds addressable memory");
+    }
+    ScriptMessageData.resize(static_cast<size_t>(dataCount));
     PushInitialIndex();
     while (PushNextTableElement() != 0) {
       int i = EnsureGetKey<int32_t>() - 1;

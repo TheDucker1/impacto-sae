@@ -157,12 +157,11 @@ static void LoadUnlockState() {
   }
   stream->Seek(AchievementHeaderSize, SEEK_SET);
 
-  const uint64_t count =
-      (static_cast<uint64_t>(stream->Meta.Size) - AchievementHeaderSize) /
-      AchievementEntrySize;
+  const size_t count = Io::MemorySize(
+      (stream->Meta.Size - AchievementHeaderSize) / AchievementEntrySize);
   UnlockState.resize(count);
 
-  for (uint64_t id = 0; id < count; id++) {
+  for (size_t id = 0; id < count; id++) {
     AchievementUnlockState& state = UnlockState[id];
     state.Unlocked = Io::ReadU8(stream) != 0;
     const uint16_t year = Io::ReadLE<uint16_t>(stream);

@@ -8,7 +8,14 @@ namespace Impacto {
 namespace Audio {
 
 static size_t OvRwRead(void* ptr, size_t size, size_t nmemb, void* datasource) {
-  return ((Stream*)datasource)->Read(ptr, size * nmemb) / size;
+  if (size == 0 || nmemb > std::numeric_limits<size_t>::max() / size ||
+      uint64_t(nmemb) > uint64_t(std::numeric_limits<int64_t>::max()) / size)
+    return 0;
+  const size_t requested = size * nmemb;
+  const int64_t read = ((Stream*)datasource)->Read(ptr, requested);
+  return read > 0 && uint64_t(read) <= requested
+             ? static_cast<size_t>(read) / size
+             : 0;
 }
 static int OvRwSeek(void* datasource, ogg_int64_t offset, int whence) {
   return (long)(((Stream*)datasource)->Seek(offset, whence));

@@ -745,7 +745,7 @@ void FFmpegPlayer::Update(float dt) {
     }
     if (PreviousFrameTimestamp) {
       auto inverseFrameRate = av::Rational(1, 30);
-      size_t frameNum = av_rescale_q(frame->Timestamp.timestamp(),
+      int64_t frameNum = av_rescale_q(frame->Timestamp.timestamp(),
                                      frame->Timestamp.timebase().getValue(),
                                      inverseFrameRate.getValue());
       // This isn't the place for it but I can't think of

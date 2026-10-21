@@ -19,7 +19,7 @@ IoError MemoryMappedFileStream<M>::Create(std::string const& fileName,
   }
 
   std::error_code ec;
-  result->mmapFile.map(result->SourceFileName, 0, result->Meta.Size, ec);
+  result->mmapFile.map(result->SourceFileName, 0, MemorySize(result->Meta.Size), ec);
   if (ec) {
     ImpLog(LogLevel::Error, LogChannel::IO,
            "Failed to open file \"{:s}\", error:\"{:s}\"\n",
@@ -37,7 +37,7 @@ int64_t MemoryMappedFileStream<M>::Read(void* buffer, int64_t sz) {
   if (sz < 0) return IoError_Fail;
   if (Position >= Meta.Size) return IoError_Eof;
 
-  size_t bytesToRead = std::min(sz, Meta.Size - Position);
+  size_t bytesToRead = MemorySize(std::min(sz, Meta.Size - Position));
   assert(mmapFile.data());
   // Lock only if we are in read/write mode
   if constexpr (M == AccessMode::write) {
@@ -96,7 +96,7 @@ int64_t MemoryMappedFileStream<M>::Write(const void* buffer, int64_t sz,
   } else {
     std::lock_guard<std::shared_mutex> lock(*mutexLock);
     sz = std::min(Meta.Size - Position, sz);
-    memcpy(mmapFile.data() + Position, buffer, sz);
+    memcpy(mmapFile.data() + Position, buffer, MemorySize(sz));
     Position += sz;
     return sz;
   }

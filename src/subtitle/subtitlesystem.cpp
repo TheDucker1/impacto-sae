@@ -99,7 +99,7 @@ void SubtitlePlayer::AddTrackFile(
   }
   std::vector<char> dataBuffer;
 
-  dataBuffer.resize(subtitleFileStream->Meta.Size);
+  dataBuffer.resize(Io::MemorySize(subtitleFileStream->Meta.Size));
   subtitleFileStream->Read(dataBuffer.data(), dataBuffer.size());
   backend->AddTrackFile(trackId, dataBuffer);
   delete subtitleFileStream;

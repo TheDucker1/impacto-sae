@@ -201,7 +201,8 @@ bool LoadScript(uint32_t bufferId, uint32_t scriptId) {
            "Could not read script file for {:d}\n", scriptId);
     return false;
   }
-  ScriptBuffers[bufferId] = std::span(static_cast<uint8_t*>(file), fileSize);
+  ScriptBuffers[bufferId] =
+      std::span(static_cast<uint8_t*>(file), Io::MemorySize(fileSize));
   ScrWork[SW_SCRIPTNO0 + bufferId] = scriptId;
   LoadedScriptMetas[bufferId] = meta;
   return true;
@@ -223,7 +224,8 @@ bool LoadMsb(uint32_t bufferId, uint32_t fileId) {
            "Could not read msb file for {:d}\n", fileId);
     return false;
   }
-  MsbBuffers[bufferId] = std::span(static_cast<uint8_t*>(file), fileSize);
+  MsbBuffers[bufferId] =
+      std::span(static_cast<uint8_t*>(file), Io::MemorySize(fileSize));
   return true;
 }
 
