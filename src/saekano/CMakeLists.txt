@@ -1,4 +1,6 @@
-add_library(saekano_core STATIC formats.cpp commands.cpp flow.cpp vm.cpp)
+find_package(ZLIB REQUIRED)
+add_library(saekano_core STATIC formats.cpp commands.cpp flow.cpp vm.cpp resources.cpp)
+target_link_libraries(saekano_core PUBLIC ZLIB::ZLIB)
 target_include_directories(saekano_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_features(saekano_core PUBLIC cxx_std_20)
 if(MSVC)
@@ -23,3 +25,18 @@ target_link_libraries(saekano_vm_tests PRIVATE saekano_core)
 add_test(NAME saekano_vm COMMAND saekano_vm_tests)
 add_executable(saekano_headless headless.cpp)
 target_link_libraries(saekano_headless PRIVATE saekano_core)
+add_executable(saekano_resource_tests ../../tests/saekano/resources_test.cpp)
+target_link_libraries(saekano_resource_tests PRIVATE saekano_core)
+add_test(NAME saekano_resources COMMAND saekano_resource_tests)
+
+# Optional shared-library deployment for standalone Windows development builds.
+# A packaged/static toolchain can leave this unset.
+set(SAEKANO_ZLIB_RUNTIME "" CACHE FILEPATH "Zlib DLL to deploy beside Saekano tools")
+if(WIN32 AND SAEKANO_ZLIB_RUNTIME)
+    foreach(target saekano_inspect saekano_core_tests saekano_command_tests
+                   saekano_flow_tests saekano_vm_tests saekano_headless saekano_resource_tests)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${SAEKANO_ZLIB_RUNTIME}" "$<TARGET_FILE_DIR:${target}>")
+    endforeach()
+endif()
