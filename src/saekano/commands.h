@@ -1,6 +1,7 @@
 #pragma once
 
 #include "formats.h"
+#include "live2dstate.h"
 
 #include <array>
 #include <map>
@@ -42,6 +43,7 @@ struct SemanticState {
   std::map<uint16_t, CharacterState> Characters;
   std::array<uint32_t, 2> WindowOpenness{};
   std::array<uint32_t, 2> WindowTypes{};
+  Live2dState Live2d;
 };
 
 class UnsupportedCommand : public std::runtime_error {

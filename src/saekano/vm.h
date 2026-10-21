@@ -32,6 +32,7 @@ class VmBackend {
   virtual bool MessageRevealed(size_t command, uint64_t now) = 0;
   virtual bool MessageAdvanceAllowed(size_t command, uint64_t now) = 0;
   virtual void RevealMessage(size_t command) = 0;
+  virtual Live2dDriver* Models() { return nullptr; }
   virtual bool Supports(uint16_t) const { return false; }
   virtual CompletedCommand Route(uint16_t opcode, std::span<const uint8_t> payload) const;
   virtual void StartPresentation(size_t command, uint16_t opcode,
@@ -77,6 +78,7 @@ class VirtualMachine {
     uint32_t SavedDay = 0;
     CompletedCommand Routing;
     std::optional<MessageCommand> Message;
+    std::optional<Live2dCommand> Live2d;
     int32_t WaitDuration = 0;
     uint32_t WaitHonorSkip = 0;
     size_t SelectedOrdinal = 0;

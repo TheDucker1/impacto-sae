@@ -40,6 +40,8 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     if (opcode == 0x64) {
       command.Message = DecodeMessage(script_->Payload(i));
       command.Routing = {command.Message->Route != 0, command.Message->Lane};
+    } else if (opcode == 0x438) {
+      command.Live2d = DecodeLive2d(script_->Payload(i));
     } else if (opcode == 0x2c0) {
       PayloadReader reader(script_->Payload(i));
       command.WaitDuration = reader.I32();
@@ -72,6 +74,8 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     state_.Characters.clear();
     state_.WindowOpenness = {};
     state_.WindowTypes = {};
+    state_.Live2d = {};
+    if (auto* models = backend_.Models()) models->Reset();
     state_.ApproachGauge = 0;
     state_.BattleGauge = 50;
     state_.DayEnabled = 0;
@@ -132,6 +136,12 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
   }
   if (opcode == 0x64) {
     if (lane || !command.Routing.QueueForLane) SetupMessage(index, now);
+  } else if (opcode == 0x438 && !lane) {
+    if (!state_.Live2d.Known)
+      throw UnsupportedCommand("restored Live2D records/parameter slots are missing");
+    auto* models = backend_.Models();
+    if (!models) throw UnsupportedCommand("Live2D resource/model backend is unavailable");
+    StartLive2d(state_.Live2d, *command.Live2d, *models, now);
   } else if (opcode == 0x65 && !lane) {
     command.SavedDay = uint8_t(state_.DayEnabled);
     state_.DayEnabled = 0;
@@ -154,6 +164,15 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
   const auto opcode = script_->Records()[index].Opcode;
   if (!lane && command.Routing.QueueForLane) return true;
   if (lane && !command.LaneStarted) Start(index, now, true);
+  if (opcode == 0x438) {
+    if (lane) return true;  // Native shared lane handlers only mark completion.
+    if (!command.Started)
+      throw UnsupportedCommand("Live2D Start was suppressed; runtime state is unavailable");
+    auto* models = backend_.Models();
+    if (!models) throw UnsupportedCommand("Live2D resource/model backend is unavailable");
+    return UpdateLive2d(state_.Live2d, *command.Live2d, *models,
+                         input.Route == UpdateRoute::Skipping, now);
+  }
   if (opcode == 0x64) {
     if (!lane && !command.Started)
       throw UnsupportedCommand("message Start was suppressed; runtime reveal state is unavailable");
