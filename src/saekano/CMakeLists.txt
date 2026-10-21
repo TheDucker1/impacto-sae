@@ -1,5 +1,5 @@
 find_package(ZLIB REQUIRED)
-add_library(saekano_core STATIC formats.cpp commands.cpp flow.cpp vm.cpp resources.cpp live2dstate.cpp live2denv.cpp)
+add_library(saekano_core STATIC formats.cpp commands.cpp flow.cpp vm.cpp resources.cpp live2dstate.cpp live2denv.cpp nativesave.cpp)
 target_link_libraries(saekano_core PUBLIC ZLIB::ZLIB)
 target_include_directories(saekano_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_features(saekano_core PUBLIC cxx_std_20)
@@ -69,13 +69,16 @@ add_test(NAME saekano_live2d_lifecycle COMMAND saekano_live2d_tests)
 add_executable(saekano_live2denv_tests ../../tests/saekano/live2denv_test.cpp)
 target_link_libraries(saekano_live2denv_tests PRIVATE saekano_core)
 add_test(NAME saekano_live2d_environment COMMAND saekano_live2denv_tests)
+add_executable(saekano_nativesave_tests ../../tests/saekano/nativesave_test.cpp)
+target_link_libraries(saekano_nativesave_tests PRIVATE saekano_core)
+add_test(NAME saekano_native_save COMMAND saekano_nativesave_tests)
 
 # Optional shared-library deployment for standalone Windows development builds.
 # A packaged/static toolchain can leave this unset.
 set(SAEKANO_ZLIB_RUNTIME "" CACHE FILEPATH "Zlib DLL to deploy beside Saekano tools")
 if(WIN32 AND SAEKANO_ZLIB_RUNTIME)
     foreach(target saekano_inspect saekano_core_tests saekano_command_tests
-                   saekano_flow_tests saekano_vm_tests saekano_headless saekano_resource_tests saekano_io_tests saekano_live2d_tests saekano_live2denv_tests)
+                   saekano_flow_tests saekano_vm_tests saekano_headless saekano_resource_tests saekano_io_tests saekano_live2d_tests saekano_live2denv_tests saekano_nativesave_tests)
         add_custom_command(TARGET ${target} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${SAEKANO_ZLIB_RUNTIME}" "$<TARGET_FILE_DIR:${target}>")
