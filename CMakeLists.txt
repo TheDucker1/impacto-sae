@@ -1,5 +1,18 @@
 cmake_minimum_required(VERSION 3.28)
 
+# The Vita command engine can be developed and verified before installing the
+# graphical application's dependencies. Both frontends will link this core.
+option(IMPACTO_SAEKANO_CORE_ONLY "Build only the Saekano core and its tests" OFF)
+if(IMPACTO_SAEKANO_CORE_ONLY)
+    # Keep debug records in object files: this also avoids requiring a matching
+    # running mspdbsrv when using a standalone Build Tools installation.
+    set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT Embedded)
+    project(impacto_saekano_core LANGUAGES CXX)
+    enable_testing()
+    add_subdirectory(src/saekano)
+    return()
+endif()
+
 if (POLICY CMP0141)
   cmake_policy(SET CMP0141 NEW)
 endif()
