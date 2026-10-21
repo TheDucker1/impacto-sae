@@ -36,6 +36,15 @@ class Cubism2Model {
   void SetParameter(std::string_view name, float value, float weight = 1.0f);
   float Parameter(std::string_view name) const;
   void Update();
+  void SaveParameters();
+  void RestoreParameters();
+  size_t LoadExpression(std::span<const uint8_t> json);
+  int StartExpression(size_t expression);
+  void ApplyExpression();
+  void StopExpressions();
+  bool ExpressionFinished(int handle) const;
+  void LoadPose(std::span<const uint8_t> json);
+  void ApplyPose();
 
   // Resource indexes and channel ordering are selected by the game wrapper.
   // The four managers correspond to independent SDK motion queues, allowing the

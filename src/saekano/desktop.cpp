@@ -72,6 +72,8 @@ struct ViewerModel {
   std::vector<uint32_t> Textures;
   int IdleHandle = -1;
   size_t IdleMotion = 0;
+  std::vector<size_t> Expressions;
+  size_t ExpressionIndex = 0;
   std::string Name;
   ViewerModel(Cubism2Sdk& sdk, const Live2dModelAssets& assets) {
     const auto& mocs = assets.Get(Live2dSection::Moc);
@@ -106,8 +108,18 @@ struct ViewerModel {
         throw FormatError("model has no authored loop motions");
       IdleMotion = Model->LoadMotion(motions[0].Data, true);
       IdleHandle = Model->StartMotion(IdleMotion, 0);
+      const auto& poses = assets.Get(Live2dSection::Pose);
+      if (poses.size() != 1) throw FormatError("expected one model pose file");
+      Model->LoadPose(poses[0].Data);
+      for (const auto& expression : assets.Get(Live2dSection::Expressions))
+        Expressions.push_back(Model->LoadExpression(expression.Data));
+      if (!Expressions.empty()) Model->StartExpression(Expressions[0]);
       // Establish the SDK queue's start time before the first timed frame.
+      Model->RestoreParameters();
       Model->ApplyMotionChannel(0);
+      Model->SaveParameters();
+      Model->ApplyExpression();
+      Model->ApplyPose();
       Model->Update();
       Model->SetMatrix({2.0f / Model->CanvasWidth(), 0, 0, 0, 0,
                         -2.0f / Model->CanvasHeight(), 0, 0, 0, 0, 1, 0, -1, 1,
@@ -126,6 +138,16 @@ struct ViewerModel {
     Textures.clear();
   }
   ~ViewerModel() { Release(); }
+  std::string Title() const {
+    return Name + " | expression " + std::to_string(ExpressionIndex) +
+           " | Left/Right: model | Up/Down: expression | Escape: close";
+  }
+  void SelectExpression(int direction) {
+    if (Expressions.empty()) return;
+    ExpressionIndex =
+        (ExpressionIndex + Expressions.size() + direction) % Expressions.size();
+    Model->StartExpression(Expressions[ExpressionIndex]);
+  }
   void Draw(int width, int height) {
     glViewport(0, 0, width, height);
     glClearColor(32.0f / 255, 32.0f / 255, 32.0f / 255, 1);
@@ -138,7 +160,11 @@ struct ViewerModel {
                viewHeight);
     if (Model->MotionFinished(0, IdleHandle))
       IdleHandle = Model->StartMotion(IdleMotion, 0);
+    Model->RestoreParameters();
     Model->ApplyMotionChannel(0);
+    Model->SaveParameters();
+    Model->ApplyExpression();
+    Model->ApplyPose();
     Model->Update();
     Model->Draw();
     GlCheck("model draw");
@@ -189,7 +215,7 @@ int RunModelViewer(const std::filesystem::path& resourceDat,
         sdk.SetTime(0);
         model = std::make_unique<ViewerModel>(sdk, resources.LoadLive2d(id));
         epoch = SDL_GetTicks();
-        const auto title = model->Name + " | Left/Right: model | Escape: close";
+        const auto title = model->Title();
         SDL_SetWindowTitle(window.Window, title.c_str());
       }
       SDL_Event event;
@@ -197,6 +223,11 @@ int RunModelViewer(const std::filesystem::path& resourceDat,
         if (event.type == SDL_EVENT_QUIT) quit = true;
         if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
           if (event.key.key == SDLK_ESCAPE) quit = true;
+          if (model &&
+              (event.key.key == SDLK_UP || event.key.key == SDLK_DOWN)) {
+            model->SelectExpression(event.key.key == SDLK_UP ? 1 : -1);
+            SDL_SetWindowTitle(window.Window, model->Title().c_str());
+          }
           if (event.key.key == SDLK_RIGHT || event.key.key == SDLK_LEFT) {
             id = (id + resources.Live2dCount() +
                   (event.key.key == SDLK_RIGHT ? 1 : -1)) %
@@ -226,7 +257,8 @@ int RunModelViewer(const std::filesystem::path& resourceDat,
     }
     return 0;
   } catch (const std::exception& error) {
-    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Saekano viewer: %s", error.what());
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Saekano viewer: %s",
+                 error.what());
     return 1;
   }
 }

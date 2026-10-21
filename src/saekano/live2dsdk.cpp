@@ -8,6 +8,8 @@
 #include <motion/Live2DMotion.h>
 #include <motion/MotionQueueManager.h>
 #include <util/UtSystem.h>
+#include <L2DExpressionMotion.h>
+#include <L2DPose.h>
 
 #include <cassert>
 #include <cmath>
@@ -80,8 +82,12 @@ struct Cubism2Model::Impl {
   std::shared_ptr<Cubism2Context> Context;
   std::unique_ptr<live2d::Live2DModelWinGL> Model;
   std::vector<std::unique_ptr<live2d::Live2DMotion>> Motions;
+  std::vector<std::unique_ptr<live2d::framework::L2DExpressionMotion>>
+      Expressions;
+  std::unique_ptr<live2d::framework::L2DPose> Pose;
   // Queues are destroyed before motions; autoDelete is always false.
   std::array<live2d::MotionQueueManager, 4> Queues;
+  live2d::MotionQueueManager ExpressionQueue;
   std::vector<bool> TexturesBound;
   std::array<float, 16> Matrix{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
   Impl(std::shared_ptr<Cubism2Context> context, std::span<const uint8_t> moc,
@@ -98,6 +104,7 @@ struct Cubism2Model::Impl {
     // Impacto's decoded GXT pixels retain straight RGB/alpha channels.
     Model->setPremultipliedAlpha(false);
     Model->setMatrix(Matrix.data());
+    Model->saveParam();
   }
   ~Impl() { assert(Context->Owner == std::this_thread::get_id()); }
 };
@@ -137,6 +144,58 @@ float Cubism2Model::Parameter(std::string_view name) const {
 void Cubism2Model::Update() {
   impl_->Context->CheckThread();
   impl_->Model->update();
+  impl_->Context->CheckError();
+}
+void Cubism2Model::SaveParameters() {
+  impl_->Context->CheckThread();
+  impl_->Model->saveParam();
+  impl_->Context->CheckError();
+}
+void Cubism2Model::RestoreParameters() {
+  impl_->Context->CheckThread();
+  impl_->Model->loadParam();
+  impl_->Context->CheckError();
+}
+size_t Cubism2Model::LoadExpression(std::span<const uint8_t> json) {
+  impl_->Context->CheckThread();
+  std::unique_ptr<live2d::framework::L2DExpressionMotion> expression(
+      live2d::framework::L2DExpressionMotion::loadJson(json.data(),
+                                                       InputSize(json)));
+  impl_->Context->CheckError();
+  if (!expression) throw FormatError("Cubism2 failed to load expression");
+  impl_->Expressions.push_back(std::move(expression));
+  return impl_->Expressions.size() - 1;
+}
+int Cubism2Model::StartExpression(size_t expression) {
+  impl_->Context->CheckThread();
+  const auto handle = impl_->ExpressionQueue.startMotion(
+      impl_->Expressions.at(expression).get(), false);
+  impl_->Context->CheckError();
+  return handle;
+}
+void Cubism2Model::ApplyExpression() {
+  impl_->Context->CheckThread();
+  impl_->ExpressionQueue.updateParam(impl_->Model.get());
+  impl_->Context->CheckError();
+}
+void Cubism2Model::StopExpressions() {
+  impl_->Context->CheckThread();
+  impl_->ExpressionQueue.stopAllMotions();
+}
+bool Cubism2Model::ExpressionFinished(int handle) const {
+  impl_->Context->CheckThread();
+  return impl_->ExpressionQueue.isFinished(handle);
+}
+void Cubism2Model::LoadPose(std::span<const uint8_t> json) {
+  impl_->Context->CheckThread();
+  impl_->Pose.reset(
+      live2d::framework::L2DPose::load(json.data(), InputSize(json)));
+  impl_->Context->CheckError();
+  if (!impl_->Pose) throw FormatError("Cubism2 failed to load pose");
+}
+void Cubism2Model::ApplyPose() {
+  impl_->Context->CheckThread();
+  if (impl_->Pose) impl_->Pose->updateParam(impl_->Model.get());
   impl_->Context->CheckError();
 }
 size_t Cubism2Model::LoadMotion(std::span<const uint8_t> mtn, bool loop) {
