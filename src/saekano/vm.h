@@ -34,6 +34,7 @@ class VmBackend {
   virtual bool MessageAdvanceAllowed(size_t command, uint64_t now) = 0;
   virtual void RevealMessage(size_t command) = 0;
   virtual Live2dDriver* Models() { return nullptr; }
+  virtual SceneImageDriver* Images() { return nullptr; }
   virtual const BattleGaugeEnvironment* BattleEnvironment() const { return nullptr; }
   virtual const ApproachGaugeEnvironment* ApproachEnvironment() const { return nullptr; }
   virtual bool Supports(uint16_t) const { return false; }
@@ -89,6 +90,10 @@ class VirtualMachine {
     BattleGaugeAnimation BattleAnimation;
     std::optional<ApproachGaugeCommand> ApproachGauge;
     ApproachGaugeAnimation ApproachAnimation;
+    std::optional<RuleWipeCommand> RuleWipe;
+    RuleWipeAnimation WipeAnimation;
+    std::optional<ScreenFadeCommand> ScreenFade;
+    ScreenFadeAnimation FadeAnimation;
     int32_t WaitDuration = 0;
     uint32_t WaitHonorSkip = 0;
     size_t SelectedOrdinal = 0;

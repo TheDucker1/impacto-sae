@@ -11,6 +11,8 @@ class HeadlessBackend : public VmBackend {
  public:
   bool AutoReveal = true;
   bool AutoAdvance = true;
+  SceneImageDriver* SceneImages = nullptr;
+  SceneImageDriver* Images() override { return SceneImages; }
   std::optional<BattleGaugeEnvironment> BattleConfig;
   std::optional<ApproachGaugeEnvironment> ApproachConfig;
   const ApproachGaugeEnvironment* ApproachEnvironment() const override {

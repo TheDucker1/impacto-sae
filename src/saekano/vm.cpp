@@ -41,6 +41,10 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     if (opcode == 0x64) {
       command.Message = DecodeMessage(script_->Payload(i));
       command.Routing = {command.Message->Route != 0, command.Message->Lane};
+    } else if (opcode == 0xc8 || opcode == 0xc9) {
+      command.ScreenFade = ScreenFadeCommand::Decode(script_->Payload(i), opcode == 0xc9);
+    } else if (opcode == 0x191) {
+      command.RuleWipe = RuleWipeCommand::Decode(script_->Payload(i));
     } else if (opcode == 0x438) {
       command.Live2d = DecodeLive2d(script_->Payload(i));
     } else if (opcode == 0x3f4) {
@@ -85,6 +89,17 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     state_.BattleGauge = 50;
     state_.Battle = {};  // Mode entry must initialize its display and sides.
     state_.BgmTrack.reset();
+    state_.Effects = {};
+    state_.RuleWipe = {};
+    if (auto* images = backend_.Images()) {
+      images->Release(ImageSlot::Rule);
+      images->Release(ImageSlot::Background);
+    }
+    // Fresh manager constructor801a04a4: C1600=7, C160c/C1610=0,
+    // inactive rule flags and both cache IDs=-1. Restored initial state differs.
+    state_.Effects = {true, 7, 0, 0};
+    state_.RuleWipe.Known = true;
+    state_.ScreenFade = 255;
     state_.Approach = {};
     state_.Random = {};  // Native creates a freshly seeded manager. Host supplies its clock seed.
     if (const auto* environment = backend_.ApproachEnvironment()) {
@@ -182,6 +197,12 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
   }
   if (opcode == 0x64) {
     if (lane || !command.Routing.QueueForLane) SetupMessage(index, now);
+  } else if ((opcode == 0xc8 || opcode == 0xc9) && !lane) {
+    StartScreenFade(state_, command.FadeAnimation, *command.ScreenFade, now);
+  } else if (opcode == 0x191 && !lane) {
+    auto* images = backend_.Images();
+    if (!images) throw UnsupportedCommand("scene image resource backend is unavailable");
+    StartRuleWipe(state_, command.WipeAnimation, *command.RuleWipe, *images, now);
   } else if (opcode == 0x259 && !lane) {
     PayloadReader reader(script_->Payload(index));
     const auto fade = reader.I32();
@@ -226,6 +247,18 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
   if (!lane && command.Routing.QueueForLane) return true;
   if (lane && !command.LaneStarted) Start(index, now, true);
   if (opcode == 0x259) return true;  // Native common normal/skip/lane completion; no fade wait.
+  if (opcode == 0xc8 || opcode == 0xc9) {
+    if (lane) return true;
+    return UpdateScreenFade(state_, command.FadeAnimation, *command.ScreenFade,
+        input.Route == UpdateRoute::Skipping, now);
+  }
+  if (opcode == 0x191) {
+    if (lane) return true;
+    auto* images = backend_.Images();
+    if (!images) throw UnsupportedCommand("scene image resource backend is unavailable");
+    return UpdateRuleWipe(state_, command.WipeAnimation, *command.RuleWipe, *images,
+        input.Route == UpdateRoute::Skipping, now);
+  }
   if (opcode == 0x3f5) {
     if (lane) return true;
     if (!command.Started)

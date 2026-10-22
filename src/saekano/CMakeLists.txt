@@ -1,5 +1,5 @@
 find_package(ZLIB REQUIRED)
-add_library(saekano_core STATIC formats.cpp commands.cpp flow.cpp vm.cpp resources.cpp live2dstate.cpp live2denv.cpp nativesave.cpp gauge.cpp messagekeywords.cpp random.cpp)
+add_library(saekano_core STATIC formats.cpp commands.cpp flow.cpp vm.cpp resources.cpp live2dstate.cpp live2denv.cpp nativesave.cpp gauge.cpp messagekeywords.cpp random.cpp image.cpp transition.cpp)
 target_link_libraries(saekano_core PUBLIC ZLIB::ZLIB)
 target_include_directories(saekano_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_features(saekano_core PUBLIC cxx_std_20)
@@ -85,13 +85,16 @@ add_test(NAME saekano_message_keywords COMMAND saekano_keyword_tests)
 add_executable(saekano_approach_tests ../../tests/saekano/approach_test.cpp)
 target_link_libraries(saekano_approach_tests PRIVATE saekano_core)
 add_test(NAME saekano_approach_random COMMAND saekano_approach_tests)
+add_executable(saekano_transition_tests ../../tests/saekano/transition_test.cpp)
+target_link_libraries(saekano_transition_tests PRIVATE saekano_core)
+add_test(NAME saekano_scene_transitions COMMAND saekano_transition_tests)
 
 # Optional shared-library deployment for standalone Windows development builds.
 # A packaged/static toolchain can leave this unset.
 set(SAEKANO_ZLIB_RUNTIME "" CACHE FILEPATH "Zlib DLL to deploy beside Saekano tools")
 if(WIN32 AND SAEKANO_ZLIB_RUNTIME)
     foreach(target saekano_inspect saekano_core_tests saekano_command_tests
-                   saekano_flow_tests saekano_vm_tests saekano_headless saekano_resource_tests saekano_io_tests saekano_live2d_tests saekano_live2denv_tests saekano_nativesave_tests saekano_gauge_tests saekano_keyword_tests saekano_approach_tests)
+                   saekano_flow_tests saekano_vm_tests saekano_headless saekano_resource_tests saekano_io_tests saekano_live2d_tests saekano_live2denv_tests saekano_nativesave_tests saekano_gauge_tests saekano_keyword_tests saekano_approach_tests saekano_transition_tests)
         add_custom_command(TARGET ${target} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${SAEKANO_ZLIB_RUNTIME}" "$<TARGET_FILE_DIR:${target}>")

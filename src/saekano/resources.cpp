@@ -63,7 +63,22 @@ GameResources::GameResources(Bytes resourceDat)
     : GameResources(GpdaArchive(std::move(resourceDat))) {}
 
 GameResources::GameResources(const GpdaArchive& root)
-    : scripts_(ResourceSection(root, 4)), live2d_(ResourceSection(root, 0)) {}
+    : scripts_(ResourceSection(root, 4)), live2d_(ResourceSection(root, 0)) {
+  for (auto section : {ImageSection::Background, ImageSection::Event,
+                       ImageSection::Free, ImageSection::Rule})
+    if (size_t(section) < root.Entries().size())
+      images_.emplace(section, ResourceSection(root, size_t(section)));
+}
+
+size_t GameResources::ImageCount(ImageSection section) const {
+  const auto found = images_.find(section);
+  return found == images_.end() ? 0 : found->second.Entries().size();
+}
+ResourceAsset GameResources::LoadImage(ImageSection section, size_t imageId) const {
+  if (imageId >= ImageCount(section)) throw FormatError("scene image ID outside original archive");
+  const auto& archive = images_.at(section);
+  return {archive.Entries()[imageId].Name, CompressedEntry(archive, imageId, 1)};
+}
 
 Bytes GameResources::Load(int32_t scriptId) {
   if (scriptId < 0 || size_t(scriptId) >= ScriptCount())

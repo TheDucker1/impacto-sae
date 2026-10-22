@@ -4,6 +4,7 @@
 #include "live2dstate.h"
 #include "gauge.h"
 #include "random.h"
+#include "transition.h"
 
 #include <array>
 #include <map>
@@ -16,7 +17,7 @@ struct CharacterState {
   std::vector<uint32_t> PoseHistory;
   uint16_t Priority = 0;
 };
-enum class GameEventKind { Sound, Effect, Trophy, StopBgm };
+enum class GameEventKind { Sound, Effect, Trophy, StopBgm, StopChannel };
 struct GameEvent {
   GameEventKind Kind;
   int32_t Id;
@@ -57,6 +58,10 @@ struct SemanticState {
   GameRandom Random;
   ApproachGaugeState Approach;
   std::optional<int32_t> BgmTrack;  // C+15a4; absent from the portable restore schema.
+  EffectContext Effects;
+  RuleWipeState RuleWipe;
+  std::optional<int32_t> ScreenFade;  // C1504, omitted from portable restored inputs.
+  CgHistoryState CgHistory;  // Owner state; survives file/context replacement.
   // Requests to the host audio/effect/achievement services, not granted rewards
   // or evidence that a renderer played them. The host drains these each frame.
   std::vector<GameEvent> PendingEvents;

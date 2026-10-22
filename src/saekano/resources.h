@@ -1,6 +1,7 @@
 #pragma once
 
 #include "vm.h"
+#include "image.h"
 
 #include <array>
 
@@ -38,6 +39,8 @@ class GameResources final : public ScriptSource {
   explicit GameResources(Bytes resourceDat);
   Bytes Load(int32_t scriptId) override;
   Live2dModelAssets LoadLive2d(size_t modelId) const;
+  ResourceAsset LoadImage(ImageSection section, size_t imageId) const;
+  size_t ImageCount(ImageSection section) const;
   size_t ScriptCount() const { return scripts_.Entries().size(); }
   size_t Live2dCount() const { return live2d_.Entries().size(); }
   const Bytes& ScriptName(size_t id) const { return scripts_.Entries().at(id).Name; }
@@ -46,6 +49,7 @@ class GameResources final : public ScriptSource {
   explicit GameResources(const GpdaArchive& root);
   GpdaArchive scripts_;
   GpdaArchive live2d_;
+  std::map<ImageSection, GpdaArchive> images_;
 };
 
 }  // namespace Impacto::Saekano

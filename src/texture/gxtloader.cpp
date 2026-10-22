@@ -4,6 +4,7 @@
 #include "../util.h"
 
 #include "s3tc.h"
+#include "palettecolor.h"
 
 using namespace Impacto::Io;
 
@@ -272,13 +273,14 @@ bool GXTLoadSubtexture(Stream* stream, Texture* outTexture,
           }
 
           uint8_t colorIdx = *reader++;
-          uint8_t* color = palette + 4 * colorIdx;
+          const auto color = PaletteColor({palette, 4 * 256}, colorIdx,
+                                           bytesPerPixel == 4);
 
           int px = (outX + stx->Width * outY) * bytesPerPixel;
 
-          outTexture->Buffer[px + 2] = color[0];
+          outTexture->Buffer[px + 2] = color[2];
           outTexture->Buffer[px + 1] = color[1];
-          outTexture->Buffer[px + 0] = color[2];
+          outTexture->Buffer[px + 0] = color[0];
           if (bytesPerPixel == 4) {
             outTexture->Buffer[px + 3] = color[3];
           }
