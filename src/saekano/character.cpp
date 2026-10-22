@@ -229,4 +229,68 @@ void UpdateCharacterPosition(SemanticState& state,
     actor.Tweens[size_t(CharacterTween::X) + i].Start(value, value, 0, now);
   }
 }
+CharacterOffsetCommand CharacterOffsetCommand::Decode(
+    std::span<const uint8_t> payload) {
+  PayloadReader reader(payload);
+  CharacterOffsetCommand result;
+  result.Route = reader.U32();
+  result.Character = reader.U32();
+  result.Delta = {reader.I32(), reader.I32()};
+  result.Duration = reader.U32();
+  result.Background = reader.U32();
+  result.Lane = reader.U32();
+  if (result.Route && result.Lane >= 5)
+    throw FormatError("character offset lane exceeds engine lane count");
+  // Native zero-extends this word into the 64-bit tween duration. The current
+  // shared tween models the nonnegative signed32 subset only.
+  if (result.Duration > INT32_MAX)
+    throw UnsupportedCommand(
+        "character offset unsigned64 duration is unsupported");
+  return result;
+}
+void StartCharacterOffset(SemanticState& state,
+                          CharacterOffsetAnimation& animation,
+                          const CharacterOffsetCommand& command) {
+  RequireCharacters(state);
+  // Unlike Position's Start, Offset explicitly narrows before map search.
+  EnsureCharacter(state, uint16_t(command.Character));
+  animation = {true, false};
+}
+bool UpdateCharacterOffset(SemanticState& state,
+                           CharacterOffsetAnimation& animation,
+                           const CharacterOffsetCommand& command, bool lane,
+                           bool skipping, uint64_t now) {
+  if (command.Route && !lane) return true;
+  RequireCharacters(state);
+  if (!animation.Started)
+    throw UnsupportedCommand("character offset Start was suppressed");
+  auto found = state.Characters.find(uint16_t(command.Character));
+  if (found == state.Characters.end() || !found->second.RuntimeKnown)
+    throw UnsupportedCommand(
+        "character offset needs its Start-created runtime");
+  auto& actor = found->second;
+  if (!animation.Queued) {
+    for (size_t i = 0; i < 2; ++i) {
+      auto& tween = actor.Tweens[size_t(CharacterTween::X) + i];
+      const auto target = std::bit_cast<int32_t>(uint32_t(tween.Current) +
+                                                 uint32_t(command.Delta[i]));
+      tween.Start(tween.Current, target, int32_t(command.Duration), now);
+    }
+    // Both normal and skip Offset lanes unconditionally use background.
+    (lane || command.Background ? state.CharacterRuntimeState.Background
+                                : state.CharacterRuntimeState.Foreground)
+        .push_back(uint16_t(command.Character));
+    animation.Queued =
+        true;  // ScriptState_Set(...,1,true) commits immediately.
+  }
+  if (skipping) {
+    for (auto channel : {CharacterTween::X, CharacterTween::Y}) {
+      auto& tween = actor.Tweens[size_t(channel)];
+      tween.Start(tween.To, tween.To, 0, now);
+    }
+    return true;  // No list removal wait or skip-phase mutation.
+  }
+  return lane || command.Background ||
+         state.CharacterRuntimeState.Foreground.empty();
+}
 }  // namespace Impacto::Saekano

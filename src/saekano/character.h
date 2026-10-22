@@ -73,4 +73,20 @@ void StartCharacterPosition(SemanticState& state,
 void UpdateCharacterPosition(SemanticState& state,
                              const CharacterPositionCommand& command, bool lane,
                              uint64_t now);
+struct CharacterOffsetCommand {
+  uint32_t Route = 0, Character = 0;
+  std::array<int32_t, 2> Delta{};
+  uint32_t Duration = 0, Background = 0, Lane = 0;
+  static CharacterOffsetCommand Decode(std::span<const uint8_t> payload);
+};
+struct CharacterOffsetAnimation {
+  bool Started = false, Queued = false;
+};
+void StartCharacterOffset(SemanticState& state,
+                          CharacterOffsetAnimation& animation,
+                          const CharacterOffsetCommand& command);
+bool UpdateCharacterOffset(SemanticState& state,
+                           CharacterOffsetAnimation& animation,
+                           const CharacterOffsetCommand& command, bool lane,
+                           bool skipping, uint64_t now);
 }  // namespace Impacto::Saekano

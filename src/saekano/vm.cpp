@@ -53,6 +53,9 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     } else if (opcode == 0x1f5) {
       command.CharacterPosition = CharacterPositionCommand::Decode(script_->Payload(i));
       command.Routing = {command.CharacterPosition->Route != 0,command.CharacterPosition->Lane};
+    } else if (opcode == 0x1f7) {
+      command.CharacterOffset = CharacterOffsetCommand::Decode(script_->Payload(i));
+      command.Routing = {command.CharacterOffset->Route != 0,command.CharacterOffset->Lane};
     } else if (opcode == 0x438) {
       command.Live2d = DecodeLive2d(script_->Payload(i));
     } else if (opcode == 0x3f4) {
@@ -234,6 +237,8 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
     StartCharacterColor(state_, *command.CharacterColor, now);
   } else if (opcode == 0x1f5 && !lane) {
     StartCharacterPosition(state_, *command.CharacterPosition);
+  } else if (opcode == 0x1f7 && !lane) {
+    StartCharacterOffset(state_, command.OffsetAnimation, *command.CharacterOffset);
   } else if (opcode == 0x191 && !lane) {
     auto* images = backend_.Images();
     if (!images) throw UnsupportedCommand("scene image resource backend is unavailable");
@@ -289,6 +294,10 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
   if (opcode == 0x1f5) {
     UpdateCharacterPosition(state_, *command.CharacterPosition, lane, now);
     return true;  // Normal/skip have identical effects; lanes complete independently.
+  }
+  if (opcode == 0x1f7) {
+    return UpdateCharacterOffset(state_, command.OffsetAnimation, *command.CharacterOffset,
+                                 lane, input.Route == UpdateRoute::Skipping, now);
   }
   if (opcode == 0xcb) {
     auto* images = backend_.Images();
