@@ -84,6 +84,7 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     state_.ApproachGauge = 0;
     state_.BattleGauge = 50;
     state_.Battle = {};  // Mode entry must initialize its display and sides.
+    state_.BgmTrack.reset();
     state_.Approach = {};
     state_.Random = {};  // Native creates a freshly seeded manager. Host supplies its clock seed.
     if (const auto* environment = backend_.ApproachEnvironment()) {
@@ -181,6 +182,11 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
   }
   if (opcode == 0x64) {
     if (lane || !command.Routing.QueueForLane) SetupMessage(index, now);
+  } else if (opcode == 0x259 && !lane) {
+    PayloadReader reader(script_->Payload(index));
+    const auto fade = reader.I32();
+    state_.BgmTrack = -1;
+    state_.PendingEvents.push_back({GameEventKind::StopBgm, 0, {}, fade});
   } else if (opcode == 0x3f5 && !lane) {
     const auto* environment = backend_.ApproachEnvironment();
     if (!environment) throw UnsupportedCommand("approach gauge environment is unavailable");
@@ -219,6 +225,7 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
   const auto opcode = script_->Records()[index].Opcode;
   if (!lane && command.Routing.QueueForLane) return true;
   if (lane && !command.LaneStarted) Start(index, now, true);
+  if (opcode == 0x259) return true;  // Native common normal/skip/lane completion; no fade wait.
   if (opcode == 0x3f5) {
     if (lane) return true;
     if (!command.Started)

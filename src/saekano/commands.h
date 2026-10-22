@@ -16,11 +16,12 @@ struct CharacterState {
   std::vector<uint32_t> PoseHistory;
   uint16_t Priority = 0;
 };
-enum class GameEventKind { Sound, Effect, Trophy };
+enum class GameEventKind { Sound, Effect, Trophy, StopBgm };
 struct GameEvent {
   GameEventKind Kind;
   int32_t Id;
   std::array<int32_t, 2> ScreenPosition{};
+  int32_t Parameter = 0;  // StopBgm: original signed fade parameter, units unproved.
 };
 
 struct SemanticState {
@@ -55,6 +56,7 @@ struct SemanticState {
   BattleGaugeState Battle;
   GameRandom Random;
   ApproachGaugeState Approach;
+  std::optional<int32_t> BgmTrack;  // C+15a4; absent from the portable restore schema.
   // Requests to the host audio/effect/achievement services, not granted rewards
   // or evidence that a renderer played them. The host drains these each frame.
   std::vector<GameEvent> PendingEvents;
