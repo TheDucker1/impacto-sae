@@ -4,6 +4,10 @@
 
 namespace Impacto::Saekano {
 struct SemanticState;
+struct UiSpriteDescriptor {
+  int16_t Resource = 0;
+  std::array<int32_t, 8> Words{};
+};
 
 // The non-repeating 56-byte ScriptTween path used by the gauge commands.
 // Distinct from the 40-byte model parameter tween. Native arithmetic wraps its
@@ -52,4 +56,44 @@ void StartBattleGauge(SemanticState& state, BattleGaugeAnimation& animation,
                       Live2dDriver* models, uint64_t now);
 bool UpdateBattleGauge(SemanticState& state, BattleGaugeAnimation& animation,
                        Live2dDriver* models, bool skipping, uint64_t now);
+
+struct ApproachGaugeEnvironment {
+  int32_t Duration = 0, ParticleMinimumDuration = 0,
+          ParticleMaximumDuration = 0;
+  size_t ParticleCount = 0;
+  std::array<int32_t, 4>
+      ParticleRegion{};  // x,y,width,height of configured gauge sprite.
+  std::array<int32_t, 2> PositiveEffectPosition{}, NegativeEffectPosition{};
+  UiSpriteDescriptor ParticleSprite;
+  static ApproachGaugeEnvironment Decode(std::span<const uint8_t> bytes);
+};
+struct ApproachParticle {
+  ScriptLinearTween Opacity;
+  std::optional<std::array<float, 2>> Position;
+};
+struct ApproachGaugeState {
+  bool Known = false;
+  bool Changing = false;  // C+1451c byte.
+  std::vector<ApproachParticle>
+      Particles;  // C+14524 ordered64-byte (0x40) native rows.
+};
+struct ApproachGaugeCommand {
+  int32_t Delta =
+      0;  // Start mutates this field; retained on same-command reentry.
+  static ApproachGaugeCommand Decode(std::span<const uint8_t> payload);
+};
+struct ApproachGaugeAnimation {
+  bool Started = false, Completed = false;
+  int32_t Initial = 0, Target = 0;
+  ScriptLinearTween Progress;
+};
+void StartApproachGauge(SemanticState& state, ApproachGaugeAnimation& animation,
+                        ApproachGaugeCommand& command,
+                        const ApproachGaugeEnvironment& environment,
+                        uint64_t now);
+bool UpdateApproachGauge(SemanticState& state,
+                         ApproachGaugeAnimation& animation,
+                         const ApproachGaugeCommand& command,
+                         const ApproachGaugeEnvironment& environment,
+                         bool skipping, uint64_t now);
 }  // namespace Impacto::Saekano

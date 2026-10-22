@@ -35,6 +35,7 @@ class VmBackend {
   virtual void RevealMessage(size_t command) = 0;
   virtual Live2dDriver* Models() { return nullptr; }
   virtual const BattleGaugeEnvironment* BattleEnvironment() const { return nullptr; }
+  virtual const ApproachGaugeEnvironment* ApproachEnvironment() const { return nullptr; }
   virtual bool Supports(uint16_t) const { return false; }
   virtual CompletedCommand Route(uint16_t opcode, std::span<const uint8_t> payload) const;
   virtual void StartPresentation(size_t command, uint16_t opcode,
@@ -69,6 +70,8 @@ class VirtualMachine {
   void ActivateLane(size_t lane);
   void RequestLaneFlush() { dispatcher_.FlushLanes = true; }
   void SetMessageContext(MessageRuntimeContext context);
+  void SeedRandom(uint32_t seed);
+  std::vector<GameEvent> TakeEvents();
 
  private:
   struct RuntimeCommand {
@@ -84,6 +87,8 @@ class VirtualMachine {
     std::optional<Live2dCommand> Live2d;
     std::optional<BattleGaugeCommand> BattleGauge;
     BattleGaugeAnimation BattleAnimation;
+    std::optional<ApproachGaugeCommand> ApproachGauge;
+    ApproachGaugeAnimation ApproachAnimation;
     int32_t WaitDuration = 0;
     uint32_t WaitHonorSkip = 0;
     size_t SelectedOrdinal = 0;

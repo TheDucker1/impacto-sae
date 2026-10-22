@@ -45,6 +45,8 @@ void VirtualMachine::Load(bool preserveOwnerState) {
       command.Live2d = DecodeLive2d(script_->Payload(i));
     } else if (opcode == 0x3f4) {
       command.BattleGauge = BattleGaugeCommand::Decode(script_->Payload(i));
+    } else if (opcode == 0x3f5) {
+      command.ApproachGauge = ApproachGaugeCommand::Decode(script_->Payload(i));
     } else if (opcode == 0x2c0) {
       PayloadReader reader(script_->Payload(i));
       command.WaitDuration = reader.I32();
@@ -82,6 +84,12 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     state_.ApproachGauge = 0;
     state_.BattleGauge = 50;
     state_.Battle = {};  // Mode entry must initialize its display and sides.
+    state_.Approach = {};
+    state_.Random = {};  // Native creates a freshly seeded manager. Host supplies its clock seed.
+    if (const auto* environment = backend_.ApproachEnvironment()) {
+      state_.Approach.Known = true;
+      state_.Approach.Particles.resize(environment->ParticleCount);
+    }
     state_.DayEnabled = 0;
     const auto keywordSuppressed = messageContext_.KeywordSuppressed;
     messageContext_ = {};
@@ -113,6 +121,14 @@ void VirtualMachine::SetGauge(bool battle, int32_t value) {
   if (boundary_ != VmBoundary::BeforeStart && boundary_ != VmBoundary::FileLoadedBeforeStart)
     throw std::runtime_error("gauge intervention must precede Start");
   (battle ? state_.BattleGauge : state_.ApproachGauge) = value;
+}
+void VirtualMachine::SeedRandom(uint32_t seed) {
+  if (boundary_ != VmBoundary::BeforeStart && boundary_ != VmBoundary::FileLoadedBeforeStart)
+    throw std::runtime_error("random initialization must precede Start");
+  state_.Random.Seed(seed);
+}
+std::vector<GameEvent> VirtualMachine::TakeEvents() {
+  return std::exchange(state_.PendingEvents, {});
 }
 void VirtualMachine::ActivateLane(size_t lane) {
   if (!dispatcher_.LaneQueues.at(lane).empty() && state_.LaneCommandIndex.at(lane) == -1)
@@ -165,6 +181,10 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
   }
   if (opcode == 0x64) {
     if (lane || !command.Routing.QueueForLane) SetupMessage(index, now);
+  } else if (opcode == 0x3f5 && !lane) {
+    const auto* environment = backend_.ApproachEnvironment();
+    if (!environment) throw UnsupportedCommand("approach gauge environment is unavailable");
+    StartApproachGauge(state_, command.ApproachAnimation, *command.ApproachGauge, *environment, now);
   } else if (opcode == 0x3f4 && !lane) {
     const auto* environment = backend_.BattleEnvironment();
     if (!environment) throw UnsupportedCommand("battle gauge environment is unavailable");
@@ -199,6 +219,15 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
   const auto opcode = script_->Records()[index].Opcode;
   if (!lane && command.Routing.QueueForLane) return true;
   if (lane && !command.LaneStarted) Start(index, now, true);
+  if (opcode == 0x3f5) {
+    if (lane) return true;
+    if (!command.Started)
+      throw UnsupportedCommand("approach gauge Start was suppressed; animation state is unavailable");
+    const auto* environment = backend_.ApproachEnvironment();
+    if (!environment) throw UnsupportedCommand("approach gauge environment is unavailable");
+    return UpdateApproachGauge(state_, command.ApproachAnimation, *command.ApproachGauge,
+        *environment, input.Route == UpdateRoute::Skipping, now);
+  }
   if (opcode == 0x3f4) {
     if (lane) return true;
     if (!command.Started)

@@ -48,6 +48,14 @@ class EnvironmentReader {
     Skip(4);
     return value;
   }
+  UiSpriteDescriptor Sprite() {
+    PayloadReader reader(bytes_.subspan(cursor_));
+    UiSpriteDescriptor sprite;
+    sprite.Resource = std::bit_cast<int16_t>(reader.U16());
+    for (auto& word : sprite.Words) word = reader.I32();
+    Skip(34);
+    return sprite;
+  }
   void Table(size_t width) {
     const auto count = Count(width);
     Skip(count * width);
@@ -230,5 +238,151 @@ bool UpdateBattleGauge(SemanticState& state, BattleGaugeAnimation& animation,
     }
   }
   return animation.Display.Finished();
+}
+
+ApproachGaugeEnvironment ApproachGaugeEnvironment::Decode(
+    std::span<const uint8_t> bytes) {
+  EnvironmentReader reader(bytes);
+  ApproachGaugeEnvironment result;
+  reader.Skip(3 + 3 * 4);
+  for (size_t i = 0; i < 6; ++i) {
+    const auto sprite = reader.Sprite();
+    if (i == 3)
+      result.ParticleRegion = {sprite.Words[1], sprite.Words[2],
+                               sprite.Words[5], sprite.Words[6]};
+    if (i == 5) result.ParticleSprite = sprite;
+  }
+  result.PositiveEffectPosition = {reader.Word(), reader.Word()};
+  result.NegativeEffectPosition = {reader.Word(), reader.Word()};
+  reader.Table(34);
+  reader.Skip(2 * 34 + 8 + 34 + 16);
+  reader.Table(34);
+  reader.Table(34);
+  reader.Table(16);
+  reader.Table(8);
+  reader.Table(8);
+  reader.Skip(4);
+  for (size_t i = 0; i < 4; ++i) reader.Table(8);
+  reader.Skip(4 * 4 + 2 * 16 + 4 * 4 + 4 * 34 + 4 * 4 + 6 * 34);
+  result.Duration = reader.Word();
+  result.ParticleMinimumDuration = reader.Word();
+  result.ParticleMaximumDuration = reader.Word();
+  const auto count = reader.Word();
+  if (result.Duration < 0 || result.ParticleMinimumDuration <= 0 ||
+      result.ParticleMaximumDuration < result.ParticleMinimumDuration ||
+      count < 0 || count > 10000 || result.ParticleRegion[2] < 0 ||
+      result.ParticleRegion[3] < 0)
+    throw FormatError("invalid approach gauge environment");
+  result.ParticleCount = size_t(count);
+  return result;
+}
+ApproachGaugeCommand ApproachGaugeCommand::Decode(
+    std::span<const uint8_t> payload) {
+  PayloadReader reader(payload);
+  return {reader.I32()};  // Remaining record alignment bytes are not fields.
+}
+namespace {
+void StartParticle(ApproachParticle& particle, GameRandom& random, size_t index,
+                   const ApproachGaugeEnvironment& environment, uint64_t now) {
+  const auto duration = random.Range(environment.ParticleMinimumDuration,
+                                     environment.ParticleMaximumDuration);
+  particle.Opacity.Start(0, 100, duration, now);
+  const auto width = environment.ParticleRegion[2] / 3;
+  const auto height = environment.ParticleRegion[3] / 3;
+  const auto x =
+      Add(environment.ParticleRegion[0], Multiply(width, int32_t(index % 3)));
+  const auto y =
+      Add(environment.ParticleRegion[1], Multiply(height, int32_t(index / 3)));
+  particle.Position = {float(random.Range(x, Add(x, width))),
+                       float(random.Range(y, Add(y, height)))};
+}
+void TickParticle(ApproachParticle& particle, GameRandom& random, size_t index,
+                  const ApproachGaugeEnvironment& environment, uint64_t now) {
+  if (!particle.Position)
+    throw UnsupportedCommand("approach particle runtime is missing");
+  particle.Opacity.Tick(now);
+  if (!particle.Opacity.Finished()) return;
+  if (particle.Opacity.To != 0)
+    particle.Opacity.Start(particle.Opacity.To, particle.Opacity.From,
+                           particle.Opacity.Duration, now);
+  else
+    StartParticle(particle, random, index, environment, now);
+}
+void ApproachCompletionEvents(SemanticState& state, int32_t delta) {
+  if (state.ApproachGauge != 100) return;
+  if (delta != 0) state.PendingEvents.push_back({GameEventKind::Sound, 23});
+  state.PendingEvents.push_back({GameEventKind::Trophy, 37});
+}
+}  // namespace
+void StartApproachGauge(SemanticState& state, ApproachGaugeAnimation& animation,
+                        ApproachGaugeCommand& command,
+                        const ApproachGaugeEnvironment& environment,
+                        uint64_t now) {
+  if (!state.Approach.Known)
+    throw UnsupportedCommand("restored approach particle context is missing");
+  if (!state.Approach.Particles.empty() && !state.Random.Known())
+    throw UnsupportedCommand("restored game random state is missing");
+  if (state.Approach.Particles.size() != environment.ParticleCount)
+    throw UnsupportedCommand(
+        "restored approach particle count differs from native configuration");
+  if (state.ApproachGauge < 0 || state.ApproachGauge > 100)
+    throw FormatError("initial approach gauge is outside0..100");
+  if (environment.Duration < 0 || environment.ParticleMinimumDuration <= 0 ||
+      environment.ParticleMaximumDuration <
+          environment.ParticleMinimumDuration ||
+      environment.ParticleRegion[2] < 0 || environment.ParticleRegion[3] < 0)
+    throw FormatError("invalid approach gauge environment");
+  for (size_t i = 0; i < state.Approach.Particles.size(); ++i)
+    StartParticle(state.Approach.Particles[i], state.Random, i, environment,
+                  now);
+  animation = {};
+  animation.Started = true;
+  animation.Initial = state.ApproachGauge;
+  animation.Target = int32_t(std::clamp(
+      int64_t(animation.Initial) + command.Delta, int64_t(0), int64_t(100)));
+  command.Delta = animation.Target - animation.Initial;
+  animation.Progress.Start(0, 100, environment.Duration, now);
+  state.Approach.Changing = true;
+  if (command.Delta != 0) {
+    const bool positive = command.Delta > 0;
+    state.PendingEvents.push_back({GameEventKind::Effect, positive ? 10 : 11,
+                                   positive
+                                       ? environment.PositiveEffectPosition
+                                       : environment.NegativeEffectPosition});
+    state.PendingEvents.push_back({GameEventKind::Sound, positive ? 21 : 22});
+  }
+}
+bool UpdateApproachGauge(SemanticState& state,
+                         ApproachGaugeAnimation& animation,
+                         const ApproachGaugeCommand& command,
+                         const ApproachGaugeEnvironment& environment,
+                         bool skipping, uint64_t now) {
+  if (!animation.Started)
+    throw UnsupportedCommand(
+        "approach gauge Start was suppressed; animation state is unavailable");
+  if (animation.Completed) return true;
+  if (skipping) {
+    // Intended endpoint: native adds the entire delta again to an already
+    // interpolated gauge. Snap to the original clamped target instead, so a
+    // normal->skip transition cannot overshoot or count progress twice.
+    state.ApproachGauge = animation.Target;
+    animation.Completed = true;
+  } else {
+    for (size_t i = 0; i < state.Approach.Particles.size(); ++i)
+      TickParticle(state.Approach.Particles[i], state.Random, i, environment,
+                   now);
+    animation.Progress.Tick(now);
+    if (animation.Progress.Finished()) {
+      state.ApproachGauge = animation.Target;
+      state.Approach.Changing = false;
+      animation.Completed = true;
+    } else {
+      const float scaled =
+          float(command.Delta) * float(animation.Progress.Current) / 100.0f;
+      state.ApproachGauge = animation.Initial + static_cast<int32_t>(scaled);
+    }
+  }
+  if (animation.Completed) ApproachCompletionEvents(state, command.Delta);
+  return animation.Completed;
 }
 }  // namespace Impacto::Saekano

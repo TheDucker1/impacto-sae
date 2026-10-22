@@ -12,6 +12,10 @@ class HeadlessBackend : public VmBackend {
   bool AutoReveal = true;
   bool AutoAdvance = true;
   std::optional<BattleGaugeEnvironment> BattleConfig;
+  std::optional<ApproachGaugeEnvironment> ApproachConfig;
+  const ApproachGaugeEnvironment* ApproachEnvironment() const override {
+    return ApproachConfig ? &*ApproachConfig : nullptr;
+  }
   const BattleGaugeEnvironment* BattleEnvironment() const override {
     return BattleConfig ? &*BattleConfig : nullptr;
   }

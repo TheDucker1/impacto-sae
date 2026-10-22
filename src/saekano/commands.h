@@ -3,6 +3,7 @@
 #include "formats.h"
 #include "live2dstate.h"
 #include "gauge.h"
+#include "random.h"
 
 #include <array>
 #include <map>
@@ -14,6 +15,12 @@ namespace Impacto::Saekano {
 struct CharacterState {
   std::vector<uint32_t> PoseHistory;
   uint16_t Priority = 0;
+};
+enum class GameEventKind { Sound, Effect, Trophy };
+struct GameEvent {
+  GameEventKind Kind;
+  int32_t Id;
+  std::array<int32_t, 2> ScreenPosition{};
 };
 
 struct SemanticState {
@@ -46,6 +53,11 @@ struct SemanticState {
   std::array<uint32_t, 2> WindowTypes{};
   Live2dState Live2d;
   BattleGaugeState Battle;
+  GameRandom Random;
+  ApproachGaugeState Approach;
+  // Requests to the host audio/effect/achievement services, not granted rewards
+  // or evidence that a renderer played them. The host drains these each frame.
+  std::vector<GameEvent> PendingEvents;
 };
 
 class UnsupportedCommand : public std::runtime_error {
