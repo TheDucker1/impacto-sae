@@ -3,8 +3,10 @@
 #include "resources.h"
 #include "commands.h"
 #include "../texture/palettecolor.h"
+#include "../texture/vitaswizzle.h"
 
 #include <algorithm>
+#include <bit>
 
 namespace Impacto::Saekano {
 size_t SceneImageDriver::AssetCount(ImageSection) const {
@@ -31,7 +33,7 @@ ImagePixels DecodeSceneImage(std::span<const uint8_t> bytes) {
   if (bytes.size() < 64 || U32(bytes, 0) != 0x00545847 ||
       U32(bytes, 4) != 0x10000003 || U32(bytes, 8) != 1 ||
       U32(bytes, 20) != 0 || U32(bytes, 24) != 1 || U32(bytes, 40) != 0 ||
-      U32(bytes, 48) != 0x60000000 ||
+      (U32(bytes, 48) != 0x60000000 && U32(bytes, 48) != 0) ||
       (U32(bytes, 52) != 0x95001000 && U32(bytes, 52) != 0x95005000) ||
       U32(bytes, 60) != 1)
     throw FormatError("unsupported scene GXT layout");
@@ -41,6 +43,10 @@ ImagePixels DecodeSceneImage(std::span<const uint8_t> bytes) {
   ImagePixels result;
   result.Width = dimensions & 0xFFFF;
   result.Height = dimensions >> 16;
+  const bool swizzled = U32(bytes, 48) == 0;
+  if (swizzled && (!std::has_single_bit(result.Width) ||
+                   !std::has_single_bit(result.Height)))
+    throw FormatError("unsupported non-power-of-two swizzled GXT");
   const uint64_t count = uint64_t(result.Width) * result.Height;
   if (result.Width == 0 || result.Height == 0 || count > 64 * 1024 * 1024 ||
       dataBegin < 64 || pixelsBegin != dataBegin || count != pixelsSize ||
@@ -53,7 +59,14 @@ ImagePixels DecodeSceneImage(std::span<const uint8_t> bytes) {
   for (size_t i = 0; i < count; ++i) {
     const auto color =
         TexLoad::PaletteColor(palette, bytes[pixelsBegin + i], hasAlpha);
-    std::copy(color.begin(), color.end(), result.Rgba.begin() + i * 4);
+    size_t destination = i;
+    if (swizzled) {
+      int x = int(i % result.Width), y = int(i / result.Width);
+      TexLoad::VitaUnswizzle(&x, &y, int(result.Width), int(result.Height));
+      destination = size_t(y) * result.Width + size_t(x);
+    }
+    std::copy(color.begin(), color.end(),
+              result.Rgba.begin() + destination * 4);
   }
   return result;
 }

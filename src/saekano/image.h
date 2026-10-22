@@ -26,7 +26,8 @@ struct ImagePixels {
   uint32_t Width = 0, Height = 0;
   Bytes Rgba;
 };
-// Measured rule/background/CG subset: one linear P8 image and one mip level.
+// Measured scene/sprite subset: one linear or power-of-two swizzled P8 image,
+// one mip level. Shares Impacto's palette and Vita coordinate conversion.
 // Other GXT layouts fail here; the full Impacto loader handles model textures.
 ImagePixels DecodeSceneImage(std::span<const uint8_t> bytes);
 

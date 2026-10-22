@@ -105,58 +105,7 @@ struct SubtextureHeader {
   }                                                               \
   (void)0
 
-// Vita unswizzle
-//
-// Thanks @xdanieldzd, @FireyFly and ryg
-// https://github.com/xdanieldzd/Scarlet/blob/d8aabf430307d35a81b131e40bb3c9a4828bdd7b/Scarlet/Drawing/ImageBinary.cs
-// http://xen.firefly.nu/up/rearrange.c.html
-// https://fgiesen.wordpress.com/2009/12/13/decoding-morton-codes/
-
-/* clang-format off */
-
-// Inverse of Part1By1 - "delete" all odd-indexed bits
-uint32_t Compact1By1(uint32_t x) {
-  x &= 0x55555555;                  // x = -f-e -d-c -b-a -9-8 -7-6 -5-4 -3-2 -1-0
-  x = (x ^ (x >>  1)) & 0x33333333; // x = --fe --dc --ba --98 --76 --54 --32 --10
-  x = (x ^ (x >>  2)) & 0x0f0f0f0f; // x = ---- fedc ---- ba98 ---- 7654 ---- 3210
-  x = (x ^ (x >>  4)) & 0x00ff00ff; // x = ---- ---- fedc ba98 ---- ---- 7654 3210
-  x = (x ^ (x >>  8)) & 0x0000ffff; // x = ---- ---- ---- ---- fedc ba98 7654 3210
-  return x;
-}
-uint32_t DecodeMorton2X(uint32_t code) { return Compact1By1(code >> 0); }
-uint32_t DecodeMorton2Y(uint32_t code) { return Compact1By1(code >> 1); }
-
 namespace TexLoad {
-
-void VitaUnswizzle(int* x, int* y, int width, int height) {
-  // TODO: verify this is even sensible
-  int origX = *x, origY = *y;
-  if (width == 0) width = 16;
-  if (height == 0) height = 16;
-
-  int i = (origY * width) + origX;
-  int min = width < height ? width : height;
-  int k = Uint32Log2(min);
-
-  if (height < width) {
-    // XXXyxyxyx -> XXXxxxyyy
-    int j = i >> (2 * k) << (2 * k)
-        | (DecodeMorton2Y(i) & (min - 1)) << k
-        | (DecodeMorton2X(i) & (min - 1)) << 0;
-    *x = j / height;
-    *y = j % height;
-  }
-  else {
-    // YYYyxyxyx -> YYYyyyxxx
-    int j = i >> (2 * k) << (2 * k)
-        | (DecodeMorton2X(i) & (min - 1)) << k
-        | (DecodeMorton2Y(i) & (min - 1)) << 0;
-    *x = j % width;
-    *y = j / width;
-  }
-}
-
-/* clang-format on */
 
 bool GXTLoadSubtexture(Stream* stream, Texture* outTexture,
                        SubtextureHeader* stx, uint8_t* p4Palettes,

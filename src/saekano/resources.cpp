@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
+#include <charconv>
 #include <limits>
 
 namespace Impacto::Saekano {
@@ -64,10 +66,58 @@ GameResources::GameResources(Bytes resourceDat)
 
 GameResources::GameResources(const GpdaArchive& root)
     : scripts_(ResourceSection(root, 4)), live2d_(ResourceSection(root, 0)) {
+  if (root.Entries().size() > 6)
+    characterPoses_.emplace(ResourceSection(root, 6));
   for (auto section : {ImageSection::Background, ImageSection::Event,
                        ImageSection::Free, ImageSection::Rule})
     if (size_t(section) < root.Entries().size())
       images_.emplace(section, ResourceSection(root, size_t(section)));
+}
+
+CharacterPoseAssets DecodeCharacterPoseArchive(Bytes bytes) {
+  GpdaArchive archive(std::move(bytes));
+  if (archive.Entries().size() != 17)
+    throw FormatError("unsupported character pose archive shape");
+  CharacterPoseAssets result;
+  auto geometry = [&](size_t index, std::span<int32_t> words) {
+    const auto text = RawEntry(archive, index);
+    if (text.empty()) throw FormatError("empty character pose geometry");
+    const char* cursor = reinterpret_cast<const char*>(text.data());
+    const char* end = cursor + text.size();
+    for (auto& word : words) {
+      while (cursor != end && (*cursor == ' ' || *cursor == '\r' ||
+                              *cursor == '\n' || *cursor == '\t'))
+        ++cursor;
+      bool negative = cursor != end && *cursor == '-';
+      if (cursor != end && (*cursor == '+' || *cursor == '-')) ++cursor;
+      uint32_t number = 0;
+      const auto parsed = std::from_chars(cursor, end, number);
+      if (parsed.ec != std::errc{} || parsed.ptr == end || *parsed.ptr != ',')
+        throw FormatError("invalid character pose geometry field");
+      word = std::bit_cast<int32_t>(negative ? 0u - number : number);
+      cursor = parsed.ptr + 1;
+    }
+    // Native consumes only the four/eight comma-terminated values, not a
+    // null-terminated filename or an invented record count.
+  };
+  geometry(0, std::span(result.Geometry).first(4));
+  geometry(1, std::span(result.Geometry).subspan(4));
+  for (size_t i = 0; i < result.Textures.size(); ++i)
+    result.Textures[i] = {archive.Entries()[i + 2].Name, RawEntry(archive, i + 2)};
+  return result;
+}
+
+size_t GameResources::CharacterPoseCount() const {
+  return characterPoses_ ? characterPoses_->Entries().size() : 0;
+}
+CharacterPoseAssets GameResources::LoadCharacterPose(size_t poseId) const {
+  if (poseId >= CharacterPoseCount())
+    throw FormatError("character pose ID outside original archive");
+  // Root6 is a type0 gzip member containing an in-memory GPDA, unlike scene
+  // images' type1 GXT members. Callback800070c6 inflates before parser80006972.
+  auto result = DecodeCharacterPoseArchive(CompressedEntry(*characterPoses_, poseId, 0));
+  result.Name = characterPoses_->Entries()[poseId].Name;
+  return result;
 }
 
 size_t GameResources::ImageCount(ImageSection section) const {
