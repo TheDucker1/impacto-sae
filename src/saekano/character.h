@@ -62,4 +62,15 @@ void StartCharacterColor(SemanticState& state,
 bool UpdateCharacterColor(SemanticState& state,
                           const CharacterColorCommand& command, bool skipping,
                           uint64_t now);
+struct CharacterPositionCommand {
+  uint32_t Route = 0, Character = 0;
+  std::array<int32_t, 2> Position{};
+  uint32_t Lane = 0;
+  static CharacterPositionCommand Decode(std::span<const uint8_t> payload);
+};
+void StartCharacterPosition(SemanticState& state,
+                            const CharacterPositionCommand& command);
+void UpdateCharacterPosition(SemanticState& state,
+                             const CharacterPositionCommand& command, bool lane,
+                             uint64_t now);
 }  // namespace Impacto::Saekano

@@ -97,6 +97,7 @@ class VirtualMachine {
     std::optional<DrawImageCommand> DrawImage;
     DrawImageAnimation ImageAnimation;
     std::optional<CharacterColorCommand> CharacterColor;
+    std::optional<CharacterPositionCommand> CharacterPosition;
     int32_t WaitDuration = 0;
     uint32_t WaitHonorSkip = 0;
     size_t SelectedOrdinal = 0;

@@ -190,4 +190,43 @@ bool UpdateCharacterColor(SemanticState& state,
   return command.Duration == 0 || command.Background != 0 ||
          state.CharacterRuntimeState.Foreground.empty();
 }
+CharacterPositionCommand CharacterPositionCommand::Decode(
+    std::span<const uint8_t> payload) {
+  PayloadReader reader(payload);
+  CharacterPositionCommand result;
+  result.Route = reader.U32();
+  result.Character = reader.U32();
+  result.Position = {reader.I32(), reader.I32()};
+  result.Lane = reader.U32();
+  if (result.Route && result.Lane >= 5)
+    throw FormatError("character position lane exceeds engine lane count");
+  return result;
+}
+void StartCharacterPosition(SemanticState& state,
+                            const CharacterPositionCommand& command) {
+  if (!state.CharacterRuntimeState.Known)
+    throw UnsupportedCommand("restored character map is missing for position");
+  // Native Start searches with the full word, then inserts a narrowed key.
+  // Out-of-domain IDs can overwrite an unrelated runtime; no authored record
+  // uses them. Reject that undefined/aliasing behavior rather than emulate it.
+  if (command.Character > UINT16_MAX)
+    throw FormatError("character position ID exceeds native map key domain");
+  EnsureCharacter(state, uint16_t(command.Character));
+}
+void UpdateCharacterPosition(SemanticState& state,
+                             const CharacterPositionCommand& command, bool lane,
+                             uint64_t now) {
+  if (command.Route && !lane) return;
+  if (!state.CharacterRuntimeState.Known)
+    throw UnsupportedCommand("restored character map is missing for position");
+  auto found = state.Characters.find(uint16_t(command.Character));
+  if (found == state.Characters.end() || !found->second.RuntimeKnown)
+    throw UnsupportedCommand(
+        "character position needs its Start-created runtime");
+  auto& actor = found->second;
+  for (size_t i = 0; i < 2; ++i) {
+    const auto value = command.Position[i];
+    actor.Tweens[size_t(CharacterTween::X) + i].Start(value, value, 0, now);
+  }
+}
 }  // namespace Impacto::Saekano
