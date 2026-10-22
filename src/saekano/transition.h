@@ -36,6 +36,8 @@ struct CgHistoryState {
   std::vector<int32_t> Values, Required;
   int32_t Default = 0;
 };
+void ValidateCgHistory(const CgHistoryState& history, int32_t id);
+void MarkCgViewed(SemanticState& state, int32_t id);
 struct RuleWipeState {
   bool Known = false;
   bool Active = false, Auxiliary = false;  // C1be9, C1be8.

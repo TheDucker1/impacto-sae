@@ -37,6 +37,11 @@ class SceneImageDriver {
   virtual void Prepare(ImageSlot slot, ImageKey key) = 0;
   virtual bool Ready() const = 0;
   virtual void Release(ImageSlot slot) = 0;
+  // Per-category resource records are separate from the rule-wipe bindings.
+  virtual size_t AssetCount(ImageSection section) const;
+  virtual void RequestAsset(ImageKey key);
+  virtual bool AssetReady(ImageKey key) const;
+  virtual void ReleaseAsset(ImageKey key);
 };
 
 // Real original-archive read, gzip verification and bounded palette expansion.
@@ -52,6 +57,11 @@ class ArchiveSceneImages : public SceneImageDriver {
   void Release(ImageSlot slot) override;
   const ImagePixels* Pixels(ImageSlot slot) const;
   std::optional<ImageKey> Key(ImageSlot slot) const;
+  size_t AssetCount(ImageSection section) const override;
+  void RequestAsset(ImageKey key) override;
+  bool AssetReady(ImageKey key) const override;
+  void ReleaseAsset(ImageKey key) override;
+  const ImagePixels* AssetPixels(ImageKey key) const;
 
  private:
   GameResources& resources_;
@@ -59,5 +69,6 @@ class ArchiveSceneImages : public SceneImageDriver {
       slots_;
   std::array<std::optional<ImageKey>, size_t(ImageSlot::Count)> keys_;
   std::map<ImageKey, std::weak_ptr<const ImagePixels>> cache_;
+  std::map<ImageKey, std::shared_ptr<const ImagePixels>> assets_;
 };
 }  // namespace Impacto::Saekano

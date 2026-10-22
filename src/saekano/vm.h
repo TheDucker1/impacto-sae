@@ -94,6 +94,8 @@ class VirtualMachine {
     RuleWipeAnimation WipeAnimation;
     std::optional<ScreenFadeCommand> ScreenFade;
     ScreenFadeAnimation FadeAnimation;
+    std::optional<DrawImageCommand> DrawImage;
+    DrawImageAnimation ImageAnimation;
     int32_t WaitDuration = 0;
     uint32_t WaitHonorSkip = 0;
     size_t SelectedOrdinal = 0;

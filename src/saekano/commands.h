@@ -5,6 +5,7 @@
 #include "gauge.h"
 #include "random.h"
 #include "transition.h"
+#include "imagelayer.h"
 
 #include <array>
 #include <map>
@@ -62,6 +63,8 @@ struct SemanticState {
   RuleWipeState RuleWipe;
   std::optional<int32_t> ScreenFade;  // C1504, omitted from portable restored inputs.
   CgHistoryState CgHistory;  // Owner state; survives file/context replacement.
+  SceneImageState SceneImages;
+  std::optional<int32_t> LastBackgroundId;  // Owner S+5e830, outside Bank0.
   // Requests to the host audio/effect/achievement services, not granted rewards
   // or evidence that a renderer played them. The host drains these each frame.
   std::vector<GameEvent> PendingEvents;

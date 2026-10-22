@@ -45,6 +45,9 @@ void VirtualMachine::Load(bool preserveOwnerState) {
       command.ScreenFade = ScreenFadeCommand::Decode(script_->Payload(i), opcode == 0xc9);
     } else if (opcode == 0x191) {
       command.RuleWipe = RuleWipeCommand::Decode(script_->Payload(i));
+    } else if (opcode == 0xcb) {
+      command.DrawImage = DrawImageCommand::Decode(script_->Payload(i));
+      command.Routing = {command.DrawImage->Route != 0, command.DrawImage->Lane};
     } else if (opcode == 0x438) {
       command.Live2d = DecodeLive2d(script_->Payload(i));
     } else if (opcode == 0x3f4) {
@@ -91,6 +94,14 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     state_.BgmTrack.reset();
     state_.Effects = {};
     state_.RuleWipe = {};
+    if (state_.SceneImages.Known) {
+      NativeImageSavePrefix empty;
+      for (size_t group = 0; group < 3; ++group)
+        empty.TextureReferences[group].resize(state_.SceneImages.Slots.TextureReferences[group].size());
+      auto* driver = backend_.Images();
+      if (!driver) throw UnsupportedCommand("scene image resource pool is unavailable");
+      state_.SceneImages = RestoreSceneImages(empty, *driver);
+    }
     if (auto* images = backend_.Images()) {
       images->Release(ImageSlot::Rule);
       images->Release(ImageSlot::Background);
@@ -199,6 +210,14 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
     if (lane || !command.Routing.QueueForLane) SetupMessage(index, now);
   } else if ((opcode == 0xc8 || opcode == 0xc9) && !lane) {
     StartScreenFade(state_, command.FadeAnimation, *command.ScreenFade, now);
+  } else if (opcode == 0xcb) {
+    auto* images = backend_.Images();
+    if (!images) throw UnsupportedCommand("scene image resource backend is unavailable");
+    StartDrawImage(state_, command.ImageAnimation, *command.DrawImage, *images, now);
+  } else if (opcode == 0xce && !lane) {
+    auto* images = backend_.Images();
+    if (!images) throw UnsupportedCommand("scene image resource backend is unavailable");
+    StartReleaseImage(state_, ReleaseImageCommand::Decode(script_->Payload(index)), *images);
   } else if (opcode == 0x191 && !lane) {
     auto* images = backend_.Images();
     if (!images) throw UnsupportedCommand("scene image resource backend is unavailable");
@@ -244,9 +263,15 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
 bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& input, bool lane) {
   auto& command = commands_.at(index);
   const auto opcode = script_->Records()[index].Opcode;
-  if (!lane && command.Routing.QueueForLane) return true;
+  if (!lane && command.Routing.QueueForLane && opcode != 0xcb) return true;
   if (lane && !command.LaneStarted) Start(index, now, true);
-  if (opcode == 0x259) return true;  // Native common normal/skip/lane completion; no fade wait.
+  if (opcode == 0x259 || opcode == 0xce) return true;  // Native common completion; no fade/resource wait.
+  if (opcode == 0xcb) {
+    auto* images = backend_.Images();
+    if (!images) throw UnsupportedCommand("scene image resource backend is unavailable");
+    return UpdateDrawImage(state_, command.ImageAnimation, *command.DrawImage, *images,
+        input.Route == UpdateRoute::Skipping, now);
+  }
   if (opcode == 0xc8 || opcode == 0xc9) {
     if (lane) return true;
     return UpdateScreenFade(state_, command.FadeAnimation, *command.ScreenFade,

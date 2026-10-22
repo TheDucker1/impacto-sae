@@ -21,6 +21,26 @@ ImageSection BackgroundSection(int32_t kind) {
   throw UnsupportedCommand("unsupported rule-wipe background kind");
 }
 }  // namespace
+void ValidateCgHistory(const CgHistoryState& history, int32_t id) {
+  if (!history.Known)
+    throw UnsupportedCommand("initial CG history/required list is missing");
+  if (id < 0 || id > 1000000)
+    throw FormatError("CG history exceeds host budget");
+  for (auto required : history.Required) HistoryValue(history, required);
+}
+void MarkCgViewed(SemanticState& state, int32_t id) {
+  ValidateCgHistory(state.CgHistory, id);
+  if (!Unlocked(HistoryValue(state.CgHistory, id))) {
+    if (size_t(id) >= state.CgHistory.Values.size())
+      state.CgHistory.Values.resize(size_t(id) + 1, state.CgHistory.Default);
+    state.CgHistory.Values[size_t(id)] = 1;
+  }
+  if (std::all_of(state.CgHistory.Required.begin(),
+                  state.CgHistory.Required.end(), [&](int32_t item) {
+                    return Unlocked(HistoryValue(state.CgHistory, item));
+                  }))
+    state.PendingEvents.push_back({GameEventKind::Trophy, 29});
+}
 ScreenFadeCommand ScreenFadeCommand::Decode(std::span<const uint8_t> payload,
                                             bool out) {
   PayloadReader reader(payload);
@@ -101,13 +121,7 @@ void StartRuleWipe(SemanticState& state, RuleWipeAnimation& animation,
   if (command.BackgroundKind >= 2 && *command.ColorOrImage < 0)
     throw FormatError("negative rule-wipe background image");
   const bool cg = command.BackgroundKind == 3 && !runtime.BackgroundReused;
-  if (cg && !state.CgHistory.Known)
-    throw UnsupportedCommand("initial CG history/required list is missing");
-  if (cg) {
-    if (*command.ColorOrImage > 1000000)
-      throw FormatError("CG history exceeds host budget");
-    for (auto id : state.CgHistory.Required) HistoryValue(state.CgHistory, id);
-  }
+  if (cg) ValidateCgHistory(state.CgHistory, *command.ColorOrImage);
   if (!runtime.RuleReused) {
     images.Prepare(ImageSlot::Rule,
                    {ImageSection::Rule, uint32_t(command.RuleId)});
@@ -140,19 +154,7 @@ void StartRuleWipe(SemanticState& state, RuleWipeAnimation& animation,
     state.PendingEvents.push_back(
         {GameEventKind::StopChannel,
          Signed(uint32_t(state.Effects.FirstAudioChannel) + i)});
-  if (cg) {
-    const auto id = *command.ColorOrImage;
-    if (!Unlocked(HistoryValue(state.CgHistory, id))) {
-      if (size_t(id) >= state.CgHistory.Values.size())
-        state.CgHistory.Values.resize(size_t(id) + 1, state.CgHistory.Default);
-      state.CgHistory.Values[size_t(id)] = 1;
-    }
-    if (std::all_of(state.CgHistory.Required.begin(),
-                    state.CgHistory.Required.end(), [&](int32_t item) {
-                      return Unlocked(HistoryValue(state.CgHistory, item));
-                    }))
-      state.PendingEvents.push_back({GameEventKind::Trophy, 29});
-  }
+  if (cg) MarkCgViewed(state, *command.ColorOrImage);
   state.RuleWipe = next;
   animation = runtime;
 }

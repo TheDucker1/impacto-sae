@@ -1,11 +1,24 @@
 #include "image.h"
 
 #include "resources.h"
+#include "commands.h"
 #include "../texture/palettecolor.h"
 
 #include <algorithm>
 
 namespace Impacto::Saekano {
+size_t SceneImageDriver::AssetCount(ImageSection) const {
+  throw UnsupportedCommand("scene image resource pool is unavailable");
+}
+void SceneImageDriver::RequestAsset(ImageKey) {
+  throw UnsupportedCommand("scene image resource pool is unavailable");
+}
+bool SceneImageDriver::AssetReady(ImageKey) const {
+  throw UnsupportedCommand("scene image resource pool is unavailable");
+}
+void SceneImageDriver::ReleaseAsset(ImageKey) {
+  throw UnsupportedCommand("scene image resource pool is unavailable");
+}
 namespace {
 uint32_t U32(std::span<const uint8_t> bytes, size_t offset) {
   if (offset > bytes.size() || bytes.size() - offset < 4)
@@ -63,5 +76,26 @@ const ImagePixels* ArchiveSceneImages::Pixels(ImageSlot slot) const {
 }
 std::optional<ImageKey> ArchiveSceneImages::Key(ImageSlot slot) const {
   return keys_.at(size_t(slot));
+}
+size_t ArchiveSceneImages::AssetCount(ImageSection section) const {
+  return resources_.ImageCount(section);
+}
+void ArchiveSceneImages::RequestAsset(ImageKey key) {
+  if (assets_.contains(key)) return;
+  auto image = cache_[key].lock();
+  if (!image) {
+    auto asset = resources_.LoadImage(key.Section, key.Id);
+    image = std::make_shared<ImagePixels>(DecodeSceneImage(asset.Data));
+    cache_[key] = image;
+  }
+  assets_[key] = std::move(image);
+}
+bool ArchiveSceneImages::AssetReady(ImageKey key) const {
+  return assets_.contains(key);
+}
+void ArchiveSceneImages::ReleaseAsset(ImageKey key) { assets_.erase(key); }
+const ImagePixels* ArchiveSceneImages::AssetPixels(ImageKey key) const {
+  const auto found = assets_.find(key);
+  return found == assets_.end() ? nullptr : found->second.get();
 }
 }  // namespace Impacto::Saekano
