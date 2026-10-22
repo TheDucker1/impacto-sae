@@ -48,6 +48,9 @@ std::optional<float> Live2dParameterValue(const Live2dState& state,
 // Implemented by the model/resource backend, not by a permissive no-op
 // fallback. It owns parsed SDK objects and their game-specific motion/eye/tween
 // runtime.
+struct Live2dTransform {
+  std::array<float, 2> Position{}, Scale{};
+};
 class Live2dDriver {
  public:
   virtual ~Live2dDriver() = default;
@@ -62,6 +65,11 @@ class Live2dDriver {
                      uint64_t now) = 0;
   virtual void Remove(const Live2dRecord& record) = 0;
   virtual void Reset() = 0;
+  // Game mode effects operate on current renderer transforms and do not alter
+  // script-record targets (which are used by native save serialization).
+  virtual Live2dTransform CurrentTransform(const Live2dRecord& record) const;
+  virtual void SetTransform(const Live2dRecord& record, const Live2dTransform& transform,
+                            uint64_t now);
 };
 
 void StartLive2d(Live2dState& state, const Live2dCommand& command,

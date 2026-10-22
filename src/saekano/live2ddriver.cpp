@@ -174,6 +174,26 @@ SdkLive2dDriver::SdkLive2dDriver(GameResources& resources,
                                  Live2dEnvironment environment)
     : resources_(resources), environment_(std::move(environment)) {}
 SdkLive2dDriver::~SdkLive2dDriver() = default;
+Live2dTransform SdkLive2dDriver::CurrentTransform(const Live2dRecord& record) const {
+  if (!record.ResourceId) throw UnsupportedCommand("battle model record has no resource ID");
+  const auto& item = Get(*record.ResourceId);
+  if (!item.Attached) throw UnsupportedCommand("battle model resource is not attached");
+  return {{item.Position[0].Current, item.Position[1].Current},
+          {item.Scale[0].Current, item.Scale[1].Current}};
+}
+void SdkLive2dDriver::SetTransform(const Live2dRecord& record,
+                                  const Live2dTransform& transform, uint64_t now) {
+  for (auto value : transform.Position)
+    if (!std::isfinite(value)) throw FormatError("non-finite battle position");
+  for (auto value : transform.Scale)
+    if (!std::isfinite(value)) throw FormatError("non-finite battle scale");
+  auto& item = Get(record);
+  sdk_.SetTime(now);
+  for (size_t axis = 0; axis < 2; ++axis) {
+    item.Position[axis].Target(transform.Position[axis], 0);
+    item.Scale[axis].Target(transform.Scale[axis], 0);
+  }
+}
 bool SdkLive2dDriver::Supports(uint32_t selector) const {
   switch (selector) {
     case 2:

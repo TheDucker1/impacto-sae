@@ -1,4 +1,5 @@
 #include "vm.h"
+#include "messagekeywords.h"
 
 #include <algorithm>
 #include <bit>
@@ -42,6 +43,8 @@ void VirtualMachine::Load(bool preserveOwnerState) {
       command.Routing = {command.Message->Route != 0, command.Message->Lane};
     } else if (opcode == 0x438) {
       command.Live2d = DecodeLive2d(script_->Payload(i));
+    } else if (opcode == 0x3f4) {
+      command.BattleGauge = BattleGaugeCommand::Decode(script_->Payload(i));
     } else if (opcode == 0x2c0) {
       PayloadReader reader(script_->Payload(i));
       command.WaitDuration = reader.I32();
@@ -78,10 +81,19 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     if (auto* models = backend_.Models()) models->Reset();
     state_.ApproachGauge = 0;
     state_.BattleGauge = 50;
+    state_.Battle = {};  // Mode entry must initialize its display and sides.
     state_.DayEnabled = 0;
+    const auto keywordSuppressed = messageContext_.KeywordSuppressed;
     messageContext_ = {};
+    messageContext_.KeywordSuppressed = keywordSuppressed;  // owner S survives
     dispatcher_ = {};
   }
+  messageKeywords_ = {};
+  for (size_t side = 0; side < 2; ++side)
+    for (const auto& text : state_.Messages[side]) {
+      const auto keywords = OriginalMessageKeywords(text);
+      messageKeywords_[side].insert(messageKeywords_[side].end(), keywords.begin(), keywords.end());
+    }
 }
 
 uint16_t VirtualMachine::Opcode() const {
@@ -113,7 +125,16 @@ void VirtualMachine::SetupMessage(size_t index, uint64_t now) {
   const auto& message = *commands_[index].Message;
   const size_t context = messageContext_.SplitDialogue && message.SpeakerId != -1 &&
       message.SpeakerId != messageContext_.Side0Character ? 1 : 0;
-  if (messageContext_.PreviousCompletionPolicy == 0) state_.Messages[context].clear();
+  const auto keywords = OriginalMessageKeywords(message.Text);
+  if ((!keywords.empty() || (messageContext_.PreviousCompletionPolicy != 0 && !messageKeywords_[context].empty())) &&
+      !messageContext_.KeywordSuppressed.has_value())
+    throw UnsupportedCommand("restored message keyword suppression input is missing");
+  if (messageContext_.PreviousCompletionPolicy == 0) {
+    state_.Messages[context].clear();
+    messageKeywords_[context].clear();
+  }
+  commands_[index].MessageSide = context;
+  messageKeywords_[context].insert(messageKeywords_[context].end(), keywords.begin(), keywords.end());
   state_.Messages[context].push_back(message.Text);
   state_.SpeakerId = message.SpeakerId;
   if (context == 0) {
@@ -121,6 +142,14 @@ void VirtualMachine::SetupMessage(size_t index, uint64_t now) {
     for (const auto& text : state_.Messages[0]) state_.ActiveText += text;
   }
   backend_.BeginMessage(index, message, context, now);
+}
+void VirtualMachine::CollectMessageKeywords(size_t index) {
+  const auto& keywords = messageKeywords_[commands_[index].MessageSide];
+  if (keywords.empty()) return;
+  if (!messageContext_.KeywordSuppressed.has_value())
+    throw UnsupportedCommand("restored message keyword suppression input is missing");
+  if (!*messageContext_.KeywordSuppressed)
+    for (const auto keyword : keywords) state_.Bank0.at(size_t(keyword)) = 1;
 }
 
 void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
@@ -136,6 +165,11 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
   }
   if (opcode == 0x64) {
     if (lane || !command.Routing.QueueForLane) SetupMessage(index, now);
+  } else if (opcode == 0x3f4 && !lane) {
+    const auto* environment = backend_.BattleEnvironment();
+    if (!environment) throw UnsupportedCommand("battle gauge environment is unavailable");
+    StartBattleGauge(state_, command.BattleAnimation, *command.BattleGauge,
+        *environment, backend_.Models(), now);
   } else if (opcode == 0x438 && !lane) {
     if (!state_.Live2d.Known)
       throw UnsupportedCommand("restored Live2D records/parameter slots are missing");
@@ -147,6 +181,7 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
     state_.DayEnabled = 0;
   } else if ((opcode == 0x66 || opcode == 0x1fb || opcode == 0x3ea) && !lane) {
     CompleteCommand(state_, opcode, script_->Payload(index), {});
+    if (opcode == 0x66) messageKeywords_[0].clear();
   } else if (opcode == 0x12e && !lane) {
     if (!messageContext_.Known)
       throw UnsupportedCommand("restored split-side context is missing for window type");
@@ -164,6 +199,13 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
   const auto opcode = script_->Records()[index].Opcode;
   if (!lane && command.Routing.QueueForLane) return true;
   if (lane && !command.LaneStarted) Start(index, now, true);
+  if (opcode == 0x3f4) {
+    if (lane) return true;
+    if (!command.Started)
+      throw UnsupportedCommand("battle gauge Start was suppressed; animation state is unavailable");
+    return UpdateBattleGauge(state_, command.BattleAnimation, backend_.Models(),
+        input.Route == UpdateRoute::Skipping, now);
+  }
   if (opcode == 0x438) {
     if (lane) return true;  // Native shared lane handlers only mark completion.
     if (!command.Started)
@@ -178,6 +220,7 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
       throw UnsupportedCommand("message Start was suppressed; runtime reveal state is unavailable");
     if (lane && input.Route == UpdateRoute::Skipping) {
       backend_.RevealMessage(index);
+      CollectMessageKeywords(index);
       messageContext_.PreviousCompletionPolicy = command.Message->CompletionPolicy;
       return true;
     }
@@ -190,6 +233,7 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
       if (input.Advance || input.Route == UpdateRoute::Skipping) backend_.RevealMessage(index);
       return false;
     }
+    CollectMessageKeywords(index);
     if (input.Route == UpdateRoute::Skipping || command.Message->CompletionPolicy == 1 ||
         ((command.Message->CompletionPolicy == 0 || command.Message->CompletionPolicy == 2) &&
          (input.Advance || backend_.MessageAdvanceAllowed(index, now))))

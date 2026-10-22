@@ -2,6 +2,7 @@
 
 #include "formats.h"
 #include "live2dstate.h"
+#include "gauge.h"
 
 #include <array>
 #include <map>
@@ -44,6 +45,7 @@ struct SemanticState {
   std::array<uint32_t, 2> WindowOpenness{};
   std::array<uint32_t, 2> WindowTypes{};
   Live2dState Live2d;
+  BattleGaugeState Battle;
 };
 
 class UnsupportedCommand : public std::runtime_error {

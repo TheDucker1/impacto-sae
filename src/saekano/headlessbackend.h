@@ -11,6 +11,10 @@ class HeadlessBackend : public VmBackend {
  public:
   bool AutoReveal = true;
   bool AutoAdvance = true;
+  std::optional<BattleGaugeEnvironment> BattleConfig;
+  const BattleGaugeEnvironment* BattleEnvironment() const override {
+    return BattleConfig ? &*BattleConfig : nullptr;
+  }
   void BeginMessage(size_t command, const MessageCommand&, size_t, uint64_t) override {
     revealed_[command] = AutoReveal;
   }

@@ -14,6 +14,7 @@ struct MessageRuntimeContext {
   uint32_t PreviousCompletionPolicy = 0;  // C+1598
   bool SplitDialogue = false;            // C+20ac
   int32_t Side0Character = 0;             // C+20b4
+  std::optional<bool> KeywordSuppressed = false;  // S+7a4d4; SAS1 omitted it.
 };
 
 class ScriptSource {
@@ -33,6 +34,7 @@ class VmBackend {
   virtual bool MessageAdvanceAllowed(size_t command, uint64_t now) = 0;
   virtual void RevealMessage(size_t command) = 0;
   virtual Live2dDriver* Models() { return nullptr; }
+  virtual const BattleGaugeEnvironment* BattleEnvironment() const { return nullptr; }
   virtual bool Supports(uint16_t) const { return false; }
   virtual CompletedCommand Route(uint16_t opcode, std::span<const uint8_t> payload) const;
   virtual void StartPresentation(size_t command, uint16_t opcode,
@@ -78,7 +80,10 @@ class VirtualMachine {
     uint32_t SavedDay = 0;
     CompletedCommand Routing;
     std::optional<MessageCommand> Message;
+    size_t MessageSide = 0;
     std::optional<Live2dCommand> Live2d;
+    std::optional<BattleGaugeCommand> BattleGauge;
+    BattleGaugeAnimation BattleAnimation;
     int32_t WaitDuration = 0;
     uint32_t WaitHonorSkip = 0;
     size_t SelectedOrdinal = 0;
@@ -93,11 +98,13 @@ class VirtualMachine {
   DispatchState dispatcher_;
   std::unique_ptr<ScriptObject> script_;
   std::vector<RuntimeCommand> commands_;
+  std::array<std::vector<int32_t>, 2> messageKeywords_;
   VmBoundary boundary_ = VmBoundary::BeforeStart;
   void Load(bool preserveOwnerState);
   void Start(size_t index, uint64_t now, bool lane);
   bool Update(size_t index, uint64_t now, const CommandInput& input, bool lane);
   void SetupMessage(size_t index, uint64_t now);
+  void CollectMessageKeywords(size_t index);
   void UpdateLanes(uint64_t now);
   VmEvent Event(VmBoundary boundary) const;
 };

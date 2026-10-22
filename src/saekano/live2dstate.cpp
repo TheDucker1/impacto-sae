@@ -7,6 +7,12 @@
 #include <cmath>
 
 namespace Impacto::Saekano {
+Live2dTransform Live2dDriver::CurrentTransform(const Live2dRecord&) const {
+  throw UnsupportedCommand("model backend does not expose current transforms");
+}
+void Live2dDriver::SetTransform(const Live2dRecord&, const Live2dTransform&, uint64_t) {
+  throw UnsupportedCommand("model backend does not implement mode transforms");
+}
 namespace {
 float Float(PayloadReader& reader) {
   const float value = std::bit_cast<float>(reader.U32());

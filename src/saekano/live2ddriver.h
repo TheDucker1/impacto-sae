@@ -41,6 +41,9 @@ class SdkLive2dDriver final : public Live2dDriver {
              uint64_t now) override;
   void Remove(const Live2dRecord& record) override;
   void Reset() override;
+  Live2dTransform CurrentTransform(const Live2dRecord& record) const override;
+  void SetTransform(const Live2dRecord& record, const Live2dTransform& transform,
+                    uint64_t now) override;
   // Recreates the native game's SAVE/LOAD behavior; this deliberately starts
   // fresh queues/tweens, rather than transplanting an arbitrary live SDK state.
   // Prepare transactionally so a bad save cannot destroy the current scene.
