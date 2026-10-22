@@ -306,6 +306,42 @@ void SdkLive2dDriver::Remove(const Live2dRecord& record) {
   if (record.ResourceId) Get(*record.ResourceId).Attached = false;
 }
 void SdkLive2dDriver::Reset() { items_.clear(); }
+void SdkLive2dDriver::Restore(const Live2dState& state, uint64_t now) {
+  if (!state.Known)
+    throw UnsupportedCommand("Live2D restore requires known records");
+  for (const auto& parameter : state.Parameters)
+    if (!std::isfinite(parameter.Value))
+      throw FormatError("non-finite restored Live2D parameter");
+  SdkLive2dDriver prepared(resources_, environment_);
+  for (const auto& record : state.Records) {
+    if (!record.ResourceId || !record.Position || !record.Scale ||
+        !record.Enabled || !record.Color || !record.AnimationIndex ||
+        !record.Pose)
+      throw UnsupportedCommand("Live2D restore record fields are incomplete");
+    if (prepared.ResourceReady(*record.ResourceId))
+      throw FormatError("duplicate Live2D restore resource");
+    prepared.RequestResource(*record.ResourceId, record.LogicalId, now);
+    prepared.Attach(record, record.LogicalId, now);
+    const auto apply = [&](uint32_t selector, int32_t value,
+                           const std::array<float, 2>& vector,
+                           const std::array<uint8_t, 4>& color) {
+      Live2dCommand command;
+      command.Selector = selector;
+      command.Target = record.LogicalId;
+      command.Value = value;
+      command.Vector = vector;
+      command.Color = color;
+      prepared.Apply(record, command, now);
+    };
+    apply(3, *record.Enabled, {}, {});
+    apply(13, 0, *record.Scale, {});
+    apply(12, 0, *record.Position, {});
+    apply(21, 0, {}, *record.Color);
+    apply(16, *record.AnimationIndex, {}, {});
+    apply(6, *record.Pose, {}, {});
+  }
+  items_.swap(prepared.items_);
+}
 void SdkLive2dDriver::Frame(const Live2dState& state, uint64_t now) {
   if (!state.Known)
     throw UnsupportedCommand("Live2D frame requires known model records");

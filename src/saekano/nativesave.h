@@ -1,6 +1,7 @@
 #pragma once
 
 #include "formats.h"
+#include "live2dstate.h"
 
 #include <array>
 
@@ -31,4 +32,13 @@ struct NativeLive2dSaveTail {
 // provenance and the native load contract before using it to initialize a VM.
 NativeLive2dSaveTail DecodeNativeLive2dSaveTail(std::span<const uint8_t> bytes,
                                                 size_t used, uint32_t count);
+// Native801a3730 rebuilds the record vector;80072630 then starts fresh model
+// animation state, snaps saved transforms, selects saved loop/expression.
+// Persistent slots are separate captured context fields, not part of this tail.
+Live2dState RestoreNativeLive2dRecords(
+    const NativeLive2dSaveTail& saved,
+    const std::array<Live2dParameterSlot, 2>& parameters);
+// L2R1 is our explicit bridge packet, not a native game format. It carries
+// matched save bytes/used/count and independently captured parameter slots.
+Live2dState DecodeNativeLive2dRestorePacket(std::span<const uint8_t> packet);
 }  // namespace Impacto::Saekano
