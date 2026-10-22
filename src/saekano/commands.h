@@ -6,6 +6,7 @@
 #include "random.h"
 #include "transition.h"
 #include "imagelayer.h"
+#include "character.h"
 
 #include <array>
 #include <map>
@@ -14,10 +15,6 @@
 
 namespace Impacto::Saekano {
 
-struct CharacterState {
-  std::vector<uint32_t> PoseHistory;
-  uint16_t Priority = 0;
-};
 enum class GameEventKind { Sound, Effect, Trophy, StopBgm, StopChannel };
 struct GameEvent {
   GameEventKind Kind;
@@ -52,6 +49,7 @@ struct SemanticState {
   std::array<std::vector<std::u16string>, 2> Messages;
   std::vector<std::u16string> Titles;
   std::map<uint16_t, CharacterState> Characters;
+  CharacterRuntime CharacterRuntimeState;
   std::array<uint32_t, 2> WindowOpenness{};
   std::array<uint32_t, 2> WindowTypes{};
   Live2dState Live2d;

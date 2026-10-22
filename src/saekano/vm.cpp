@@ -48,6 +48,8 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     } else if (opcode == 0xcb) {
       command.DrawImage = DrawImageCommand::Decode(script_->Payload(i));
       command.Routing = {command.DrawImage->Route != 0, command.DrawImage->Lane};
+    } else if (opcode == 0x201) {
+      command.CharacterColor = CharacterColorCommand::Decode(script_->Payload(i));
     } else if (opcode == 0x438) {
       command.Live2d = DecodeLive2d(script_->Payload(i));
     } else if (opcode == 0x3f4) {
@@ -84,6 +86,7 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     state_.FirstAsyncCommandIndex = -1;
     state_.DivergenceStack.clear();
     state_.Characters.clear();
+    state_.CharacterRuntimeState = {true,0xffffffff,{},{}};
     state_.WindowOpenness = {};
     state_.WindowTypes = {};
     state_.Live2d = {};
@@ -138,6 +141,12 @@ uint16_t VirtualMachine::Opcode() const {
 }
 VmEvent VirtualMachine::Event(VmBoundary boundary) const {
   return {boundary, state_.ScriptFileId, state_.CurrentCommandIndex, Opcode()};
+}
+VmEvent VirtualMachine::FrameEvent(VmBoundary boundary, uint64_t now) {
+  // Native800740c4 schedules shared character queues after main/lane handlers.
+  // Queue completion therefore becomes visible to a waiting command next step.
+  TickCharacterQueues(state_, now);
+  return Event(boundary);
 }
 void VirtualMachine::SetMessageContext(MessageRuntimeContext context) {
   if (boundary_ != VmBoundary::BeforeStart && boundary_ != VmBoundary::FileLoadedBeforeStart)
@@ -218,6 +227,8 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
     auto* images = backend_.Images();
     if (!images) throw UnsupportedCommand("scene image resource backend is unavailable");
     StartReleaseImage(state_, ReleaseImageCommand::Decode(script_->Payload(index)), *images);
+  } else if (opcode == 0x201 && !lane) {
+    StartCharacterColor(state_, *command.CharacterColor, now);
   } else if (opcode == 0x191 && !lane) {
     auto* images = backend_.Images();
     if (!images) throw UnsupportedCommand("scene image resource backend is unavailable");
@@ -266,6 +277,10 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
   if (!lane && command.Routing.QueueForLane && opcode != 0xcb) return true;
   if (lane && !command.LaneStarted) Start(index, now, true);
   if (opcode == 0x259 || opcode == 0xce) return true;  // Native common completion; no fade/resource wait.
+  if (opcode == 0x201) {
+    if (lane) return true;
+    return UpdateCharacterColor(state_, *command.CharacterColor, input.Route == UpdateRoute::Skipping, now);
+  }
   if (opcode == 0xcb) {
     auto* images = backend_.Images();
     if (!images) throw UnsupportedCommand("scene image resource backend is unavailable");
@@ -384,7 +399,7 @@ void VirtualMachine::UpdateLanes(uint64_t now) {
 
 VmEvent VirtualMachine::Step(uint64_t now, const CommandInput& input) {
   try {
-    if (boundary_ == VmBoundary::Ended) return Event(boundary_);
+    if (boundary_ == VmBoundary::Ended) return FrameEvent(boundary_, now);
     if (boundary_ == VmBoundary::CommandCompletedBeforeDispatch) {
       const auto index = size_t(state_.CurrentCommandIndex);
       const auto result = DispatchCompleted(state_, dispatcher_, script_->Records().size(), commands_[index].Routing);
@@ -401,14 +416,14 @@ VmEvent VirtualMachine::Step(uint64_t now, const CommandInput& input) {
         boundary_ = VmBoundary::WaitingBackend;
         UpdateLanes(now);
       } else boundary_ = VmBoundary::BeforeStart;
-      return Event(boundary_);
+      return FrameEvent(boundary_, now);
     }
     const auto index = size_t(state_.CurrentCommandIndex);
     if (boundary_ == VmBoundary::BeforeStart || boundary_ == VmBoundary::FileLoadedBeforeStart) {
       Start(index, now, false);
       boundary_ = VmBoundary::CommandStarted;
       if (Opcode() == 0x64) UpdateLanes(now);
-      return Event(boundary_);
+      return FrameEvent(boundary_, now);
     }
     if (Update(index, now, input, false)) boundary_ = VmBoundary::CommandCompletedBeforeDispatch;
     else {
@@ -416,7 +431,7 @@ VmEvent VirtualMachine::Step(uint64_t now, const CommandInput& input) {
           ? VmBoundary::WaitingInput : VmBoundary::WaitingBackend;
       UpdateLanes(now);
     }
-    return Event(boundary_);
+    return FrameEvent(boundary_, now);
   } catch (const std::exception& error) {
     throw std::runtime_error("script " + std::to_string(state_.ScriptFileId) +
         " command " + std::to_string(state_.CurrentCommandIndex) + " opcode " +

@@ -96,6 +96,7 @@ class VirtualMachine {
     ScreenFadeAnimation FadeAnimation;
     std::optional<DrawImageCommand> DrawImage;
     DrawImageAnimation ImageAnimation;
+    std::optional<CharacterColorCommand> CharacterColor;
     int32_t WaitDuration = 0;
     uint32_t WaitHonorSkip = 0;
     size_t SelectedOrdinal = 0;
@@ -119,6 +120,7 @@ class VirtualMachine {
   void CollectMessageKeywords(size_t index);
   void UpdateLanes(uint64_t now);
   VmEvent Event(VmBoundary boundary) const;
+  VmEvent FrameEvent(VmBoundary boundary, uint64_t now);
 };
 
 }  // namespace Impacto::Saekano
