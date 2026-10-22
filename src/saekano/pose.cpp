@@ -4,6 +4,7 @@
 #include "resources.h"
 
 #include <algorithm>
+#include <set>
 
 namespace Impacto::Saekano {
 namespace {
@@ -105,5 +106,44 @@ bool FinishCharacterPose(CharacterPoseCache& cache, int32_t pose,
     return true;
   }
   return false;
+}
+CharacterPoseCache DecodeNativePoseCache(std::span<const uint8_t> packet) {
+  PayloadReader reader(packet);
+  if (reader.U32() != 0)
+    throw FormatError("unsupported initial pose cache policy");
+  CharacterPoseCache cache;
+  cache.Known = true;
+  std::set<int32_t> ids, occupied, ordered;
+  for (size_t slot = 0; slot < cache.Slots.size(); ++slot) {
+    const auto pose = reader.I32();
+    if (pose < -1 || (pose >= 0 && !ids.insert(pose).second))
+      throw FormatError("invalid/duplicate initial pose resource ID");
+    cache.Slots[slot].Pose = pose;
+    if (pose >= 0) occupied.insert(int32_t(slot));
+  }
+  for (auto& slot : cache.Order) {
+    slot = reader.I32();
+    if (slot < -1 || slot >= 10 || (slot >= 0 && !ordered.insert(slot).second))
+      throw FormatError("invalid/duplicate initial pose cache order");
+  }
+  if (ordered != occupied || reader.Remaining())
+    throw FormatError(
+        "initial pose cache order/occupancy or boundary mismatch");
+  return cache;  // No guessed empty-slot geometry; occupied slots await actual
+                 // prep.
+}
+void PrepareNativePoseCache(CharacterPoseCache& cache,
+                            CharacterPoseDriver& driver) {
+  RequireCache(cache);
+  driver.Reset();
+  for (size_t slot = 0; slot < cache.Slots.size(); ++slot) {
+    auto& record = cache.Slots[slot];
+    if (record.Pose < 0) continue;
+    record.Ready = false;
+    PrepareCharacterPose(cache, slot, driver);
+    if (!FinishCharacterPose(cache, record.Pose, driver))
+      throw UnsupportedCommand(
+          "initial pose cache preparation has not reached FILE_READY");
+  }
 }
 }  // namespace Impacto::Saekano

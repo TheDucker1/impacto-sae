@@ -38,6 +38,7 @@ CharacterState& EnsureCharacter(SemanticState& state, uint16_t id) {
     //  pose textures. Fresh runtimes are hidden, white, at0,0 with100% scale.
     auto& actor = found->second;
     actor.RuntimeKnown = actor.PoseHistoryKnown = true;
+    actor.Pose.Known = true;
     actor.Tint = {255, 255, 255};
     for (auto& tween : actor.Tweens) tween.Start(0, 0, 0, 0);
     Tween(actor, CharacterTween::Scale).Start(100, 100, 0, 0);
@@ -145,6 +146,53 @@ void TickCharacterQueues(SemanticState& state, uint64_t now) {
   tick(state.CharacterRuntimeState.Foreground,
        state.SkipMode != 0 && state.SkipPhase != 0);
   tick(state.CharacterRuntimeState.Background, state.SkipPhase != 0);
+}
+void RestoreStaticCharacterPoses(SemanticState& state,
+                                 const CharacterPoseDriver* driver) {
+  RequireCharacters(state);
+  if (!state.PoseCache.Known ||
+      !state.CharacterRuntimeState.Foreground.empty() ||
+      !state.CharacterRuntimeState.Background.empty())
+    throw UnsupportedCommand(
+        "static character pose restore needs known idle cache/queues");
+  auto characters = state.Characters;
+  for (auto& [id, actor] : characters) {
+    (void)id;
+    if (!actor.RuntimeKnown)
+      throw UnsupportedCommand("static pose restore needs saved actor fields");
+    actor.Pose = {};
+    actor.Pose.Known = true;
+    actor.Pose.Current = actor.Pose.Requested = actor.SavedFields[11];
+    actor.Pose.Face = actor.Pose.PreviousFace = actor.SavedFields[0];
+    actor.PoseHistory.clear();
+    actor.PoseHistoryKnown =
+        true;  // Reset frees runtimes; load constructs anew.
+    if (actor.Pose.Current < 0) continue;
+    bool found = false;
+    for (size_t slot = 0; slot < state.PoseCache.Slots.size(); ++slot) {
+      const auto& cached = state.PoseCache.Slots[slot];
+      if (cached.Pose != actor.Pose.Current) continue;
+      const auto* prepared = driver ? driver->Get(slot) : nullptr;
+      if (!cached.Ready || !cached.Geometry || !prepared ||
+          prepared->Pose != cached.Pose ||
+          prepared->Geometry != *cached.Geometry)
+        throw UnsupportedCommand(
+            "static pose restore has not reached FILE_READY");
+      actor.Pose.Ready = true;
+      actor.Pose.ResourceSlot = slot;
+      actor.Pose.Geometry = cached.Geometry;
+      actor.PoseHistory.push_back(uint32_t(actor.Pose.Current));
+      found = true;
+      break;
+    }
+    if (!found)
+      throw UnsupportedCommand(
+          "saved character pose is absent from initial cache");
+  }
+  // Cache order was captured after the native install loop's touches. Attaching
+  // the already-installed static state must not apply those touches a second
+  // time.
+  state.Characters = std::move(characters);
 }
 CharacterColorCommand CharacterColorCommand::Decode(
     std::span<const uint8_t> payload) {

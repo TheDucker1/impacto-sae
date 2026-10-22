@@ -93,6 +93,8 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     state_.DivergenceStack.clear();
     state_.Characters.clear();
     state_.CharacterRuntimeState = {true,0xffffffff,{},{}};
+    state_.PoseCache = FreshCharacterPoseCache();
+    if (auto* poses = backend_.Poses()) poses->Reset();
     state_.WindowOpenness = {};
     state_.WindowTypes = {};
     state_.Live2d = {};

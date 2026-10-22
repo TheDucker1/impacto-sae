@@ -35,6 +35,7 @@ class VmBackend {
   virtual void RevealMessage(size_t command) = 0;
   virtual Live2dDriver* Models() { return nullptr; }
   virtual SceneImageDriver* Images() { return nullptr; }
+  virtual CharacterPoseDriver* Poses() { return nullptr; }
   virtual const BattleGaugeEnvironment* BattleEnvironment() const { return nullptr; }
   virtual const ApproachGaugeEnvironment* ApproachEnvironment() const { return nullptr; }
   virtual bool Supports(uint16_t) const { return false; }

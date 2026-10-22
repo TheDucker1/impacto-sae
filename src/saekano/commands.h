@@ -7,6 +7,7 @@
 #include "transition.h"
 #include "imagelayer.h"
 #include "character.h"
+#include "pose.h"
 
 #include <array>
 #include <map>
@@ -50,6 +51,7 @@ struct SemanticState {
   std::vector<std::u16string> Titles;
   std::map<uint16_t, CharacterState> Characters;
   CharacterRuntime CharacterRuntimeState;
+  CharacterPoseCache PoseCache;
   std::array<uint32_t, 2> WindowOpenness{};
   std::array<uint32_t, 2> WindowTypes{};
   Live2dState Live2d;

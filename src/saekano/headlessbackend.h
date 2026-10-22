@@ -13,6 +13,8 @@ class HeadlessBackend : public VmBackend {
   bool AutoAdvance = true;
   SceneImageDriver* SceneImages = nullptr;
   SceneImageDriver* Images() override { return SceneImages; }
+  CharacterPoseDriver* CharacterPoses = nullptr;
+  CharacterPoseDriver* Poses() override { return CharacterPoses; }
   std::optional<BattleGaugeEnvironment> BattleConfig;
   std::optional<ApproachGaugeEnvironment> ApproachConfig;
   const ApproachGaugeEnvironment* ApproachEnvironment() const override {

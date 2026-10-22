@@ -20,8 +20,8 @@ struct NativeCharacterSavePrefix {
 NativeCharacterSavePrefix DecodeNativeCharacterSavePrefix(
     std::span<const uint8_t> bytes);
 
-// The native eight-tween shared transition group. Pose resource geometry,
-// autonomous blink/lip and the ninth previous-face tween remain separate work.
+// The native eight-tween shared transition group. Autonomous blink/lip and the
+// ninth previous-face tween remain separate from this shared scheduling group.
 enum class CharacterTween : size_t {
   Opacity,
   X,
@@ -34,6 +34,15 @@ enum class CharacterTween : size_t {
   Count
 };
 struct CharacterState {
+  struct PoseState {
+    bool Known = false, Ready = false, Changed = false;
+    int32_t Current = -1, Requested = -1;
+    std::optional<int32_t> Pending;  // Constructor does not initialize R338.
+    int32_t Face = 0, PreviousFace = 0, PreviousFacePose = -1,
+            ReservedFace = -1;
+    std::optional<size_t> ResourceSlot;
+    std::optional<std::array<int32_t, 12>> Geometry;
+  } Pose;
   std::vector<uint32_t> PoseHistory;
   uint32_t Priority = 0;
   bool RuntimeKnown = false, PoseHistoryKnown = false;
@@ -52,6 +61,9 @@ void RestoreNativeCharacters(SemanticState& state,
                              const NativeCharacterSavePrefix& saved,
                              uint64_t now);
 void TickCharacterQueues(SemanticState& state, uint64_t now);
+class CharacterPoseDriver;
+void RestoreStaticCharacterPoses(SemanticState& state,
+                                 const CharacterPoseDriver* driver);
 struct CharacterColorCommand {
   std::array<uint16_t, 3> Color{};
   uint16_t Duration = 0, Background = 0;

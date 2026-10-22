@@ -53,4 +53,7 @@ void PrepareCharacterPose(CharacterPoseCache& cache, size_t slot,
                           CharacterPoseDriver& driver);
 bool FinishCharacterPose(CharacterPoseCache& cache, int32_t pose,
                          const CharacterPoseDriver& driver);
+// Initial-only ready-cache packet, not arbitrary live texture heap restoration.
+CharacterPoseCache DecodeNativePoseCache(std::span<const uint8_t> packet);
+void PrepareNativePoseCache(CharacterPoseCache& cache, CharacterPoseDriver& driver);
 }  // namespace Impacto::Saekano
