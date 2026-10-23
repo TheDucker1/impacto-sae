@@ -47,6 +47,8 @@ void VirtualMachine::Load(bool preserveOwnerState) {
       command.ScreenFade = ScreenFadeCommand::Decode(script_->Payload(i), opcode == 0xc9);
     } else if (opcode == 0x191) {
       command.RuleWipe = RuleWipeCommand::Decode(script_->Payload(i));
+    } else if (opcode == 0x190) {
+      command.Quake = QuakeCommand::Decode(script_->Payload(i));
     } else if (opcode == 0xcb) {
       command.DrawImage = DrawImageCommand::Decode(script_->Payload(i));
       command.Routing = {command.DrawImage->Route != 0, command.DrawImage->Lane};
@@ -125,6 +127,8 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     state_.BgmCommandVolume.reset();
     state_.Effects = {};
     state_.RuleWipe = {};
+    // Fresh constructor801a0940..0954 clears all six quake outputs.
+    for (auto& pair : state_.Quake) pair = std::array<int32_t,2>{};
     if (state_.SceneImages.Known) {
       NativeImageSavePrefix empty;
       for (size_t group = 0; group < 3; ++group)
@@ -166,6 +170,10 @@ uint16_t VirtualMachine::Opcode() const {
   if (state_.CurrentCommandIndex < 0 || size_t(state_.CurrentCommandIndex) >= script_->Records().size())
     return 0xffff;
   return script_->Records()[size_t(state_.CurrentCommandIndex)].Opcode;
+}
+const QuakeAnimation* VirtualMachine::CurrentQuake() const {
+  if (Opcode() != 0x190) return nullptr;
+  return &commands_[size_t(state_.CurrentCommandIndex)].QuakeRuntime;
 }
 VmEvent VirtualMachine::Event(VmBoundary boundary) const {
   return {boundary, state_.ScriptFileId, state_.CurrentCommandIndex, Opcode()};
@@ -280,6 +288,8 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
     auto* images = backend_.Images();
     if (!images) throw UnsupportedCommand("scene image resource backend is unavailable");
     StartRuleWipe(state_, command.WipeAnimation, *command.RuleWipe, *images, now);
+  } else if (opcode == 0x190 && !lane) {
+    StartQuake(state_, command.QuakeRuntime, *command.Quake, now);
   } else if (opcode == 0x258 && !lane) {
     auto* music = backend_.Music();
     if (!music) throw UnsupportedCommand("original BGM resource backend is unavailable");
@@ -382,6 +392,11 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
     if (!images) throw UnsupportedCommand("scene image resource backend is unavailable");
     return UpdateRuleWipe(state_, command.WipeAnimation, *command.RuleWipe, *images,
         input.Route == UpdateRoute::Skipping, now);
+  }
+  if (opcode == 0x190) {
+    if (lane) return true;
+    return UpdateQuake(state_, command.QuakeRuntime, *command.Quake,
+                       input.Route == UpdateRoute::Skipping, now);
   }
   if (opcode == 0x3f5) {
     if (lane) return true;

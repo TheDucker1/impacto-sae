@@ -95,6 +95,126 @@ void AbsoluteLinearInterpolator::Tick(uint64_t now) {
   const auto quotient = int64_t(product) / divisor;
   Current = Signed(uint32_t(From) + uint32_t(quotient));
 }
+void AbsoluteLinearInterpolator::StartUnsigned(int32_t from, int32_t to,
+                                               uint32_t duration,
+                                               uint64_t now) {
+  From = Current = from;
+  To = to;
+  Epoch = now;
+  Deadline = now + duration;
+}
+QuakeCommand QuakeCommand::Decode(std::span<const uint8_t> payload) {
+  PayloadReader reader(payload);
+  QuakeCommand result;
+  result.Selector = reader.U32();
+  for (size_t i = 0; i < 2; ++i) {
+    result.Amplitude[i] = reader.I32();
+    result.LegDuration[i] = reader.U32();
+  }
+  result.Hold = reader.U32();
+  result.Attack = reader.U32();
+  result.Decay = reader.U32();
+  return result;
+}
+void StartQuake(SemanticState& state, QuakeAnimation& animation,
+                const QuakeCommand&, uint64_t now) {
+  if (!state.Effects.Known)
+    throw UnsupportedCommand("restored common effect context is missing");
+  animation.Started = true;
+  animation.Completed = false;
+  animation.Stage = 0;
+  animation.StartedAt = now;
+  // Start intentionally preserves existing interpolators and output pairs.
+  state.Effects.CurrentValue = state.Effects.RestoreValue;
+  for (uint32_t i = 0; i < 2; ++i)
+    state.PendingEvents.push_back(
+        {GameEventKind::StopChannel,
+         Signed(uint32_t(state.Effects.FirstAudioChannel) + i)});
+}
+bool UpdateQuake(SemanticState& state, QuakeAnimation& animation,
+                 const QuakeCommand& command, bool skipping, uint64_t now) {
+  if (skipping) {
+    for (auto& pair : state.Quake) pair = std::array<int32_t, 2>{};
+    animation.Completed = true;
+    return true;  // Native skip has no Start/resource/timing dependency.
+  }
+  if (!animation.Started)
+    throw UnsupportedCommand("quake Start was suppressed");
+  if (animation.Completed) return true;
+  auto& axes = animation.Axes;
+  auto& envelope = animation.Envelope;
+  auto scaled = [&] {
+    for (size_t i = 0; i < 2; ++i) {
+      auto& axis = axes[i];
+      axis.Tick(now);
+      if (axis.Current != axis.To) continue;
+      // MUL wraps to U32; UMULL reciprocal and LSR6 divide that unsigned
+      // product by100. Negative amplitudes do not use signed division here.
+      const auto magnitude =
+          (uint32_t(command.Amplitude[i]) * uint32_t(envelope.Current)) / 100u;
+      const auto target = Signed(axis.Current < 0 ? magnitude : 0u - magnitude);
+      axis.StartUnsigned(axis.Current, target, command.LegDuration[i], now);
+    }
+  };
+  // Request(...,1) changes the current ScriptState immediately. Separate ifs
+  // preserve same-update phase fallthrough, including zero-duration envelopes.
+  if (animation.Stage == 0) {
+    envelope.StartUnsigned(0, 100, command.Attack, now);
+    for (size_t i = 0; i < 2; ++i)
+      axes[i].StartUnsigned(0, 0, command.LegDuration[i], now);
+    animation.Stage = 1;
+  }
+  if (animation.Stage == 1) {
+    envelope.Tick(now);
+    if (envelope.Current == envelope.To) animation.Stage = 2;
+    scaled();
+  }
+  if (animation.Stage == 2) {
+    envelope.StartUnsigned(0, 100, command.Hold, now);
+    animation.Stage = 3;
+  }
+  if (animation.Stage == 3) {
+    envelope.Tick(now);
+    if (envelope.Current == envelope.To) animation.Stage = 4;
+    for (size_t i = 0; i < 2; ++i) {
+      auto& axis = axes[i];
+      axis.Tick(now);
+      if (axis.Current == axis.To)
+        axis.StartUnsigned(axis.Current, Signed(0u - uint32_t(axis.Current)),
+                           command.LegDuration[i], now);
+    }
+  }
+  if (animation.Stage == 4) {
+    envelope.StartUnsigned(100, 0, command.Decay, now);
+    animation.Stage = 5;
+  }
+  if (animation.Stage == 5) {
+    envelope.Tick(now);
+    if (envelope.Current == envelope.To) animation.Stage = 7;
+    scaled();
+  }
+  if (animation.Stage == 6) {
+    // No incoming state6 assignment is present in this command's lifecycle.
+    for (auto& axis : axes)
+      axis.StartUnsigned(axis.Current, 0, command.LegDuration[0], now);
+    animation.Stage = 7;
+  }
+  if (animation.Stage == 7) {
+    for (auto& axis : axes) axis.Tick(now);
+    if (axes[0].Current == axes[0].To && axes[1].Current == axes[1].To) {
+      animation.Stage = 0;
+      for (auto& axis : axes) axis.StartUnsigned(0, 0, 0, 0);
+      for (auto& pair : state.Quake) pair = std::array<int32_t, 2>{};
+      animation.Completed = true;
+    }
+  }
+  const std::array<int32_t, 2> pair{axes[0].Current, axes[1].Current};
+  const auto selector = command.Selector;
+  if (selector == 0 || selector == 2 || selector == 4) state.Quake[0] = pair;
+  if (selector == 1 || selector == 2 || selector == 4) state.Quake[1] = pair;
+  if (selector == 3 || selector == 4) state.Quake[2] = pair;
+  return animation.Completed;
+}
 RuleWipeCommand RuleWipeCommand::Decode(std::span<const uint8_t> payload) {
   PayloadReader reader(payload);
   RuleWipeCommand result{reader.I32(), reader.I32(), reader.I32(),

@@ -67,6 +67,7 @@ struct SemanticState {
   MusicExecutionPolicy MusicPolicy = MusicExecutionPolicy::Concrete;
   EffectContext Effects;
   RuleWipeState RuleWipe;
+  QuakeOffsets Quake;
   std::optional<int32_t> ScreenFade;  // C1504, omitted from portable restored inputs.
   CgHistoryState CgHistory;  // Owner state; survives file/context replacement.
   SceneImageState SceneImages;

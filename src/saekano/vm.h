@@ -68,6 +68,7 @@ class VirtualMachine {
   const DispatchState& Dispatcher() const { return dispatcher_; }
   VmBoundary Boundary() const { return boundary_; }
   uint16_t Opcode() const;
+  const QuakeAnimation* CurrentQuake() const;
   VmEvent Step(uint64_t now, const CommandInput& input = {});
   void SetGauge(bool battle, int32_t value);
   void ActivateLane(size_t lane);
@@ -95,6 +96,8 @@ class VirtualMachine {
     ApproachGaugeAnimation ApproachAnimation;
     std::optional<RuleWipeCommand> RuleWipe;
     RuleWipeAnimation WipeAnimation;
+    std::optional<QuakeCommand> Quake;
+    QuakeAnimation QuakeRuntime;
     std::optional<ScreenFadeCommand> ScreenFade;
     ScreenFadeAnimation FadeAnimation;
     std::optional<DrawImageCommand> DrawImage;

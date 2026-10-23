@@ -23,8 +23,30 @@ struct AbsoluteLinearInterpolator {
   int32_t From = 0, To = 0, Current = 0;
   uint64_t Epoch = 0, Deadline = 0;
   void Start(int32_t from, int32_t to, int32_t duration, uint64_t now);
+  void StartUnsigned(int32_t from, int32_t to, uint32_t duration, uint64_t now);
   void Tick(uint64_t now);
 };
+struct QuakeCommand {
+  uint32_t Selector = 0;
+  std::array<int32_t, 2> Amplitude{};
+  std::array<uint32_t, 2> LegDuration{};
+  uint32_t Hold = 0, Attack = 0, Decay = 0;
+  static QuakeCommand Decode(std::span<const uint8_t> payload);
+};
+struct QuakeAnimation {
+  bool Started = false, Completed = false;
+  uint32_t Stage = 0xf0000000;
+  uint64_t StartedAt = 0;
+  std::array<AbsoluteLinearInterpolator, 2> Axes;
+  AbsoluteLinearInterpolator Envelope;
+};
+// C20dc/e0, C20e4/e8, C20ec/f0; renderer layer identities remain unproved.
+// Omitted restored words stay unknown until an actual command writes them.
+using QuakeOffsets = std::array<std::optional<std::array<int32_t, 2>>, 3>;
+void StartQuake(SemanticState& state, QuakeAnimation& animation,
+                 const QuakeCommand& command, uint64_t now);
+bool UpdateQuake(SemanticState& state, QuakeAnimation& animation,
+                  const QuakeCommand& command, bool skipping, uint64_t now);
 struct EffectContext {
   bool Known = false;  // Explicit initial common fields and idle resource gate.
   int32_t FirstAudioChannel = 0;
