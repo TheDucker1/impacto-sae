@@ -9,6 +9,39 @@
 #include <limits>
 
 namespace Impacto::Saekano {
+bool MusicHistoryState::AllKnown() const {
+  return ExtentKnown &&
+         std::all_of(Entries.begin(), Entries.end(), [](const auto& entry) {
+           return std::holds_alternative<int32_t>(entry);
+         });
+}
+int32_t ExactMusicStatus(const MusicHistoryState& history, size_t id) {
+  if (!history.ExtentKnown)
+    throw UnsupportedCommand("music history extent is unknown");
+  if (id >= history.Entries.size()) return history.Default;
+  if (const auto* value = std::get_if<int32_t>(&history.Entries[id]))
+    return *value;
+  throw UnsupportedCommand("exact music history status is unknown");
+}
+void MarkMusicPlayed(MusicHistoryState& history, size_t id) {
+  if (!history.ExtentKnown)
+    throw UnsupportedCommand("music history extent is unknown");
+  if (id > 1000000) throw FormatError("BGM history allocation budget exceeded");
+  if (id < history.Entries.size()) {
+    auto& entry = history.Entries[id];
+    if (auto* value = std::get_if<int32_t>(&entry)) {
+      if (*value != 1 && *value != 2 && *value != 3) *value = 1;
+    } else {
+      // The native predicate partitions every I32 into1/2/3 and all other
+      // values. Its image is exactly {1,2,3}; no exact value is invented.
+      entry = MusicStatusSet::OneTwoOrThree;
+    }
+  } else if (history.Default != 1 && history.Default != 2 &&
+             history.Default != 3) {
+    history.Entries.resize(id + 1, history.Default);
+    history.Entries[id] = int32_t(1);
+  }
+}
 AudioEnvironment AudioEnvironment::Decode(std::span<const uint8_t> bytes) {
   if (bytes.size() < 3) throw FormatError("truncated audio environment flags");
   AudioEnvironment result;
@@ -81,7 +114,7 @@ BgmPlayRequest BgmRequest(int32_t track, int32_t master, int32_t command,
                           : double(scaled) >= UINT32_MAX
                               ? UINT32_MAX
                               : static_cast<uint32_t>(scaled);
-  return {track, command, master, volume, float(volume) / 100.0f};
+  return {track, command, BgmVolume{master, volume, float(volume) / 100.0f}};
 }
 
 ArchiveBgmResources::ArchiveBgmResources(const std::filesystem::path& usrdir)
@@ -116,25 +149,23 @@ void StartPlayBgm(SemanticState& state, const PlayBgmCommand& command,
                   BgmResources& resources) {
   const auto track = ParseBgmTrack(command.TrackText);
   if (track < 0) throw FormatError("negative BGM track ID");
-  if (!state.MusicHistory.Known)
+  const bool partial =
+      state.MusicPolicy == MusicExecutionPolicy::PartialNativeInputs;
+  if (!state.MusicHistory.ExtentKnown ||
+      (!partial && !state.MusicHistory.AllKnown()))
     throw UnsupportedCommand("initial played-music history is unknown");
-  if (!state.BgmMasterVolume)
+  if (!state.BgmMasterVolume && !partial)
     throw UnsupportedCommand("initial BGM master setting is unknown");
   if (track > 1000000)
     throw FormatError("BGM history allocation budget exceeded");
-  const auto request = BgmRequest(track, *state.BgmMasterVolume, command.Volume,
-                                  resources.Coefficient());
+  const auto request =
+      state.BgmMasterVolume
+          ? BgmRequest(track, *state.BgmMasterVolume, command.Volume,
+                       resources.Coefficient())
+          : BgmPlayRequest{track, command.Volume, std::nullopt};
   resources.Prepare(
       track);  // Bank validation and real decoder setup before mutation.
-  auto& history = state.MusicHistory.Values;
-  const auto status = size_t(track) < history.size()
-                          ? history[size_t(track)]
-                          : state.MusicHistory.Default;
-  if (status != 1 && status != 2 && status != 3) {
-    if (history.size() <= size_t(track))
-      history.resize(size_t(track) + 1, state.MusicHistory.Default);
-    history[size_t(track)] = 1;
-  }
+  MarkMusicPlayed(state.MusicHistory, size_t(track));
   state.BgmTrack = track;
   state.BgmCommandVolume = command.Volume;
   state.PendingEvents.push_back(

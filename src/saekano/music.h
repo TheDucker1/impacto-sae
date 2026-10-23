@@ -5,6 +5,7 @@
 #include <array>
 #include <map>
 #include <string>
+#include <variant>
 
 namespace Impacto::Saekano {
 struct SemanticState;
@@ -21,18 +22,27 @@ struct AudioEnvironment {
   static AudioEnvironment Decode(std::span<const uint8_t> bytes);
 };
 
+enum class MusicStatusSet { AnyI32, OneTwoOrThree };
+using MusicHistoryEntry = std::variant<int32_t, MusicStatusSet>;
 struct MusicHistoryState {
-  bool Known = false;
-  std::vector<int32_t> Values;
+  bool ExtentKnown = false;
+  std::vector<MusicHistoryEntry> Entries;
   int32_t Default = 0;
+  bool AllKnown() const;
 };
+int32_t ExactMusicStatus(const MusicHistoryState& history, size_t id);
+void MarkMusicPlayed(MusicHistoryState& history, size_t id);
+enum class MusicExecutionPolicy { Concrete, PartialNativeInputs };
 
-struct BgmPlayRequest {
-  int32_t Track = 0;
-  int32_t CommandVolume = 0;
+struct BgmVolume {
   int32_t MasterVolume = 0;
   uint32_t ConvertedVolume = 0;
   float Gain = 0;
+};
+struct BgmPlayRequest {
+  int32_t Track = 0;
+  int32_t CommandVolume = 0;
+  std::optional<BgmVolume> Volume;
 };
 
 struct PlayBgmCommand {

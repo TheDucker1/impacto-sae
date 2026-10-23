@@ -195,13 +195,16 @@ void MusicPlayback::Submit(const GameEvent& event) {
     if (!event.Bgm || event.Bgm->Track != event.Id)
       throw FormatError("invalid typed BGM request");
     const auto& request = *event.Bgm;
-    if (!std::isfinite(request.Gain) || request.Gain < 0 || request.Gain > 1)
+    if (!request.Volume)
+      throw UnsupportedCommand("native BGM volume state is unknown");
+    if (!std::isfinite(request.Volume->Gain) || request.Volume->Gain < 0 ||
+        request.Volume->Gain > 1)
       throw UnsupportedCommand(
           "BGM output gain outside authored settings range");
     auto stream =
         std::make_unique<AwbAudioStream>(impl_->Resources, request.Track);
     const bool loop = impl_->Resources.Info(request.Track).Loop;
-    impl_->Channel->SetVolume(request.Gain);
+    impl_->Channel->SetVolume(request.Volume->Gain);
     impl_->Channel->Play(std::move(stream), loop, 0);
   } else if (event.Kind == GameEventKind::StopBgm) {
     if (event.Parameter != 0)
@@ -264,7 +267,7 @@ int RunMusicSession(const std::filesystem::path& usrdir, uint32_t track,
     HeadlessBackend backend;
     backend.MusicResources = &resources;
     SemanticState state;
-    state.MusicHistory.Known = true;
+    state.MusicHistory.ExtentKnown = true;
     state.BgmMasterVolume = 80;
     VirtualMachine vm(scripts, backend, state);
     std::vector<int16_t> samples;
@@ -279,7 +282,7 @@ int RunMusicSession(const std::filesystem::path& usrdir, uint32_t track,
           playback.Submit(request);
           if (request.Kind == GameEventKind::PlayBgm) {
             ++playRequests;
-            gain = std::bit_cast<uint32_t>(request.Bgm->Gain);
+            gain = std::bit_cast<uint32_t>(request.Bgm->Volume->Gain);
           } else if (request.Kind == GameEventKind::StopBgm)
             ++stopRequests;
         }
@@ -318,9 +321,9 @@ int RunMusicSession(const std::filesystem::path& usrdir, uint32_t track,
              << ",\"play_requests\":" << playRequests
              << ",\"stop_requests\":" << stopRequests
              << ",\"completed_commands\":" << completed << ",\"history\":[";
-      for (size_t i = 0; i < vm.State().MusicHistory.Values.size(); ++i) {
+      for (size_t i = 0; i < vm.State().MusicHistory.Entries.size(); ++i) {
         if (i) report << ',';
-        report << vm.State().MusicHistory.Values[i];
+        report << ExactMusicStatus(vm.State().MusicHistory, i);
       }
       report << "],\"stopped\":true}\n";
       if (!report) throw FormatError("cannot write audio session report");

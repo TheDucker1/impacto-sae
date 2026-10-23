@@ -64,6 +64,7 @@ struct SemanticState {
   std::optional<int32_t> BgmCommandVolume;  // C+15a8.
   std::optional<int32_t> BgmMasterVolume;  // Service master setting, percentage.
   MusicHistoryState MusicHistory;  // Owner S6027c vector; persists between files.
+  MusicExecutionPolicy MusicPolicy = MusicExecutionPolicy::Concrete;
   EffectContext Effects;
   RuleWipeState RuleWipe;
   std::optional<int32_t> ScreenFade;  // C1504, omitted from portable restored inputs.
