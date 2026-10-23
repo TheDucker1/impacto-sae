@@ -20,6 +20,8 @@
 
 #ifdef IMPACTO_HAS_SAEKANO
 #include "saekano/desktop.h"
+#include "saekano/musicplayback.h"
+#include <charconv>
 #endif
 
 using namespace Impacto;
@@ -197,6 +199,18 @@ int main(int argc, char* argv[]) {
   LogInit();
 
 #ifdef IMPACTO_HAS_SAEKANO
+  if (argc >= 2 && std::string_view(argv[1]) == "--saekano-audio") {
+    uint32_t track = 0;
+    if (argc == 4 || (argc == 6 && std::string_view(argv[4]) == "--capture")) {
+      const std::string_view text = argv[3];
+      const auto parsed = std::from_chars(text.data(),text.data()+text.size(),track);
+      if (parsed.ec == std::errc{} && parsed.ptr == text.data()+text.size() && track <= INT32_MAX)
+        return Saekano::RunMusicSession(argv[2],track,argc==6 ? argv[5] : "");
+    }
+    ImpLog(LogLevel::Error, LogChannel::General,
+           "Usage: --saekano-audio USRDIR TRACK [--capture DIRECTORY]\n");
+    return 1;
+  }
   if (argc >= 2 && std::string_view(argv[1]) == "--saekano-model-scenes") {
     if (argc == 4) return Saekano::RunModelScenes(argv[2], argv[3]);
     if (argc == 6 && std::string_view(argv[4]) == "--capture")

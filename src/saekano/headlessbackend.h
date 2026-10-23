@@ -15,6 +15,8 @@ class HeadlessBackend : public VmBackend {
   SceneImageDriver* Images() override { return SceneImages; }
   CharacterPoseDriver* CharacterPoses = nullptr;
   CharacterPoseDriver* Poses() override { return CharacterPoses; }
+  BgmResources* MusicResources = nullptr;
+  BgmResources* Music() override { return MusicResources; }
   std::optional<BattleGaugeEnvironment> BattleConfig;
   std::optional<ApproachGaugeEnvironment> ApproachConfig;
   const ApproachGaugeEnvironment* ApproachEnvironment() const override {

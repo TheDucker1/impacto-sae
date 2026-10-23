@@ -13,11 +13,14 @@ else()
     target_compile_options(saekano_audio PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 add_executable(saekano_audio_probe ../../tools/saekano/audio_probe.cpp)
-target_link_libraries(saekano_audio_probe PRIVATE saekano_audio)
+target_link_libraries(saekano_audio_probe PRIVATE saekano_core)
 add_executable(saekano_audio_tests ../../tests/saekano/audio_test.cpp)
 target_link_libraries(saekano_audio_tests PRIVATE saekano_audio)
 add_test(NAME saekano_audio_banks COMMAND saekano_audio_tests)
-add_library(saekano_core STATIC formats.cpp commands.cpp flow.cpp vm.cpp resources.cpp live2dstate.cpp live2denv.cpp nativesave.cpp gauge.cpp messagekeywords.cpp random.cpp image.cpp transition.cpp imagesave.cpp imagelayer.cpp character.cpp pose.cpp)
+add_executable(saekano_music_tests ../../tests/saekano/music_test.cpp)
+target_link_libraries(saekano_music_tests PRIVATE saekano_core)
+add_test(NAME saekano_music_configuration COMMAND saekano_music_tests)
+add_library(saekano_core STATIC formats.cpp commands.cpp flow.cpp vm.cpp resources.cpp live2dstate.cpp live2denv.cpp nativesave.cpp gauge.cpp messagekeywords.cpp random.cpp image.cpp transition.cpp imagesave.cpp imagelayer.cpp character.cpp pose.cpp music.cpp)
 target_link_libraries(saekano_core PUBLIC ZLIB::ZLIB saekano_audio)
 target_include_directories(saekano_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_features(saekano_core PUBLIC cxx_std_20)
@@ -123,8 +126,8 @@ add_test(NAME saekano_sprite_poses COMMAND saekano_pose_tests)
 # A packaged/static toolchain can leave this unset.
 set(SAEKANO_ZLIB_RUNTIME "" CACHE FILEPATH "Zlib DLL to deploy beside Saekano tools")
 if(WIN32 AND SAEKANO_ZLIB_RUNTIME)
-    foreach(target saekano_inspect saekano_core_tests saekano_command_tests
-                   saekano_flow_tests saekano_vm_tests saekano_headless saekano_resource_tests saekano_io_tests saekano_live2d_tests saekano_live2denv_tests saekano_nativesave_tests saekano_imagesave_tests saekano_imagelayer_tests saekano_character_tests saekano_gauge_tests saekano_keyword_tests saekano_approach_tests saekano_transition_tests saekano_pose_tests)
+    foreach(target saekano_inspect saekano_audio_probe saekano_core_tests saekano_command_tests
+                   saekano_flow_tests saekano_vm_tests saekano_headless saekano_resource_tests saekano_io_tests saekano_live2d_tests saekano_live2denv_tests saekano_nativesave_tests saekano_imagesave_tests saekano_imagelayer_tests saekano_character_tests saekano_gauge_tests saekano_keyword_tests saekano_approach_tests saekano_transition_tests saekano_pose_tests saekano_music_tests)
         add_custom_command(TARGET ${target} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${SAEKANO_ZLIB_RUNTIME}" "$<TARGET_FILE_DIR:${target}>")
