@@ -56,6 +56,9 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     } else if (opcode == 0x1f7) {
       command.CharacterOffset = CharacterOffsetCommand::Decode(script_->Payload(i));
       command.Routing = {command.CharacterOffset->Route != 0,command.CharacterOffset->Lane};
+    } else if (opcode == 0x1f9) {
+      command.CharacterPose = CharacterPoseCommand::Decode(script_->Payload(i));
+      command.Routing = {command.CharacterPose->Route != 0,command.CharacterPose->Lane};
     } else if (opcode == 0x438) {
       command.Live2d = DecodeLive2d(script_->Payload(i));
     } else if (opcode == 0x3f4) {
@@ -151,6 +154,7 @@ VmEvent VirtualMachine::Event(VmBoundary boundary) const {
   return {boundary, state_.ScriptFileId, state_.CurrentCommandIndex, Opcode()};
 }
 VmEvent VirtualMachine::FrameEvent(VmBoundary boundary, uint64_t now) {
+  if (auto* poses = backend_.Poses()) PollCharacterPoseLoads(state_.PoseCache, *poses);
   // Native800740c4 schedules shared character queues after main/lane handlers.
   // Queue completion therefore becomes visible to a waiting command next step.
   TickCharacterQueues(state_, now);
@@ -241,6 +245,10 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
     StartCharacterPosition(state_, *command.CharacterPosition);
   } else if (opcode == 0x1f7 && !lane) {
     StartCharacterOffset(state_, command.OffsetAnimation, *command.CharacterOffset);
+  } else if (opcode == 0x1f9 && !lane) {
+    auto* poses = backend_.Poses();
+    if (!poses) throw UnsupportedCommand("character pose resource backend is unavailable");
+    StartCharacterPose(state_, command.PoseAnimation, *command.CharacterPose, *poses);
   } else if (opcode == 0x191 && !lane) {
     auto* images = backend_.Images();
     if (!images) throw UnsupportedCommand("scene image resource backend is unavailable");
@@ -286,7 +294,7 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
 bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& input, bool lane) {
   auto& command = commands_.at(index);
   const auto opcode = script_->Records()[index].Opcode;
-  if (!lane && command.Routing.QueueForLane && opcode != 0xcb) return true;
+  if (!lane && command.Routing.QueueForLane && opcode != 0xcb && opcode != 0x1f9) return true;
   if (lane && !command.LaneStarted) Start(index, now, true);
   if (opcode == 0x259 || opcode == 0xce) return true;  // Native common completion; no fade/resource wait.
   if (opcode == 0x201) {
@@ -300,6 +308,15 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
   if (opcode == 0x1f7) {
     return UpdateCharacterOffset(state_, command.OffsetAnimation, *command.CharacterOffset,
                                  lane, input.Route == UpdateRoute::Skipping, now);
+  }
+  if (opcode == 0x1f9) {
+    auto* poses = backend_.Poses();
+    if (!poses) throw UnsupportedCommand("character pose resource backend is unavailable");
+    bool ready = poses->GateReady();
+    if (auto* models = backend_.Models()) ready &= models->GateReady();
+    if (auto* images = backend_.Images()) ready &= images->Ready();
+    return UpdateCharacterPose(state_, command.PoseAnimation, *command.CharacterPose,
+        *poses, ready, lane, input.Route == UpdateRoute::Skipping, now);
   }
   if (opcode == 0xcb) {
     auto* images = backend_.Images();

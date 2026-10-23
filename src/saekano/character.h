@@ -42,6 +42,9 @@ struct CharacterState {
             ReservedFace = -1;
     std::optional<size_t> ResourceSlot;
     std::optional<std::array<int32_t, 12>> Geometry;
+    std::optional<size_t> PreviousResourceSlot;
+    std::optional<std::array<int32_t, 12>> PreviousGeometry;
+    std::optional<int32_t> CrossfadePoseTag;  // Native R2dc, captured during install.
   } Pose;
   std::vector<uint32_t> PoseHistory;
   uint32_t Priority = 0;
