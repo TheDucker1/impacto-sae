@@ -1,5 +1,6 @@
 #include "commands.h"
 
+#include <algorithm>
 #include <bit>
 #include <charconv>
 #include <limits>
@@ -239,6 +240,16 @@ void CompleteCommand(SemanticState& state, uint16_t opcode,
       if (characterId > std::numeric_limits<uint16_t>::max())
         throw FormatError("character ID exceeds runtime key width");
       state.Characters.at(uint16_t(characterId)).PoseHistory.clear();
+      return;
+    }
+    case 0x0640: {
+      // S601b4..601d0 aliases Bank1[20..34]. Every nonzero signed16
+      // qualifies, including negatives; these are requests, not grants.
+      const auto trophy = reader.I32();
+      state.PendingEvents.push_back({GameEventKind::Trophy, trophy});
+      if (std::all_of(state.Bank1.begin() + 20, state.Bank1.begin() + 35,
+                      [](int16_t value) { return value != 0; }))
+        state.PendingEvents.push_back({GameEventKind::Trophy, 25});
       return;
     }
     case 0x02be:
