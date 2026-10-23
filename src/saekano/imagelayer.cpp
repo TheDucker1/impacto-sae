@@ -77,6 +77,7 @@ SceneImageState RestoreSceneImages(const NativeImageSavePrefix& saved,
   // Validate every group/ID before submitting any host load request.
   SceneImageState result;
   result.Slots = saved;
+  result.FillRectsKnown.fill(true);
   for (uint32_t category = 0; category < 3; ++category) {
     const auto count = saved.TextureReferences[category].size();
     if (count != images.AssetCount(ImageCategorySection(category)))
@@ -104,6 +105,55 @@ SceneImageState RestoreSceneImages(const NativeImageSavePrefix& saved,
       Request(result, images, 2, uint32_t(slot.GeometryAndTexture[6]));
   PollSceneImages(result, images);
   return result;
+}
+FillRectCommand FillRectCommand::Decode(std::span<const uint8_t> payload) {
+  PayloadReader reader(payload);
+  FillRectCommand result;
+  result.Slot = reader.U32();
+  result.Color = reader.U32();
+  result.From = reader.I32();
+  result.To = reader.I32();
+  result.Duration = reader.I32();
+  result.Bucket = reader.U32();
+  if (result.Slot >= 4) throw FormatError("fill rectangle slot outside native four-slot array");
+  return result;
+}
+void StartFillRect(SemanticState& state, FillRectAnimation& animation,
+                    const FillRectCommand& command, uint64_t now) {
+  if (command.Slot >= 4)
+    throw FormatError("fill rectangle slot outside native four-slot array");
+  if (command.Duration < 0)
+    throw UnsupportedCommand("negative fill rectangle duration is unsupported");
+  if (!state.Effects.Known)
+    throw UnsupportedCommand("restored common effect context is missing");
+  animation.Opacity.Start(command.From, command.To, command.Duration, now);
+  animation.Started = true;
+  // Saved rows contain 00RRGGBB; LOAD discards authored high byte and the
+  // command constructor supplies alpha0. The renderer replaces alpha from
+  // the separate opacity word's low byte at draw time.
+  state.SceneImages.Slots.FillRects[command.Slot] = {
+      command.Color & 0xffffffu, command.From, command.Bucket};
+  state.SceneImages.FillRectsKnown[command.Slot] = true;
+  state.Effects.CurrentValue = state.Effects.RestoreValue;
+  for (uint32_t i = 0; i < 2; ++i)
+    state.PendingEvents.push_back({GameEventKind::StopChannel,
+        std::bit_cast<int32_t>(uint32_t(state.Effects.FirstAudioChannel) + i)});
+}
+bool UpdateFillRect(SemanticState& state, FillRectAnimation& animation,
+                     const FillRectCommand& command, bool skipping,
+                     uint64_t now) {
+  if (command.Slot >= 4)
+    throw FormatError("fill rectangle slot outside native four-slot array");
+  auto& slot = state.SceneImages.Slots.FillRects[command.Slot];
+  if (skipping) {
+    slot.Opacity = command.To;
+    return true;  // Native skip does not tick/overwrite its command tween.
+  }
+  if (!animation.Started)
+    throw UnsupportedCommand("fill rectangle Start was suppressed");
+  animation.Opacity.Tick(now);
+  slot.Opacity = animation.Opacity.Current;
+  return animation.Opacity.Finished();
 }
 DrawImageCommand DrawImageCommand::Decode(std::span<const uint8_t> payload) {
   PayloadReader reader(payload);

@@ -101,6 +101,8 @@ class VirtualMachine {
     std::optional<ScreenFadeCommand> ScreenFade;
     ScreenFadeAnimation FadeAnimation;
     std::optional<DrawImageCommand> DrawImage;
+    std::optional<FillRectCommand> FillRect;
+    FillRectAnimation FillAnimation;
     DrawImageAnimation ImageAnimation;
     std::optional<CharacterColorCommand> CharacterColor;
     std::optional<CharacterPositionCommand> CharacterPosition;

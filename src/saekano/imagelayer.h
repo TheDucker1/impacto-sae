@@ -9,6 +9,7 @@ struct SemanticState;
 struct SceneImageState {
   bool Known = false;
   NativeImageSavePrefix Slots;
+  std::array<bool, 4> FillRectsKnown{};
   std::array<std::vector<uint8_t>, 3> Requested;
   std::array<std::vector<uint32_t>, 3> PendingIncrements;
 };
@@ -18,6 +19,21 @@ ImageSection ImageCategorySection(uint32_t category);
 SceneImageState RestoreSceneImages(const NativeImageSavePrefix& saved,
                                    SceneImageDriver& images);
 void PollSceneImages(SceneImageState& state, SceneImageDriver& images);
+struct FillRectCommand {
+  uint32_t Slot = 0, Color = 0;
+  int32_t From = 0, To = 0, Duration = 0;
+  uint32_t Bucket = 0;
+  static FillRectCommand Decode(std::span<const uint8_t> payload);
+};
+struct FillRectAnimation {
+  bool Started = false;
+  ScriptLinearTween Opacity;
+};
+void StartFillRect(SemanticState& state, FillRectAnimation& animation,
+                    const FillRectCommand& command, uint64_t now);
+bool UpdateFillRect(SemanticState& state, FillRectAnimation& animation,
+                     const FillRectCommand& command, bool skipping,
+                     uint64_t now);
 struct DrawImageCommand {
   uint32_t Route = 0, Category = 0, Slot = 0;
   std::u16string TextureExpression;

@@ -52,6 +52,8 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     } else if (opcode == 0xcb) {
       command.DrawImage = DrawImageCommand::Decode(script_->Payload(i));
       command.Routing = {command.DrawImage->Route != 0, command.DrawImage->Lane};
+    } else if (opcode == 0xca) {
+      command.FillRect = FillRectCommand::Decode(script_->Payload(i));
     } else if (opcode == 0x201) {
       command.CharacterColor = CharacterColorCommand::Decode(script_->Payload(i));
     } else if (opcode == 0x1f5) {
@@ -111,6 +113,9 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     state_.Messages = {};
     state_.LaneCommandIndex.fill(-1);
     state_.FirstAsyncCommandIndex = -1;
+    // BindScenarioOwner80071c3c..c62 clears these owner bytes even though
+    // ordinary owner variables/history survive manager replacement.
+    state_.ApproachFlags.fill(0);
     state_.DivergenceStack.clear();
     state_.Characters.clear();
     state_.CharacterRuntimeState = {true,0xffffffff,{},{}};
@@ -136,6 +141,8 @@ void VirtualMachine::Load(bool preserveOwnerState) {
       auto* driver = backend_.Images();
       if (!driver) throw UnsupportedCommand("scene image resource pool is unavailable");
       state_.SceneImages = RestoreSceneImages(empty, *driver);
+    } else {
+      state_.SceneImages.FillRectsKnown.fill(false);
     }
     if (auto* images = backend_.Images()) {
       images->Release(ImageSlot::Rule);
@@ -260,6 +267,8 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
     auto* images = backend_.Images();
     if (!images) throw UnsupportedCommand("scene image resource backend is unavailable");
     StartDrawImage(state_, command.ImageAnimation, *command.DrawImage, *images, now);
+  } else if (opcode == 0xca && !lane) {
+    StartFillRect(state_, command.FillAnimation, *command.FillRect, now);
   } else if (opcode == 0xce && !lane) {
     auto* images = backend_.Images();
     if (!images) throw UnsupportedCommand("scene image resource backend is unavailable");
@@ -381,6 +390,11 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
     return UpdateDrawImage(state_, command.ImageAnimation, *command.DrawImage, *images,
         input.Route == UpdateRoute::Skipping, now);
   }
+  if (opcode == 0xca) {
+    if (lane) return true;
+    return UpdateFillRect(state_, command.FillAnimation, *command.FillRect,
+                          input.Route == UpdateRoute::Skipping, now);
+  }
   if (opcode == 0xc8 || opcode == 0xc9) {
     if (lane) return true;
     return UpdateScreenFade(state_, command.FadeAnimation, *command.ScreenFade,
@@ -435,6 +449,9 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
     if (command.AdvancePending) {
       command.AdvancePending = false;
       messageContext_.PreviousCompletionPolicy = command.Message->CompletionPolicy;
+      // Main normal84964/skip857d6 reset C1490 only on actual completion;
+      // async-main completion bypasses this substantive message route.
+      if (!lane) state_.FirstAsyncCommandIndex = -1;
       return true;
     }
     if (!backend_.MessageRevealed(index, now)) {
