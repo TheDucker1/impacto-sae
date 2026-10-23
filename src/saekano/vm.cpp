@@ -62,6 +62,9 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     } else if (opcode == 0x1fa) {
       command.CharacterFace = CharacterFaceCommand::Decode(script_->Payload(i));
       command.Routing = {command.CharacterFace->Route != 0,command.CharacterFace->Lane};
+    } else if (opcode == 0x1f8) {
+      command.CharacterScale = CharacterScaleCommand::Decode(script_->Payload(i));
+      command.Routing = {command.CharacterScale->Route != 0,command.CharacterScale->Lane};
     } else if (opcode == 0x438) {
       command.Live2d = DecodeLive2d(script_->Payload(i));
     } else if (opcode == 0x3f4) {
@@ -254,6 +257,8 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
     StartCharacterPose(state_, command.PoseAnimation, *command.CharacterPose, *poses);
   } else if (opcode == 0x1fa && !lane) {
     StartCharacterFace(state_, command.FaceAnimation, *command.CharacterFace);
+  } else if (opcode == 0x1f8 && !lane) {
+    StartCharacterScale(state_, command.ScaleAnimation, *command.CharacterScale);
   } else if (opcode == 0x191 && !lane) {
     auto* images = backend_.Images();
     if (!images) throw UnsupportedCommand("scene image resource backend is unavailable");
@@ -325,6 +330,10 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
   }
   if (opcode == 0x1fa) {
     return UpdateCharacterFace(state_, command.FaceAnimation, *command.CharacterFace,
+        lane, input.Route == UpdateRoute::Skipping, now);
+  }
+  if (opcode == 0x1f8) {
+    return UpdateCharacterScale(state_, command.ScaleAnimation, *command.CharacterScale,
         lane, input.Route == UpdateRoute::Skipping, now);
   }
   if (opcode == 0xcb) {

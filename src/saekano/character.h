@@ -113,6 +113,21 @@ struct CharacterFaceCommand {
   int32_t Value = 0;
   static CharacterFaceCommand Decode(std::span<const uint8_t> payload);
 };
+struct CharacterScaleCommand {
+  uint32_t Route = 0, Character = 0, Duration = 0, Background = 0, Lane = 0;
+  int32_t Percent = 100;
+  static CharacterScaleCommand Decode(std::span<const uint8_t> payload);
+};
+struct CharacterScaleAnimation {
+  bool Started = false, Queued = false;
+};
+void StartCharacterScale(SemanticState& state,
+                         CharacterScaleAnimation& animation,
+                         const CharacterScaleCommand& command);
+bool UpdateCharacterScale(SemanticState& state,
+                          CharacterScaleAnimation& animation,
+                          const CharacterScaleCommand& command, bool lane,
+                          bool skipping, uint64_t now);
 struct CharacterFaceAnimation {
   bool Started = false;
   int32_t Resolved = 0;

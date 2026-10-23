@@ -351,6 +351,58 @@ bool UpdateCharacterOffset(SemanticState& state,
   return lane || command.Background ||
          state.CharacterRuntimeState.Foreground.empty();
 }
+CharacterScaleCommand CharacterScaleCommand::Decode(
+    std::span<const uint8_t> payload) {
+  PayloadReader reader(payload);
+  CharacterScaleCommand result;
+  result.Route = reader.U32();
+  result.Character = reader.U32();
+  result.Percent = reader.I32();
+  result.Duration = reader.U32();
+  result.Background = reader.U32();
+  result.Lane = reader.U32();
+  if (result.Route && result.Lane >= 5)
+    throw FormatError("character scale lane exceeds engine lane count");
+  return result;
+}
+void StartCharacterScale(SemanticState& state,
+                         CharacterScaleAnimation& animation,
+                         const CharacterScaleCommand& command) {
+  RequireCharacters(state);
+  if (command.Character > UINT16_MAX)
+    throw FormatError("character scale ID exceeds native map key domain");
+  EnsureCharacter(state, uint16_t(command.Character));
+  animation = {true, false};
+}
+bool UpdateCharacterScale(SemanticState& state,
+                          CharacterScaleAnimation& animation,
+                          const CharacterScaleCommand& command, bool lane,
+                          bool skipping, uint64_t now) {
+  if (command.Route && !lane) return true;
+  RequireCharacters(state);
+  if (!animation.Started)
+    throw UnsupportedCommand("character scale Start was suppressed");
+  auto found = state.Characters.find(uint16_t(command.Character));
+  if (found == state.Characters.end() || !found->second.RuntimeKnown)
+    throw UnsupportedCommand("character scale needs its Start-created runtime");
+  auto& tween = found->second.Tweens[size_t(CharacterTween::Scale)];
+  if (!animation.Queued) {
+    tween.StartUnsigned(tween.Current, command.Percent, command.Duration, now);
+    // Normal lane always uses background. Lane-skip instead honors the
+    // authored background policy, unlike Move/Offset's lane-skip handlers.
+    const bool background = (lane && !skipping) || command.Background != 0;
+    (background ? state.CharacterRuntimeState.Background
+                : state.CharacterRuntimeState.Foreground)
+        .push_back(uint16_t(command.Character));
+    animation.Queued = true;
+  }
+  if (skipping) {
+    tween.StartUnsigned(tween.To, tween.To, 0, now);
+    return true;
+  }
+  return lane || command.Background ||
+         state.CharacterRuntimeState.Foreground.empty();
+}
 CharacterFaceCommand CharacterFaceCommand::Decode(
     std::span<const uint8_t> payload) {
   PayloadReader reader(payload);
