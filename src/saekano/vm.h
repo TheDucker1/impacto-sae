@@ -103,6 +103,8 @@ class VirtualMachine {
     CharacterOffsetAnimation OffsetAnimation;
     std::optional<CharacterMoveCommand> CharacterMove;
     CharacterMoveAnimation MoveAnimation;
+    std::optional<CharacterDrawCommand> CharacterDraw;
+    CharacterDrawAnimation DrawAnimation;
     std::optional<CharacterPoseCommand> CharacterPose;
     CharacterPoseAnimation PoseAnimation;
     std::optional<CharacterFaceCommand> CharacterFace;

@@ -301,6 +301,72 @@ CharacterOffsetCommand CharacterOffsetCommand::Decode(
     throw FormatError("character offset lane exceeds engine lane count");
   return result;
 }
+CharacterDrawCommand CharacterDrawCommand::Decode(
+    std::span<const uint8_t> payload) {
+  PayloadReader reader(payload);
+  CharacterDrawCommand result;
+  result.Route = reader.U32();
+  result.Character = reader.U32();
+  result.From = reader.I32();
+  result.To = reader.I32();
+  result.Duration = reader.U32();
+  result.Background = reader.U32();
+  result.Lane = reader.U32();
+  if (result.Route && result.Lane >= 5)
+    throw FormatError("character draw lane exceeds engine lane count");
+  return result;
+}
+void StartCharacterDraw(SemanticState& state, CharacterDrawAnimation& animation,
+                        const CharacterDrawCommand& command, uint64_t now) {
+  RequireCharacters(state);
+  auto& actor = EnsureCharacter(state, uint16_t(command.Character));
+  animation = {true, command.To <= 0};
+  // Native64720 duration0 sets color tweens from current output bytes but does
+  // not call the separate immediate-byte snap647a6. Queues publish the reset.
+  for (size_t i = 0; i < 3; ++i)
+    actor.Tweens[size_t(CharacterTween::Red) + i].Start(
+        actor.Tint[i],
+        uint8_t(state.CharacterRuntimeState.DefaultColor >> (i * 8)), 0, now);
+  if (command.To <= 0 || !command.Route)
+    Tween(actor, CharacterTween::Opacity)
+        .StartUnsigned(command.From, command.To, command.Duration, now);
+  if (animation.Queued)
+    (command.Background ? state.CharacterRuntimeState.Background
+                        : state.CharacterRuntimeState.Foreground)
+        .push_back(uint16_t(command.Character));
+}
+bool UpdateCharacterDraw(SemanticState& state,
+                         CharacterDrawAnimation& animation,
+                         const CharacterDrawCommand& command, bool lane,
+                         bool skipping, uint64_t now) {
+  if (command.Route && !lane) return true;
+  RequireCharacters(state);
+  if (!animation.Started)
+    throw UnsupportedCommand("character draw Start was suppressed");
+  auto found = state.Characters.find(uint16_t(command.Character));
+  if (found == state.Characters.end())
+    return true;  // Native absent actor completes.
+  auto& actor = found->second;
+  auto& opacity = Tween(actor, CharacterTween::Opacity);
+  if (!animation.Queued) {
+    if (!actor.Pose.Known)
+      throw UnsupportedCommand(
+          "initial character pose readiness is missing for draw");
+    if (!actor.Pose.Ready) return false;
+    opacity.StartUnsigned(command.From, command.To, command.Duration, now);
+    (lane || command.Background ? state.CharacterRuntimeState.Background
+                                : state.CharacterRuntimeState.Foreground)
+        .push_back(uint16_t(command.Character));
+    animation.Queued = true;
+  }
+  if (skipping) {
+    opacity.StartUnsigned(opacity.To, opacity.To, 0, now);
+    state.SkipPhase = 1;
+    return true;
+  }
+  return lane || command.Background ||
+         state.CharacterRuntimeState.Foreground.empty();
+}
 void StartCharacterOffset(SemanticState& state,
                           CharacterOffsetAnimation& animation,
                           const CharacterOffsetCommand& command) {

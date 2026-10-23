@@ -107,6 +107,21 @@ struct CharacterMoveCommand {
   uint32_t Duration = 0, Background = 0, Lane = 0;
   static CharacterMoveCommand Decode(std::span<const uint8_t> payload);
 };
+struct CharacterDrawCommand {
+  uint32_t Route = 0, Character = 0;
+  int32_t From = 0, To = 0;
+  uint32_t Duration = 0, Background = 0, Lane = 0;
+  static CharacterDrawCommand Decode(std::span<const uint8_t> payload);
+};
+struct CharacterDrawAnimation {
+  bool Started = false, Queued = false;
+};
+void StartCharacterDraw(SemanticState& state, CharacterDrawAnimation& animation,
+                        const CharacterDrawCommand& command, uint64_t now);
+bool UpdateCharacterDraw(SemanticState& state,
+                         CharacterDrawAnimation& animation,
+                         const CharacterDrawCommand& command, bool lane,
+                         bool skipping, uint64_t now);
 using CharacterMoveAnimation = CharacterOffsetAnimation;
 void StartCharacterMove(SemanticState& state, CharacterMoveAnimation& animation,
                         const CharacterMoveCommand& command);
