@@ -101,6 +101,19 @@ struct CharacterOffsetCommand {
 struct CharacterOffsetAnimation {
   bool Started = false, Queued = false;
 };
+struct CharacterMoveCommand {
+  uint32_t Route = 0, Character = 0;
+  std::array<int32_t, 2> Target{};
+  uint32_t Duration = 0, Background = 0, Lane = 0;
+  static CharacterMoveCommand Decode(std::span<const uint8_t> payload);
+};
+using CharacterMoveAnimation = CharacterOffsetAnimation;
+void StartCharacterMove(SemanticState& state, CharacterMoveAnimation& animation,
+                        const CharacterMoveCommand& command);
+bool UpdateCharacterMove(SemanticState& state,
+                         CharacterMoveAnimation& animation,
+                         const CharacterMoveCommand& command, bool lane,
+                         bool skipping, uint64_t now);
 void StartCharacterOffset(SemanticState& state,
                           CharacterOffsetAnimation& animation,
                           const CharacterOffsetCommand& command);

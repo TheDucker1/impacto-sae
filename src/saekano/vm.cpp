@@ -56,6 +56,9 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     } else if (opcode == 0x1f7) {
       command.CharacterOffset = CharacterOffsetCommand::Decode(script_->Payload(i));
       command.Routing = {command.CharacterOffset->Route != 0,command.CharacterOffset->Lane};
+    } else if (opcode == 0x1f6) {
+      command.CharacterMove = CharacterMoveCommand::Decode(script_->Payload(i));
+      command.Routing = {command.CharacterMove->Route != 0,command.CharacterMove->Lane};
     } else if (opcode == 0x1f9) {
       command.CharacterPose = CharacterPoseCommand::Decode(script_->Payload(i));
       command.Routing = {command.CharacterPose->Route != 0,command.CharacterPose->Lane};
@@ -251,6 +254,8 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
     StartCharacterPosition(state_, *command.CharacterPosition);
   } else if (opcode == 0x1f7 && !lane) {
     StartCharacterOffset(state_, command.OffsetAnimation, *command.CharacterOffset);
+  } else if (opcode == 0x1f6 && !lane) {
+    StartCharacterMove(state_, command.MoveAnimation, *command.CharacterMove);
   } else if (opcode == 0x1f9 && !lane) {
     auto* poses = backend_.Poses();
     if (!poses) throw UnsupportedCommand("character pose resource backend is unavailable");
@@ -318,6 +323,10 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
   if (opcode == 0x1f7) {
     return UpdateCharacterOffset(state_, command.OffsetAnimation, *command.CharacterOffset,
                                  lane, input.Route == UpdateRoute::Skipping, now);
+  }
+  if (opcode == 0x1f6) {
+    return UpdateCharacterMove(state_, command.MoveAnimation, *command.CharacterMove,
+        lane, input.Route == UpdateRoute::Skipping, now);
   }
   if (opcode == 0x1f9) {
     auto* poses = backend_.Poses();
