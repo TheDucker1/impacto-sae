@@ -37,6 +37,7 @@ class VmBackend {
   virtual SceneImageDriver* Images() { return nullptr; }
   virtual CharacterPoseDriver* Poses() { return nullptr; }
   virtual BgmResources* Music() { return nullptr; }
+  virtual SeResources* SoundEffects() { return nullptr; }
   virtual const BattleGaugeEnvironment* BattleEnvironment() const { return nullptr; }
   virtual const ApproachGaugeEnvironment* ApproachEnvironment() const { return nullptr; }
   virtual bool Supports(uint16_t) const { return false; }
@@ -88,6 +89,7 @@ class VirtualMachine {
     CompletedCommand Routing;
     std::optional<MessageCommand> Message;
     std::optional<PlayBgmCommand> PlayBgm;
+    std::optional<PlaySeCommand> PlaySe;
     std::optional<StopSeCommand> StopSe;
     size_t MessageSide = 0;
     std::optional<Live2dCommand> Live2d;

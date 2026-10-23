@@ -199,6 +199,20 @@ int main(int argc, char* argv[]) {
   LogInit();
 
 #ifdef IMPACTO_HAS_SAEKANO
+  if (argc >= 2 && std::string_view(argv[1]) == "--saekano-se") {
+    uint32_t track = 0, channel = 0;
+    if (argc == 5 || (argc == 7 && std::string_view(argv[5]) == "--capture")) {
+      const std::string_view text = argv[3], channelText = argv[4];
+      const auto a = std::from_chars(text.data(), text.data()+text.size(), track);
+      const auto b = std::from_chars(channelText.data(), channelText.data()+channelText.size(), channel);
+      if (a.ec == std::errc{} && a.ptr == text.data()+text.size() && track <= INT32_MAX &&
+          b.ec == std::errc{} && b.ptr == channelText.data()+channelText.size() && channel <= 3)
+        return Saekano::RunMusicSession(argv[2], track, argc==7 ? argv[6] : "", channel);
+    }
+    ImpLog(LogLevel::Error, LogChannel::General,
+           "Usage: --saekano-se USRDIR TRACK CHANNEL [--capture DIRECTORY]\n");
+    return 1;
+  }
   if (argc >= 2 && std::string_view(argv[1]) == "--saekano-audio") {
     uint32_t track = 0;
     if (argc == 4 || (argc == 6 && std::string_view(argv[4]) == "--capture")) {

@@ -9,6 +9,7 @@
 #include "character.h"
 #include "pose.h"
 #include "music.h"
+#include "se.h"
 
 #include <array>
 #include <map>
@@ -17,13 +18,14 @@
 
 namespace Impacto::Saekano {
 
-enum class GameEventKind { Sound, Effect, Trophy, StopBgm, StopChannel, PlayBgm, StopSe };
+enum class GameEventKind { Sound, Effect, Trophy, StopBgm, StopChannel, PlayBgm, StopSe, PlaySe };
 struct GameEvent {
   GameEventKind Kind;
   int32_t Id;
   std::array<int32_t, 2> ScreenPosition{};
   int32_t Parameter = 0;  // StopBgm/StopSe: signed fade parameter, units unproved.
   std::optional<BgmPlayRequest> Bgm{};
+  std::optional<SePlayRequest> Se{};
 };
 
 struct SemanticState {
@@ -64,6 +66,7 @@ struct SemanticState {
   std::optional<int32_t> BgmCommandVolume;  // C+15a8.
   std::optional<int32_t> BgmMasterVolume;  // Service master setting, percentage.
   std::optional<int32_t> SeTrack, SeCommandVolume, SeChannel;  // C15ac/b0/b4.
+  std::optional<int32_t> SeMasterVolume;  // Live audio service+1c; not in SER1.
   MusicHistoryState MusicHistory;  // Owner S6027c vector; persists between files.
   MusicExecutionPolicy MusicPolicy = MusicExecutionPolicy::Concrete;
   EffectContext Effects;

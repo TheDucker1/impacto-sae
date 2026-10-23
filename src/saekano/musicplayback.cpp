@@ -19,7 +19,11 @@ namespace {
 class AwbAudioStream final : public Audio::AudioStream {
  public:
   AwbAudioStream(ArchiveBgmResources& resources, int32_t track)
-      : reader_(resources.Open(track)) {
+      : AwbAudioStream(resources.Open(track), track, "bgm.awb") {}
+  AwbAudioStream(ArchiveSeResources& resources, int32_t track)
+      : AwbAudioStream(resources.Open(track), track, "se.awb") {}
+  AwbAudioStream(std::unique_ptr<HcaWaveReader> reader, int32_t track,
+                  const char* bank) : reader_(std::move(reader)) {
     const auto& info = reader_->Info();
     if (info.Frames > INT32_MAX || info.LoopEnd > INT32_MAX)
       throw FormatError("HCA exceeds Impacto channel sample range");
@@ -29,7 +33,7 @@ class AwbAudioStream final : public Audio::AudioStream {
     Duration = int(info.Frames);
     LoopStart = info.Loop ? int(info.LoopStart) : 0;
     LoopEnd = info.Loop ? int(info.LoopEnd) : Duration;
-    Io::DummyStream::Create("bgm.awb", &BaseStream);
+    Io::DummyStream::Create(bank, &BaseStream);
     BaseStream->Meta.Id = uint32_t(track);
     BaseStream->Meta.Size =
         int64_t(info.HeaderSize) + int64_t(info.BlockCount) * info.BlockSize;
@@ -62,8 +66,8 @@ void Word(Bytes& bytes, uint32_t value, size_t width = 4) {
 class SessionScript final : public ScriptSource {
  public:
   Bytes Data;
-  explicit SessionScript(uint32_t track) {
-    Word(Data, 3);
+  explicit SessionScript(uint32_t track, std::optional<uint32_t> soundChannel) {
+    Word(Data, soundChannel ? 7 : 3);
     Word(Data, 8);
     auto record = [&](uint16_t opcode, const Bytes& payload) {
       Word(Data, uint32_t(payload.size() + 6));
@@ -71,18 +75,40 @@ class SessionScript final : public ScriptSource {
       Data.insert(Data.end(), payload.begin(), payload.end());
     };
     Bytes play;
-    const auto text = std::to_string(track);
-    Word(play, uint32_t(text.size()));
-    for (auto c : text) Word(play, uint8_t(c), 2);
-    Word(play, 100);
-    record(0x258, play);
+    if (soundChannel) {
+      for (auto value : {0u, track, *soundChannel, 100u, 1u, 0u}) Word(play, value);
+      record(0x25a, play);
+      auto wait = [&] {
+        Bytes payload; Word(payload, 500); Word(payload, 0);
+        record(0x2c0, payload);
+      };
+      auto stop = [&](uint32_t channel) {
+        Bytes payload; Word(payload, channel); Word(payload, 0);
+        record(0x25b, payload);
+      };
+      wait();
+      play.clear();
+      const uint32_t other = (*soundChannel + 1) % 4;
+      for (auto value : {0u, track, other, 50u, 0u, 0u}) Word(play, value);
+      record(0x25a, play);
+      wait(); stop(*soundChannel); wait(); stop(other);
+      Data.resize(Data.size() + 28);
+      return;
+    } else {
+      const auto text = std::to_string(track);
+      Word(play, uint32_t(text.size()));
+      for (auto c : text) Word(play, uint8_t(c), 2);
+      Word(play, 100);
+      record(0x258, play);
+    }
     Bytes wait;
     Word(wait, 2000);
     Word(wait, 0);
     record(0x2c0, wait);
     Bytes stop;
+    if (soundChannel) Word(stop, *soundChannel);
     Word(stop, 0);
-    record(0x259, stop);
+    record(soundChannel ? 0x25b : 0x259, stop);
     Data.resize(Data.size() + 12);
   }
   Bytes Load(int32_t id) override {
@@ -119,15 +145,18 @@ void SaveWav(const std::filesystem::path& path,
 
 struct MusicPlayback::Impl {
   ArchiveBgmResources& Resources;
+  ArchiveSeResources* Sounds;
   std::unique_ptr<Audio::OpenAL::AudioBackend> Backend;
   ALCdevice* Device = nullptr;
   ALCcontext* Context = nullptr;
   LPALCRENDERSAMPLESSOFT RenderSamples = nullptr;
   std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> Channel;
+  std::array<std::unique_ptr<Audio::OpenAL::OpenALAudioChannel>,4> SeChannels;
   float OldMaster = Audio::MasterVolume;
   float OldGroup = Audio::GroupVolumes[Audio::ACG_BGM];
-  explicit Impl(ArchiveBgmResources& resources, bool loopback)
-      : Resources(resources) {
+  float OldSeGroup = Audio::GroupVolumes[Audio::ACG_SE];
+  explicit Impl(ArchiveBgmResources& resources, bool loopback, ArchiveSeResources* sounds)
+      : Resources(resources), Sounds(sounds) {
     try {
       if (loopback) {
         const auto open = reinterpret_cast<LPALCLOOPBACKOPENDEVICESOFT>(
@@ -159,8 +188,12 @@ struct MusicPlayback::Impl {
       }
       Audio::MasterVolume = 1;
       Audio::GroupVolumes[Audio::ACG_BGM] = 1;
+      Audio::GroupVolumes[Audio::ACG_SE] = 1;
       Channel = std::make_unique<Audio::OpenAL::OpenALAudioChannel>(
           Audio::AC_BGM0, Audio::ACG_BGM);
+      if (Sounds) for (size_t i=0; i<SeChannels.size(); ++i)
+        SeChannels[i] = std::make_unique<Audio::OpenAL::OpenALAudioChannel>(
+            Audio::AudioChannelId(int(Audio::AC_SSE0) + i), Audio::ACG_SE);
       AlCheck("channel creation");
     } catch (...) {
       Cleanup();
@@ -169,6 +202,7 @@ struct MusicPlayback::Impl {
   }
   void Cleanup() {
     Channel.reset();
+    for (auto& channel : SeChannels) channel.reset();
     alcMakeContextCurrent(nullptr);
     if (Backend) {
       Backend->Shutdown();
@@ -184,11 +218,12 @@ struct MusicPlayback::Impl {
     }
     Audio::MasterVolume = OldMaster;
     Audio::GroupVolumes[Audio::ACG_BGM] = OldGroup;
+    Audio::GroupVolumes[Audio::ACG_SE] = OldSeGroup;
   }
   ~Impl() { Cleanup(); }
 };
-MusicPlayback::MusicPlayback(ArchiveBgmResources& resources, bool loopback)
-    : impl_(std::make_unique<Impl>(resources, loopback)) {}
+MusicPlayback::MusicPlayback(ArchiveBgmResources& resources, bool loopback, ArchiveSeResources* sounds)
+    : impl_(std::make_unique<Impl>(resources, loopback, sounds)) {}
 MusicPlayback::~MusicPlayback() = default;
 void MusicPlayback::Submit(const GameEvent& event) {
   if (event.Kind == GameEventKind::PlayBgm) {
@@ -211,6 +246,31 @@ void MusicPlayback::Submit(const GameEvent& event) {
       throw UnsupportedCommand(
           "native BGM fade-time conversion is not verified");
     impl_->Channel->Stop(0);
+  } else if (event.Kind == GameEventKind::PlaySe) {
+    if (!impl_->Sounds || !event.Se || event.Se->Track != event.Id)
+      throw FormatError("invalid typed SE request or missing SE bank");
+    const auto& request = *event.Se;
+    if (request.Channel < 2 || request.Channel > 5)
+      throw UnsupportedCommand("SE playback outside the four native SE channels");
+    if (!request.Volume)
+      throw UnsupportedCommand("native SE service master setting is unknown");
+    const float gain = request.Volume->Gain;
+    if (!std::isfinite(gain) || gain < 0 || gain > 1)
+      throw UnsupportedCommand("SE output gain outside authored settings range");
+    auto stream = std::make_unique<AwbAudioStream>(*impl_->Sounds, request.Track);
+    // The final service refresh writes the same SE gain to backend2..5.
+    // BGM is recomputed from unchanged service percentages, preserving its
+    // applied gain here. The voice consumer remains separate. Remember is
+    // never a looping flag.
+    for (auto& channel : impl_->SeChannels) channel->SetVolume(gain);
+    impl_->SeChannels[size_t(request.Channel - 2)]->Play(std::move(stream),
+        impl_->Sounds->Info(request.Track).Loop, 0);
+  } else if (event.Kind == GameEventKind::StopSe) {
+    if (!impl_->Sounds || event.Id < 2 || event.Id > 5)
+      throw UnsupportedCommand("SE stop outside the four native SE channels");
+    if (event.Parameter != 0)
+      throw UnsupportedCommand("native SE fade-time conversion is not verified");
+    impl_->SeChannels[size_t(event.Id - 2)]->Stop(0);
   } else
     throw UnsupportedCommand(
         "Saekano audio host cannot consume this event yet");
@@ -218,10 +278,18 @@ void MusicPlayback::Submit(const GameEvent& event) {
 }
 void MusicPlayback::Update(float seconds) {
   impl_->Channel->Update(seconds);
+  for (auto& channel : impl_->SeChannels) if (channel) channel->Update(seconds);
   AlCheck("BGM frame");
 }
 bool MusicPlayback::Playing() const {
-  return impl_->Channel->GetState() != Audio::ACS_Stopped;
+  if (impl_->Channel->GetState() != Audio::ACS_Stopped) return true;
+  for (auto& channel : impl_->SeChannels)
+    if (channel && channel->GetState() != Audio::ACS_Stopped) return true;
+  return false;
+}
+bool MusicPlayback::SoundPlaying(size_t logicalChannel) const {
+  const auto& channel = impl_->SeChannels.at(logicalChannel);
+  return channel && channel->GetState() != Audio::ACS_Stopped;
 }
 void MusicPlayback::Render(std::span<int16_t> output) {
   if (!impl_->RenderSamples || output.size() % 2)
@@ -239,11 +307,17 @@ void MusicPlayback::Render(std::span<int16_t> output) {
 }
 
 int RunMusicSession(const std::filesystem::path& usrdir, uint32_t track,
-                    const std::filesystem::path& captureDirectory) {
+                    const std::filesystem::path& captureDirectory,
+                    std::optional<uint32_t> soundChannel) {
   try {
     const bool capture = !captureDirectory.empty();
     ArchiveBgmResources resources(usrdir);
-    resources.Prepare(int32_t(track));
+    std::unique_ptr<ArchiveSeResources> sounds;
+    if (soundChannel) {
+      if (*soundChannel > 3) throw FormatError("SE channel must be0..3");
+      sounds = std::make_unique<ArchiveSeResources>(usrdir);
+      sounds->Prepare(int32_t(track));
+    } else resources.Prepare(int32_t(track));
     if (capture) {
       const auto output = std::filesystem::weakly_canonical(captureDirectory);
       const auto data = std::filesystem::weakly_canonical(usrdir);
@@ -262,16 +336,19 @@ int RunMusicSession(const std::filesystem::path& usrdir, uint32_t track,
     struct SdlCleanup {
       ~SdlCleanup() { SDL_Quit(); }
     } cleanup;
-    MusicPlayback playback(resources, capture);
-    SessionScript scripts(track);
+    MusicPlayback playback(resources, capture, sounds.get());
+    SessionScript scripts(track, soundChannel);
     HeadlessBackend backend;
     backend.MusicResources = &resources;
+    backend.SeArchives = sounds.get();
     SemanticState state;
     state.MusicHistory.ExtentKnown = true;
     state.BgmMasterVolume = 80;
+    state.SeMasterVolume = 80;
     VirtualMachine vm(scripts, backend, state);
     std::vector<int16_t> samples;
     uint32_t playRequests = 0, stopRequests = 0, completed = 0, gain = 0;
+    bool otherPlayingAtFirstStop = false;
     const auto epoch = SDL_GetTicks();
     bool ended = false;
     for (uint64_t frame = 0; frame < 240 && !ended; ++frame) {
@@ -280,11 +357,17 @@ int RunMusicSession(const std::filesystem::path& usrdir, uint32_t track,
         const auto event = vm.Step(now);
         for (const auto& request : vm.TakeEvents()) {
           playback.Submit(request);
-          if (request.Kind == GameEventKind::PlayBgm) {
+          if (request.Kind == GameEventKind::PlaySe) {
+            ++playRequests;
+            gain = std::bit_cast<uint32_t>(request.Se->Volume->Gain);
+          } else if (request.Kind == GameEventKind::PlayBgm) {
             ++playRequests;
             gain = std::bit_cast<uint32_t>(request.Bgm->Volume->Gain);
-          } else if (request.Kind == GameEventKind::StopBgm)
+          } else if (request.Kind == GameEventKind::StopBgm || request.Kind == GameEventKind::StopSe) {
+            if (soundChannel && stopRequests == 0)
+              otherPlayingAtFirstStop = playback.SoundPlaying((*soundChannel + 1) % 4);
             ++stopRequests;
+          }
         }
         if (event.Boundary == VmBoundary::CommandCompletedBeforeDispatch)
           ++completed;
@@ -308,8 +391,8 @@ int RunMusicSession(const std::filesystem::path& usrdir, uint32_t track,
           if (event.type == SDL_EVENT_QUIT) return 0;
       }
     }
-    if (!ended || playback.Playing() || playRequests != 1 ||
-        stopRequests != 1 || completed != 3)
+    if (!ended || playback.Playing() || playRequests != (soundChannel ? 2u : 1u) ||
+        stopRequests != (soundChannel ? 2u : 1u) || completed != (soundChannel ? 7u : 3u))
       throw FormatError(
           "audio VM session did not finish playback/wait/stop sequence");
     if (capture) {
@@ -325,7 +408,12 @@ int RunMusicSession(const std::filesystem::path& usrdir, uint32_t track,
         if (i) report << ',';
         report << ExactMusicStatus(vm.State().MusicHistory, i);
       }
-      report << "],\"stopped\":true}\n";
+      report << "],\"stopped\":true";
+      if (soundChannel) report << ",\"sound_channel\":" << *soundChannel
+          << ",\"other_playing_at_first_stop\":" << (otherPlayingAtFirstStop ? "true" : "false")
+          << ",\"remembered_track\":" << *vm.State().SeTrack
+          << ",\"remembered_channel\":" << *vm.State().SeChannel;
+      report << "}\n";
       if (!report) throw FormatError("cannot write audio session report");
     }
     SDL_Log(
