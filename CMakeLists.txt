@@ -8,7 +8,7 @@ if(IMPACTO_SAEKANO_CORE_ONLY)
     # Keep debug records in object files: this also avoids requiring a matching
     # running mspdbsrv when using a standalone Build Tools installation.
     set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT Embedded)
-    project(impacto_saekano_core LANGUAGES CXX)
+    project(impacto_saekano_core LANGUAGES C CXX)
     enable_testing()
     add_subdirectory(src/saekano)
     return()
