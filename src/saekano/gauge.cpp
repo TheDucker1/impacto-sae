@@ -76,6 +76,10 @@ class EnvironmentReader {
 void ScriptLinearTween::Start(int32_t from, int32_t to, int32_t duration,
                               uint64_t now) {
   if (duration < 0) throw FormatError("negative gauge transition duration");
+  StartUnsigned(from, to, uint32_t(duration), now);
+}
+void ScriptLinearTween::StartUnsigned(int32_t from, int32_t to,
+                                      uint32_t duration, uint64_t now) {
   From = Current = from;
   To = to;
   Duration = duration;
@@ -90,7 +94,12 @@ void ScriptLinearTween::Tick(uint64_t now) {
   } else {
     Sample = now;
     const auto delta = Add(To, Negate(From));
-    Current = Add(From, Multiply(delta, int32_t(elapsed)) / Duration);
+    // Native compares the zero-extended 64-bit deadline, but its division
+    // helper interprets the low duration word as signed32. Widen division to
+    // avoid C++ overflow for INT_MIN/-1, then keep the native low32 result.
+    const auto divisor = std::bit_cast<int32_t>(Duration);
+    const auto quotient = int64_t(Multiply(delta, int32_t(elapsed))) / divisor;
+    Current = Add(From, std::bit_cast<int32_t>(uint32_t(quotient)));
   }
 }
 bool ScriptLinearTween::Finished() const {

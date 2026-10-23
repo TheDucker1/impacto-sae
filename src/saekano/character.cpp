@@ -146,6 +146,15 @@ void TickCharacterQueues(SemanticState& state, uint64_t now) {
   tick(state.CharacterRuntimeState.Foreground,
        state.SkipMode != 0 && state.SkipPhase != 0);
   tick(state.CharacterRuntimeState.Background, state.SkipPhase != 0);
+  for (auto& [id, actor] : state.Characters) {
+    (void)id;
+    if (!actor.RuntimeKnown || !actor.Pose.Known) continue;
+    auto& face = actor.PreviousFaceOpacity;
+    if (state.SkipMode != 0)
+      face.StartUnsigned(face.To, face.To, 0, now);
+    else
+      face.Tick(now);
+  }
 }
 void RestoreStaticCharacterPoses(SemanticState& state,
                                  const CharacterPoseDriver* driver) {
@@ -164,6 +173,7 @@ void RestoreStaticCharacterPoses(SemanticState& state,
     actor.Pose.Known = true;
     actor.Pose.Current = actor.Pose.Requested = actor.SavedFields[11];
     actor.Pose.Face = actor.Pose.PreviousFace = actor.SavedFields[0];
+    actor.PreviousFaceOpacity = {};
     actor.PoseHistory.clear();
     actor.PoseHistoryKnown =
         true;  // Reset frees runtimes; load constructs anew.
@@ -340,5 +350,62 @@ bool UpdateCharacterOffset(SemanticState& state,
   }
   return lane || command.Background ||
          state.CharacterRuntimeState.Foreground.empty();
+}
+CharacterFaceCommand CharacterFaceCommand::Decode(
+    std::span<const uint8_t> payload) {
+  PayloadReader reader(payload);
+  CharacterFaceCommand result;
+  result.Route = reader.U32();
+  result.Character = reader.U32();
+  result.Source = reader.U32();
+  result.Value = reader.I32();
+  result.Duration = reader.U32();
+  result.Lane = reader.U32();
+  if (result.Source > 2 || (result.Route && result.Lane >= 5))
+    throw FormatError("invalid character face source/lane");
+  return result;
+}
+void StartCharacterFace(SemanticState& state, CharacterFaceAnimation& animation,
+                        const CharacterFaceCommand& command) {
+  if (!state.CharacterRuntimeState.Known)
+    throw UnsupportedCommand("restored character map is missing for face");
+  // As with Position, native Start searches the full word before narrowing
+  // insertion. Reject out-of-domain alias replacement of an unrelated actor.
+  if (command.Character > UINT16_MAX)
+    throw FormatError("character face ID exceeds native map key domain");
+  animation.Resolved = command.Source == 0 ? command.Value
+                       : command.Source == 1
+                           ? state.Bank0.at(size_t(command.Value))
+                           : state.Bank1.at(size_t(command.Value));
+  EnsureCharacter(state, uint16_t(command.Character));
+  animation.Started = true;
+}
+bool UpdateCharacterFace(SemanticState& state,
+                         const CharacterFaceAnimation& animation,
+                         const CharacterFaceCommand& command, bool lane,
+                         bool skipping, uint64_t now) {
+  if (!animation.Started)
+    throw UnsupportedCommand("character face Start was suppressed");
+  if (command.Route && !lane) return true;
+  auto found = state.Characters.find(uint16_t(command.Character));
+  if (!state.CharacterRuntimeState.Known || found == state.Characters.end() ||
+      !found->second.RuntimeKnown || !found->second.Pose.Known)
+    throw UnsupportedCommand("character face needs known initial facial state");
+  auto& actor = found->second;
+  auto& pose = actor.Pose;
+  if (pose.Face != animation.Resolved) {
+    if (actor.Tweens[size_t(CharacterTween::Opacity)].Current != 0) {
+      pose.PreviousFace = pose.Face;
+      actor.PreviousFaceOpacity.StartUnsigned(
+          255, 0, skipping ? 0 : command.Duration, now);
+    } else {
+      pose.PreviousFace = animation.Resolved;
+      actor.PreviousFaceOpacity.StartUnsigned(0, 0, 0, now);
+    }
+    pose.Face = animation.Resolved;
+    pose.PreviousFacePose = pose.Current;
+  }
+  return true;  // Tween208 continues in the per-frame actor pass, outside
+                // queues.
 }
 }  // namespace Impacto::Saekano

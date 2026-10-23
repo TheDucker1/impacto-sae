@@ -44,12 +44,16 @@ struct CharacterState {
     std::optional<std::array<int32_t, 12>> Geometry;
     std::optional<size_t> PreviousResourceSlot;
     std::optional<std::array<int32_t, 12>> PreviousGeometry;
-    std::optional<int32_t> CrossfadePoseTag;  // Native R2dc, captured during install.
+    std::optional<int32_t>
+        CrossfadePoseTag;  // Native R2dc, captured during install.
   } Pose;
   std::vector<uint32_t> PoseHistory;
   uint32_t Priority = 0;
   bool RuntimeKnown = false, PoseHistoryKnown = false;
   std::array<ScriptLinearTween, size_t(CharacterTween::Count)> Tweens;
+  // Native ninth tween208, ticked for every actor outside the shared queues.
+  // Its initial state is known with fresh/static Pose fields, not CRR1 alone.
+  ScriptLinearTween PreviousFaceOpacity;
   std::array<int32_t, 12> SavedFields{};
   std::array<uint8_t, 3> Tint{};  // RGB, native R2fa/2f9/2f8.
 };
@@ -104,4 +108,19 @@ bool UpdateCharacterOffset(SemanticState& state,
                            CharacterOffsetAnimation& animation,
                            const CharacterOffsetCommand& command, bool lane,
                            bool skipping, uint64_t now);
+struct CharacterFaceCommand {
+  uint32_t Route = 0, Character = 0, Source = 0, Duration = 0, Lane = 0;
+  int32_t Value = 0;
+  static CharacterFaceCommand Decode(std::span<const uint8_t> payload);
+};
+struct CharacterFaceAnimation {
+  bool Started = false;
+  int32_t Resolved = 0;
+};
+void StartCharacterFace(SemanticState& state, CharacterFaceAnimation& animation,
+                        const CharacterFaceCommand& command);
+bool UpdateCharacterFace(SemanticState& state,
+                         const CharacterFaceAnimation& animation,
+                         const CharacterFaceCommand& command, bool lane,
+                         bool skipping, uint64_t now);
 }  // namespace Impacto::Saekano

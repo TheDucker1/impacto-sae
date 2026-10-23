@@ -103,6 +103,8 @@ class VirtualMachine {
     CharacterOffsetAnimation OffsetAnimation;
     std::optional<CharacterPoseCommand> CharacterPose;
     CharacterPoseAnimation PoseAnimation;
+    std::optional<CharacterFaceCommand> CharacterFace;
+    CharacterFaceAnimation FaceAnimation;
     int32_t WaitDuration = 0;
     uint32_t WaitHonorSkip = 0;
     size_t SelectedOrdinal = 0;

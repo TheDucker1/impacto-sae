@@ -13,9 +13,11 @@ struct UiSpriteDescriptor {
 // Distinct from the 40-byte model parameter tween. Native arithmetic wraps its
 // 32-bit product before signed division and clamps the sample at the deadline.
 struct ScriptLinearTween {
-  int32_t From = 0, To = 0, Current = 0, Duration = 0;
+  int32_t From = 0, To = 0, Current = 0;
+  uint32_t Duration = 0;
   uint64_t Epoch = 0, Sample = 0;
   void Start(int32_t from, int32_t to, int32_t duration, uint64_t now);
+  void StartUnsigned(int32_t from, int32_t to, uint32_t duration, uint64_t now);
   void Tick(uint64_t now);
   bool Finished() const;
 };
