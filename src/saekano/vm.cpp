@@ -70,6 +70,8 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     } else if (opcode == 0x1fa) {
       command.CharacterFace = CharacterFaceCommand::Decode(script_->Payload(i));
       command.Routing = {command.CharacterFace->Route != 0,command.CharacterFace->Lane};
+    } else if (opcode == 0x204) {
+      command.CharacterReserve = CharacterReserveCommand::Decode(script_->Payload(i));
     } else if (opcode == 0x1f8) {
       command.CharacterScale = CharacterScaleCommand::Decode(script_->Payload(i));
       command.Routing = {command.CharacterScale->Route != 0,command.CharacterScale->Lane};
@@ -270,6 +272,8 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
     StartCharacterPose(state_, command.PoseAnimation, *command.CharacterPose, *poses);
   } else if (opcode == 0x1fa && !lane) {
     StartCharacterFace(state_, command.FaceAnimation, *command.CharacterFace);
+  } else if (opcode == 0x204 && !lane) {
+    StartCharacterReserve(state_, *command.CharacterReserve);
   } else if (opcode == 0x1f8 && !lane) {
     StartCharacterScale(state_, command.ScaleAnimation, *command.CharacterScale);
   } else if (opcode == 0x191 && !lane) {
@@ -323,7 +327,7 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
   const auto opcode = script_->Records()[index].Opcode;
   if (!lane && command.Routing.QueueForLane && opcode != 0xcb && opcode != 0x1f9) return true;
   if (lane && !command.LaneStarted) Start(index, now, true);
-  if (opcode == 0x258 || opcode == 0x259 || opcode == 0xce) return true;  // Native common completion; no fade/resource wait.
+  if (opcode == 0x258 || opcode == 0x259 || opcode == 0xce || opcode == 0x204) return true;  // Native common completion; no fade/resource wait.
   if (opcode == 0x201) {
     if (lane) return true;
     return UpdateCharacterColor(state_, *command.CharacterColor, input.Route == UpdateRoute::Skipping, now);

@@ -108,6 +108,7 @@ class VirtualMachine {
     std::optional<CharacterDrawCommand> CharacterDraw;
     CharacterDrawAnimation DrawAnimation;
     std::optional<CharacterPoseCommand> CharacterPose;
+    std::optional<CharacterReserveCommand> CharacterReserve;
     CharacterPoseAnimation PoseAnimation;
     std::optional<CharacterFaceCommand> CharacterFace;
     CharacterFaceAnimation FaceAnimation;

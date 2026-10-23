@@ -141,6 +141,15 @@ struct CharacterFaceCommand {
   int32_t Value = 0;
   static CharacterFaceCommand Decode(std::span<const uint8_t> payload);
 };
+struct CharacterReserveCommand {
+  uint32_t Mode = 0, Character = 0;
+  int32_t Face = 0;
+  // Both words are consumed by the loader but have no lifecycle consumer.
+  std::array<uint32_t, 2> Unused{};
+  static CharacterReserveCommand Decode(std::span<const uint8_t> payload);
+};
+void StartCharacterReserve(SemanticState& state,
+                           const CharacterReserveCommand& command);
 struct CharacterScaleCommand {
   uint32_t Route = 0, Character = 0, Duration = 0, Background = 0, Lane = 0;
   int32_t Percent = 100;

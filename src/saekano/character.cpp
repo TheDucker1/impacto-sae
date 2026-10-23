@@ -523,6 +523,26 @@ CharacterFaceCommand CharacterFaceCommand::Decode(
     throw FormatError("invalid character face source/lane");
   return result;
 }
+CharacterReserveCommand CharacterReserveCommand::Decode(
+    std::span<const uint8_t> payload) {
+  PayloadReader reader(payload);
+  CharacterReserveCommand result;
+  result.Mode = reader.U32();
+  result.Character = reader.U32();
+  result.Face = reader.I32();
+  for (auto& word : result.Unused) word = reader.U32();
+  // Native LOAD consumes twenty bytes. The corpus has six ignored tail bytes,
+  // including a nonzero word; they are not an extra field or zero-padding rule.
+  return result;
+}
+void StartCharacterReserve(SemanticState& state,
+                           const CharacterReserveCommand& command) {
+  if (!state.CharacterRuntimeState.Known)
+    throw UnsupportedCommand("restored character map is missing for reserve");
+  // Native b0c8 narrows before searching, unlike Face/Position Start.
+  auto& actor = EnsureCharacter(state, uint16_t(command.Character));
+  if (command.Mode == 0) actor.Pose.ReservedFace = command.Face;
+}
 void StartCharacterFace(SemanticState& state, CharacterFaceAnimation& animation,
                         const CharacterFaceCommand& command) {
   if (!state.CharacterRuntimeState.Known)
