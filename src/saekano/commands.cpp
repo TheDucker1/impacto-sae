@@ -6,6 +6,23 @@
 
 namespace Impacto::Saekano {
 
+StopSeCommand StopSeCommand::Decode(std::span<const uint8_t> payload) {
+  PayloadReader reader(payload);
+  return {reader.I32(), reader.I32()};
+}
+void StartStopSe(SemanticState& state, const StopSeCommand& command) {
+  const bool alreadyNone = state.SeTrack && *state.SeTrack == -1;
+  if (!alreadyNone && !state.SeChannel)
+    throw UnsupportedCommand("initial remembered SE ID/channel is missing");
+  // Matching channel always produces -1, even if the previous ID was unknown.
+  // A mismatch preserves that ID and never reads/modifies remembered volume.
+  if (state.SeChannel && *state.SeChannel == command.Channel) state.SeTrack = -1;
+  const auto backendChannel =
+      std::bit_cast<int32_t>(uint32_t(command.Channel) + 2u);
+  state.PendingEvents.push_back(
+      {GameEventKind::StopSe, backendChannel, {}, command.Fade});
+}
+
 uint16_t PayloadReader::U16() {
   if (Remaining() < 2) throw FormatError("truncated payload halfword");
   const uint16_t result = uint16_t(bytes_[cursor_]) |

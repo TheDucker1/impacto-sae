@@ -17,12 +17,12 @@
 
 namespace Impacto::Saekano {
 
-enum class GameEventKind { Sound, Effect, Trophy, StopBgm, StopChannel, PlayBgm };
+enum class GameEventKind { Sound, Effect, Trophy, StopBgm, StopChannel, PlayBgm, StopSe };
 struct GameEvent {
   GameEventKind Kind;
   int32_t Id;
   std::array<int32_t, 2> ScreenPosition{};
-  int32_t Parameter = 0;  // StopBgm: original signed fade parameter, units unproved.
+  int32_t Parameter = 0;  // StopBgm/StopSe: signed fade parameter, units unproved.
   std::optional<BgmPlayRequest> Bgm{};
 };
 
@@ -63,6 +63,7 @@ struct SemanticState {
   std::optional<int32_t> BgmTrack;  // C+15a4; absent from the portable restore schema.
   std::optional<int32_t> BgmCommandVolume;  // C+15a8.
   std::optional<int32_t> BgmMasterVolume;  // Service master setting, percentage.
+  std::optional<int32_t> SeTrack, SeCommandVolume, SeChannel;  // C15ac/b0/b4.
   MusicHistoryState MusicHistory;  // Owner S6027c vector; persists between files.
   MusicExecutionPolicy MusicPolicy = MusicExecutionPolicy::Concrete;
   EffectContext Effects;
@@ -140,6 +141,11 @@ struct MessageCommand {
   uint32_t Lane;
 };
 MessageCommand DecodeMessage(std::span<const uint8_t> payload);
+struct StopSeCommand {
+  int32_t Channel = 0, Fade = 0;
+  static StopSeCommand Decode(std::span<const uint8_t> payload);
+};
+void StartStopSe(SemanticState& state, const StopSeCommand& command);
 
 // Executes the supported command's semantic effects to its completion boundary.
 // Presentation gates are supplied as already satisfied by a headless backend.

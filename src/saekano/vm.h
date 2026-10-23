@@ -88,6 +88,7 @@ class VirtualMachine {
     CompletedCommand Routing;
     std::optional<MessageCommand> Message;
     std::optional<PlayBgmCommand> PlayBgm;
+    std::optional<StopSeCommand> StopSe;
     size_t MessageSide = 0;
     std::optional<Live2dCommand> Live2d;
     std::optional<BattleGaugeCommand> BattleGauge;

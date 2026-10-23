@@ -43,6 +43,8 @@ void VirtualMachine::Load(bool preserveOwnerState) {
       command.Routing = {command.Message->Route != 0, command.Message->Lane};
     } else if (opcode == 0x258) {
       command.PlayBgm = PlayBgmCommand::Decode(script_->Payload(i));
+    } else if (opcode == 0x25b) {
+      command.StopSe = StopSeCommand::Decode(script_->Payload(i));
     } else if (opcode == 0xc8 || opcode == 0xc9) {
       command.ScreenFade = ScreenFadeCommand::Decode(script_->Payload(i), opcode == 0xc9);
     } else if (opcode == 0x191) {
@@ -130,6 +132,10 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     state_.Battle = {};  // Mode entry must initialize its display and sides.
     state_.BgmTrack.reset();
     state_.BgmCommandVolume.reset();
+    // Reset801a015c/0164/016c: remembered SE ID=-1, volume100, channel0.
+    state_.SeTrack = -1;
+    state_.SeCommandVolume = 100;
+    state_.SeChannel = 0;
     state_.Effects = {};
     state_.RuleWipe = {};
     // Fresh constructor801a0940..0954 clears all six quake outputs.
@@ -308,6 +314,8 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
     const auto fade = reader.I32();
     state_.BgmTrack = -1;
     state_.PendingEvents.push_back({GameEventKind::StopBgm, 0, {}, fade});
+  } else if (opcode == 0x25b && !lane) {
+    StartStopSe(state_, *command.StopSe);
   } else if (opcode == 0x3f5 && !lane) {
     const auto* environment = backend_.ApproachEnvironment();
     if (!environment) throw UnsupportedCommand("approach gauge environment is unavailable");
@@ -346,7 +354,7 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
   const auto opcode = script_->Records()[index].Opcode;
   if (!lane && command.Routing.QueueForLane && opcode != 0xcb && opcode != 0x1f9) return true;
   if (lane && !command.LaneStarted) Start(index, now, true);
-  if (opcode == 0x258 || opcode == 0x259 || opcode == 0xce || opcode == 0x204) return true;  // Native common completion; no fade/resource wait.
+  if (opcode == 0x258 || opcode == 0x259 || opcode == 0x25b || opcode == 0xce || opcode == 0x204) return true;  // Native common completion; no fade/resource wait.
   if (opcode == 0x201) {
     if (lane) return true;
     return UpdateCharacterColor(state_, *command.CharacterColor, input.Route == UpdateRoute::Skipping, now);
