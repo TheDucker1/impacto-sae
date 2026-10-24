@@ -65,7 +65,8 @@ struct HcaWaveInfo {
 };
 
 // Uses Impacto's existing vendor/clHCA decoder. No codec reimplementation or
-// entire-bank/entire-track buffering. Read returns interleaved signed 16-bit
+// decoded-track buffering. AWB sources stay on demand; standalone sources own
+// their encoded bytes. Read returns interleaved signed 16-bit
 // PCM. Seek is exact: reset and replay decoder history. Loop scheduling belongs
 // to the playback consumer; reads stop at Frames, without automatically
 // looping.
@@ -73,6 +74,10 @@ class HcaWaveReader {
  public:
   HcaWaveReader(std::shared_ptr<AwbBank> bank, uint32_t id,
                 std::optional<uint64_t> key = std::nullopt);
+  // Profile responses embed individual HCA streams inside GPDA/gzip rather
+  // than the global AWB banks. Own the encoded bytes; reuse the same decoder.
+  explicit HcaWaveReader(Bytes encoded,
+                         std::optional<uint64_t> key = std::nullopt);
   ~HcaWaveReader();
   HcaWaveReader(const HcaWaveReader&) = delete;
   HcaWaveReader& operator=(const HcaWaveReader&) = delete;

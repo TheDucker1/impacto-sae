@@ -33,6 +33,11 @@ struct ProfileCharacter {
 };
 using ProfileScene = std::vector<ProfileCharacter>;
 ProfileScene DecodeProfileScene(std::span<const uint8_t> bytes);
+struct ProfileMouthAnimation {
+  int32_t Duration = 0;
+  std::vector<uint8_t> Samples;
+};
+ProfileMouthAnimation DecodeProfileMouth(std::span<const uint8_t> bytes);
 struct ProfileOwnerState {
   bool Known = false;
   int32_t CachedOrdinal = 0;  // S60108, independent of script Bank0.

@@ -72,6 +72,8 @@ GameResources::GameResources(const GpdaArchive& root)
     const auto profile = ResourceSection(root, 3);
     if (profile.Entries().size() > 1)
       profileScenes_.emplace(RawEntry(profile, 1));
+    if (profile.Entries().size() > 4)
+      profileVoices_.emplace(RawEntry(profile, 4));
   }
   for (auto section : {ImageSection::Background, ImageSection::Event,
                        ImageSection::Free, ImageSection::Rule})
@@ -86,6 +88,21 @@ ProfileScene GameResources::LoadProfileScene(size_t sceneId) const {
   if (sceneId >= ProfileSceneCount())
     throw FormatError("profile scene ID outside original archive");
   return DecodeProfileScene(RawEntry(*profileScenes_, sceneId));
+}
+ProfileVoiceAssets GameResources::LoadProfileVoice(size_t characterId,
+                                                   size_t entry) const {
+  if (!profileVoices_ || characterId >= 4)
+    throw FormatError("profile voice character outside original archive");
+  const auto load = [&](size_t section) {
+    const GpdaArchive characters(RawEntry(*profileVoices_, section));
+    if (characterId >= characters.Entries().size())
+      throw FormatError("profile voice character archive is missing");
+    const GpdaArchive waves(RawEntry(characters, characterId));
+    if (entry >= waves.Entries().size())
+      throw FormatError("profile voice entry outside original archive");
+    return CompressedEntry(waves, entry, 1);
+  };
+  return {load(0), DecodeProfileMouth(load(1))};
 }
 
 CharacterPoseAssets DecodeCharacterPoseArchive(Bytes bytes) {

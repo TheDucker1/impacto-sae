@@ -2,6 +2,7 @@
 #include "commands.h"
 
 #include <bit>
+#include <algorithm>
 #include <limits>
 
 namespace Impacto::Saekano {
@@ -258,6 +259,38 @@ ProfileScene DecodeProfileScene(std::span<const uint8_t> bytes) {
       events.push_back(std::move(event));
     }
   }
+  return result;
+}
+ProfileMouthAnimation DecodeProfileMouth(std::span<const uint8_t> bytes) {
+  if (bytes.size() > 1024 * 1024)
+    throw FormatError("profile mouth data exceeds budget");
+  const auto comma = std::find(bytes.begin(), bytes.end(), uint8_t(','));
+  if (comma == bytes.end())
+    throw FormatError("profile mouth data has no duration separator");
+  const size_t length = size_t(comma - bytes.begin());
+  size_t i = 0;
+  while (i < length &&
+         (bytes[i] == ' ' || bytes[i] == '\t' || bytes[i] == '\r' ||
+          bytes[i] == '\n' || bytes[i] == '\v' || bytes[i] == '\f'))
+    ++i;
+  bool negative = i < length && bytes[i] == '-';
+  if (i < length && (bytes[i] == '+' || bytes[i] == '-')) ++i;
+  uint32_t duration = 0;
+  for (; i < length && bytes[i] >= '0' && bytes[i] <= '9'; ++i) {
+    const auto digit = uint32_t(bytes[i] - '0');
+    if (duration > (uint32_t(INT32_MAX) - digit) / 10)
+      throw FormatError("profile mouth duration exceeds signed32 range");
+    duration = duration * 10 + digit;
+  }
+  if (negative && duration)
+    throw FormatError("negative profile mouth duration");
+  ProfileMouthAnimation result;
+  result.Duration = int32_t(duration);
+  result.Samples.reserve(bytes.size() - length - 1);
+  // Native5204e..52238 transforms every remaining byte, without whitespace
+  // trimming or C-string termination. Preserve its unsigned byte subtraction.
+  for (size_t at = length + 1; at < bytes.size(); ++at)
+    result.Samples.push_back(uint8_t(int(bytes[at]) - '0'));
   return result;
 }
 size_t InitialProfileOrdinal(const ProfileOwnerState& owner,

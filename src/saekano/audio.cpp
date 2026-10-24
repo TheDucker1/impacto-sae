@@ -109,7 +109,8 @@ void AwbBank::Read(uint32_t id, uint64_t offset, std::span<uint8_t> output) {
 
 struct HcaWaveReader::Impl {
   std::shared_ptr<AwbBank> Bank;
-  uint32_t Id;
+  uint32_t Id = 0;
+  Bytes Memory;
   std::unique_ptr<clHCA, decltype(&clHCA_delete)> Decoder{clHCA_new(),
                                                           clHCA_delete};
   HcaWaveInfo Info;
@@ -124,13 +125,32 @@ struct HcaWaveReader::Impl {
   Impl(std::shared_ptr<AwbBank> bank, uint32_t id, std::optional<uint64_t> key)
       : Bank(std::move(bank)), Id(id) {
     if (!Bank) throw FormatError("missing AWB bank");
+    Initialize(key, Bank->Index().Find(Id).Size, Bank->Index().Subkey());
+  }
+  Impl(Bytes encoded, std::optional<uint64_t> key)
+      : Memory(std::move(encoded)) {
+    Initialize(key, Memory.size(), 0);
+  }
+  void ReadEncoded(uint64_t offset, std::span<uint8_t> output) {
+    if (Bank)
+      Bank->Read(Id, offset, output);
+    else {
+      if (offset > Memory.size() ||
+          output.size() > Memory.size() - size_t(offset))
+        throw FormatError("HCA read exceeds source wave");
+      std::copy_n(Memory.begin() + size_t(offset), output.size(),
+                  output.begin());
+    }
+  }
+  void Initialize(std::optional<uint64_t> key, uint64_t sourceSize,
+                  uint16_t subkey) {
     if (!Decoder) throw std::bad_alloc();
     std::array<uint8_t, 8> prefix;
-    Bank->Read(Id, 0, prefix);
+    ReadEncoded(0, prefix);
     const int headerSize = clHCA_isOurFile(prefix.data(), 8);
     if (headerSize < 8) throw FormatError("AWB wave is not supported HCA");
     Bytes header(static_cast<size_t>(headerSize));
-    Bank->Read(Id, 0, header);
+    ReadEncoded(0, header);
     if (clHCA_DecodeHeader(Decoder.get(), header.data(), headerSize) < 0)
       throw FormatError("invalid HCA header");
     clHCA_stInfo source{};
@@ -152,8 +172,8 @@ struct HcaWaveReader::Impl {
       throw FormatError("HCA trimming exceeds duration");
     const uint64_t encodedSize = uint64_t(source.headerSize) +
                                  uint64_t(source.blockCount) * source.blockSize;
-    if (encodedSize != Bank->Index().Find(Id).Size)
-      throw FormatError("HCA extent differs from AWB wave");
+    if (encodedSize != sourceSize)
+      throw FormatError("HCA extent differs from source wave");
     Info.Frames = total - source.encoderDelay - source.encoderPadding;
     Info.Loop = source.loopEnabled != 0;
     if (Info.Loop) {
@@ -173,7 +193,7 @@ struct HcaWaveReader::Impl {
     Info.Encrypted = source.encryptionEnabled != 0;
     if (Info.Encrypted && !key)
       throw FormatError("HCA encryption key is required");
-    if (Info.Encrypted && Bank->Index().Subkey())
+    if (Info.Encrypted && subkey)
       throw FormatError("AWB HCA subkey derivation is not implemented");
     if (key) clHCA_SetKey(Decoder.get(), *key);
     SamplesPerBlock = source.samplesPerBlock;
@@ -200,8 +220,8 @@ struct HcaWaveReader::Impl {
     if (NextBlock >= Info.BlockCount)
       throw FormatError("HCA block exceeds stream");
     try {
-      Bank->Read(
-          Id, uint64_t(Info.HeaderSize) + uint64_t(NextBlock) * Info.BlockSize,
+      ReadEncoded(
+          uint64_t(Info.HeaderSize) + uint64_t(NextBlock) * Info.BlockSize,
           Encoded);
       if (clHCA_DecodeBlock(Decoder.get(), Encoded.data(), Info.BlockSize) < 0)
         throw FormatError("invalid HCA block " + std::to_string(NextBlock));
@@ -237,6 +257,8 @@ struct HcaWaveReader::Impl {
 HcaWaveReader::HcaWaveReader(std::shared_ptr<AwbBank> bank, uint32_t id,
                              std::optional<uint64_t> key)
     : impl_(std::make_unique<Impl>(std::move(bank), id, key)) {}
+HcaWaveReader::HcaWaveReader(Bytes encoded, std::optional<uint64_t> key)
+    : impl_(std::make_unique<Impl>(std::move(encoded), key)) {}
 HcaWaveReader::~HcaWaveReader() = default;
 const HcaWaveInfo& HcaWaveReader::Info() const { return impl_->Info; }
 uint64_t HcaWaveReader::Position() const { return impl_->Position; }
