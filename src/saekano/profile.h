@@ -42,6 +42,32 @@ struct ProfileStatAnimation {
   int32_t CharacterId = 0;
   std::array<ScriptLinearTween, 3> Changes;
 };
+// The selection interaction after original scene/UI resources have become
+// ready (native phases3..9). Result/response and outer ownership are separate.
+// Inputs are real UI actions, never an observed destination or event index.
+struct ProfileSelectionInput {
+  std::optional<size_t> Ordinal;
+  std::optional<bool> CharacterDirection, EventDirection;
+  bool Accept = false, Cancel = false;
+  std::optional<bool> Confirmation;
+};
+struct ProfileSelectionState {
+  bool Started = false, ConfirmationOpen = false;
+  int32_t Phase = 3;
+  std::optional<int32_t> PendingPhase;
+  int32_t ReturnPhase = 5;
+  size_t Ordinal = 0, CharacterCount = 0;
+  std::array<uint32_t, 4> Selectors{};
+  ScriptLinearTween Fade, Carousel;
+  bool CarouselForward = false;
+};
+void BeginProfileSelection(ProfileSelectionState& selection,
+                           const ProfileOwnerState& owner,
+                           const ProfileScene& scene);
+// Returns true only after confirmed phase10 is committed on a later update.
+bool UpdateProfileSelection(ProfileSelectionState& selection,
+                            const ProfileEnvironment& environment,
+                            const ProfileSelectionInput& input, uint64_t now);
 size_t InitialProfileOrdinal(const ProfileOwnerState& owner,
                              const ProfileScene& scene);
 void StepProfileSelector(uint32_t& selector, bool forward);

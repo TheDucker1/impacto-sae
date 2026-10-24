@@ -220,6 +220,84 @@ void StepProfileSelector(uint32_t& selector, bool forward) {
     throw FormatError("profile selector outside native cycle");
   selector = (selector + (forward ? 1u : 9u)) % 10;
 }
+void BeginProfileSelection(ProfileSelectionState& selection,
+                           const ProfileOwnerState& owner,
+                           const ProfileScene& scene) {
+  ProfileSelectionState next;
+  next.Started = true;
+  next.Ordinal = InitialProfileOrdinal(owner, scene);
+  next.CharacterCount = scene.size();
+  next.ReturnPhase = scene.size() == 1 ? 6 : 5;
+  selection = next;
+}
+bool UpdateProfileSelection(ProfileSelectionState& selection,
+                            const ProfileEnvironment& environment,
+                            const ProfileSelectionInput& input, uint64_t now) {
+  if (!selection.Started)
+    throw UnsupportedCommand("profile selection resources are not initialized");
+  if (selection.PendingPhase) {
+    selection.Phase = *selection.PendingPhase;
+    selection.PendingPhase.reset();
+  }
+  if (selection.Phase < 3 || selection.Phase > 10)
+    throw FormatError("invalid profile selection phase");
+  if (selection.CharacterCount == 0 || selection.CharacterCount > 4 ||
+      selection.Ordinal >= selection.CharacterCount)
+    throw FormatError("profile selection outside loaded characters");
+  // The native automation's character:<ordinal> action changes only108.
+  if (input.Ordinal) {
+    if (*input.Ordinal >= selection.CharacterCount)
+      throw FormatError("profile input ordinal outside loaded characters");
+    selection.Ordinal = *input.Ordinal;
+  }
+  if (selection.Phase == 3) {
+    selection.Fade.Start(255, 0, environment.IntroFade, now);
+    selection.Phase = 4;
+  }
+  if (selection.Phase == 4) {
+    selection.Fade.Tick(now);
+    if (selection.Fade.Finished())
+      selection.PendingPhase = selection.ReturnPhase;
+  }
+  if (selection.Phase == 5) {
+    if (input.CharacterDirection) {
+      const auto count = selection.CharacterCount;
+      selection.Ordinal =
+          (selection.Ordinal + (*input.CharacterDirection ? 1 : count - 1)) %
+          count;
+    } else if (input.Accept)
+      selection.PendingPhase = 6;
+  }
+  if (selection.Phase == 6) {
+    if (input.EventDirection) {
+      selection.CarouselForward = *input.EventDirection;
+      // All eight native XY pairs share this duration. Their visual offsets
+      // remain the UI consumer's responsibility; selection changes at the end.
+      selection.Carousel.Start(0, 100, environment.Carousel, now);
+      selection.PendingPhase = 7;
+    } else if (input.Accept)
+      selection.PendingPhase = 8;
+    else if (input.Cancel && selection.CharacterCount != 1)
+      selection.PendingPhase = 5;
+  }
+  if (selection.Phase == 7) {
+    selection.Carousel.Tick(now);
+    if (selection.Carousel.Finished()) {
+      StepProfileSelector(selection.Selectors[selection.Ordinal],
+                          selection.CarouselForward);
+      selection.PendingPhase = 6;
+    }
+  }
+  if (selection.Phase == 8) {
+    selection.ConfirmationOpen = true;
+    selection.Phase = 9;
+  }
+  if (selection.Phase == 9 && input.Confirmation) {
+    selection.ConfirmationOpen = false;
+    selection.PendingPhase = *input.Confirmation ? 10 : 6;
+  }
+  return selection.Phase == 10;
+}
 const ProfileEvent& SelectedProfileEvent(const ProfileScene& scene,
                                          size_t ordinal, uint32_t selector) {
   if (ordinal >= scene.size() || selector >= 10)
