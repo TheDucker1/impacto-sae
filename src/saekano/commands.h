@@ -10,6 +10,7 @@
 #include "pose.h"
 #include "music.h"
 #include "se.h"
+#include "chapter.h"
 
 #include <array>
 #include <map>
@@ -53,6 +54,8 @@ struct SemanticState {
   std::vector<std::array<int32_t, 3>> DivergenceStack;
   std::array<std::vector<std::u16string>, 2> Messages;
   std::vector<std::u16string> Titles;
+  std::optional<bool> TitleDisplay;  // C14515; omitted from portable restores.
+  std::optional<ChapterTitleCommand> SavedChapter;  // S600b4/6007c/60044.
   std::map<uint16_t, CharacterState> Characters;
   CharacterRuntime CharacterRuntimeState;
   CharacterPoseCache PoseCache;

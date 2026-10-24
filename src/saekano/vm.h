@@ -40,6 +40,7 @@ class VmBackend {
   virtual SeResources* SoundEffects() { return nullptr; }
   virtual const BattleGaugeEnvironment* BattleEnvironment() const { return nullptr; }
   virtual const ApproachGaugeEnvironment* ApproachEnvironment() const { return nullptr; }
+  virtual const ChapterEnvironment* ChapterConfig() const { return nullptr; }
   virtual bool Supports(uint16_t) const { return false; }
   virtual CompletedCommand Route(uint16_t opcode, std::span<const uint8_t> payload) const;
   virtual void StartPresentation(size_t command, uint16_t opcode,
@@ -70,6 +71,7 @@ class VirtualMachine {
   VmBoundary Boundary() const { return boundary_; }
   uint16_t Opcode() const;
   const QuakeAnimation* CurrentQuake() const;
+  const ChapterTitleAnimation* CurrentChapter() const;
   VmEvent Step(uint64_t now, const CommandInput& input = {});
   void SetGauge(bool battle, int32_t value);
   void ActivateLane(size_t lane);
@@ -91,6 +93,8 @@ class VirtualMachine {
     std::optional<PlayBgmCommand> PlayBgm;
     std::optional<PlaySeCommand> PlaySe;
     std::optional<StopSeCommand> StopSe;
+    std::optional<ChapterTitleCommand> Chapter;
+    ChapterTitleAnimation ChapterAnimation;
     size_t MessageSide = 0;
     std::optional<Live2dCommand> Live2d;
     std::optional<BattleGaugeCommand> BattleGauge;

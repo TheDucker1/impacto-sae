@@ -21,6 +21,10 @@ class HeadlessBackend : public VmBackend {
   SeResources* SoundEffects() override { return SeArchives; }
   std::optional<BattleGaugeEnvironment> BattleConfig;
   std::optional<ApproachGaugeEnvironment> ApproachConfig;
+  std::optional<ChapterEnvironment> ChapterSettings;
+  const ChapterEnvironment* ChapterConfig() const override {
+    return ChapterSettings ? &*ChapterSettings : nullptr;
+  }
   const ApproachGaugeEnvironment* ApproachEnvironment() const override {
     return ApproachConfig ? &*ApproachConfig : nullptr;
   }

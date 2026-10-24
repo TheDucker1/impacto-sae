@@ -8,6 +8,10 @@
 namespace Impacto::Saekano {
 
 CompletedCommand VmBackend::Route(uint16_t, std::span<const uint8_t>) const { return {}; }
+const ChapterTitleAnimation* VirtualMachine::CurrentChapter() const {
+  if (Opcode() != 0x3ec) return nullptr;
+  return &commands_.at(size_t(state_.CurrentCommandIndex)).ChapterAnimation;
+}
 void VmBackend::StartPresentation(size_t, uint16_t, std::span<const uint8_t>, bool, uint64_t) {
   throw UnsupportedCommand("presentation backend does not implement this command");
 }
@@ -41,6 +45,8 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     if (opcode == 0x64) {
       command.Message = DecodeMessage(script_->Payload(i));
       command.Routing = {command.Message->Route != 0, command.Message->Lane};
+    } else if (opcode == 0x3ec) {
+      command.Chapter = ChapterTitleCommand::Decode(script_->Payload(i));
     } else if (opcode == 0x258) {
       command.PlayBgm = PlayBgmCommand::Decode(script_->Payload(i));
     } else if (opcode == 0x25a) {
@@ -162,6 +168,7 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     state_.Effects = {true, 7, 0, 0};
     state_.RuleWipe.Known = true;
     state_.ScreenFade = 255;
+    state_.TitleDisplay = false;
     state_.Approach = {};
     state_.Random = {};  // Native creates a freshly seeded manager. Host supplies its clock seed.
     if (const auto* environment = backend_.ApproachEnvironment()) {
@@ -270,6 +277,10 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
   }
   if (opcode == 0x64) {
     if (lane || !command.Routing.QueueForLane) SetupMessage(index, now);
+  } else if (opcode == 0x3ec && !lane) {
+    const auto* environment = backend_.ChapterConfig();
+    if (!environment) throw UnsupportedCommand("chapter title environment is unavailable");
+    StartChapterTitle(state_, command.ChapterAnimation, *command.Chapter, *environment, now);
   } else if ((opcode == 0xc8 || opcode == 0xc9) && !lane) {
     StartScreenFade(state_, command.FadeAnimation, *command.ScreenFade, now);
   } else if (opcode == 0xcb) {
@@ -414,6 +425,12 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
     if (lane) return true;
     return UpdateScreenFade(state_, command.FadeAnimation, *command.ScreenFade,
         input.Route == UpdateRoute::Skipping, now);
+  }
+  if (opcode == 0x3ec) {
+    if (lane) return true;
+    const auto* environment = backend_.ChapterConfig();
+    if (!environment) throw UnsupportedCommand("chapter title environment is unavailable");
+    return UpdateChapterTitle(state_, command.ChapterAnimation, *environment, input.Advance, now);
   }
   if (opcode == 0x191) {
     if (lane) return true;
