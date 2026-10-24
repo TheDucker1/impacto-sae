@@ -2,6 +2,7 @@
 
 #include "commands.h"
 #include "seekmap.h"
+#include "profilewave.h"
 
 namespace Impacto::Saekano {
 // Resource/audio/text gates are serviced by the frontend. Headless decodes
@@ -23,7 +24,7 @@ class ProfileMode {
   enum class Stage { Loading, Selection, Result, Response, Complete };
   ProfileMode(SemanticState& state, ProfileServices& services,
               const ProfileEnvironment& environment,
-              const ModeResultEnvironment& shared);
+              const ModeResultEnvironment& shared, uint64_t now = 0);
   bool Update(SemanticState& state, const ProfileSelectionInput& input,
               uint64_t now);
   Stage CurrentStage() const { return stage_; }
@@ -32,6 +33,7 @@ class ProfileMode {
   const ProfileSelectionState& Selection() const { return selection_; }
   const ProfileResultState& Result() const { return result_; }
   const ProfileResponseState& Response() const { return response_; }
+  const ProfileWaveAnimation& Wave() const { return wave_; }
 
  private:
   ProfileServices& services_;
@@ -41,5 +43,8 @@ class ProfileMode {
   ProfileSelectionState selection_;
   ProfileResultState result_;
   ProfileResponseState response_;
+  ProfileWaveAnimation wave_;
+  bool UpdatePhases(SemanticState& state, const ProfileSelectionInput& input,
+                    uint64_t now);
 };
 }  // namespace Impacto::Saekano

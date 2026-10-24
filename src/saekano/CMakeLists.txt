@@ -66,7 +66,7 @@ if(SAEKANO_CUBISM2_SDK_ROOT)
 endif()
 
 add_executable(saekano_inspect inspect.cpp)
-target_sources(saekano_core PRIVATE profilemode.cpp profilearchive.cpp profilemouth.cpp profilevoiceoutput.cpp uisprite.cpp)
+target_sources(saekano_core PRIVATE profilemode.cpp profilearchive.cpp profilemouth.cpp profilevoiceoutput.cpp uisprite.cpp profilewave.cpp)
 target_link_libraries(saekano_inspect PRIVATE saekano_core)
 add_executable(saekano_core_tests ../../tests/saekano/formats_test.cpp)
 target_link_libraries(saekano_core_tests PRIVATE saekano_core)

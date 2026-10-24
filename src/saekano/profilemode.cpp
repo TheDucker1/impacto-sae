@@ -3,13 +3,14 @@
 namespace Impacto::Saekano {
 ProfileMode::ProfileMode(SemanticState& state, ProfileServices& services,
                          const ProfileEnvironment& environment,
-                         const ModeResultEnvironment& shared)
+                         const ModeResultEnvironment& shared, uint64_t now)
     : services_(services), environment_(environment), shared_(shared) {
   if (!state.ProfileOwner.Known || !state.ProfileOwner.ResultCategories ||
       !state.TextSpeed || !state.LastBackgroundId)
     throw UnsupportedCommand(
         "profile mode requires initial owner, categories, text speed and "
         "background");
+  wave_.Begin(environment.WavePeriod, now);
   services_.BeginMenu(state.OtakuMode, *state.TextSpeed);
   // Outer80030566..3063c constructs a fresh mode and clears owner7378c.
   state.DayEnabled = 0;
@@ -32,6 +33,13 @@ int32_t ProfileMode::Phase() const {
 bool ProfileMode::Update(SemanticState& state,
                          const ProfileSelectionInput& input, uint64_t now) {
   if (stage_ == Stage::Complete) return true;
+  const bool done = UpdatePhases(state, input, now);
+  if (!done) wave_.Update(now);
+  return done;
+}
+bool ProfileMode::UpdatePhases(SemanticState& state,
+                               const ProfileSelectionInput& input,
+                               uint64_t now) {
   if (stage_ == Stage::Loading) {
     if (!services_.MenuReady()) return false;
     BeginProfileSelection(selection_, state.ProfileOwner, services_.Scene());

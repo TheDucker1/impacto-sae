@@ -147,7 +147,9 @@ ProfileEnvironment ProfileEnvironment::Decode(std::span<const uint8_t> bytes) {
   result.IntroFade = cursor.Signed();
   // Native reader801c0cdc consumes nine words (36 bytes), distinct from the
   // older34-byte sprite descriptor. Rect and vector2 readers consume16 and8.
-  cursor.Skip(3 * 36 + 4 + 4 * 36 + 8 + 2 * 36 + 4 + 5 * 36);
+  cursor.Skip(3 * 36);
+  result.WavePeriod = cursor.Signed();
+  cursor.Skip(4 * 36 + 8 + 2 * 36 + 4 + 5 * 36);
   cursor.Counted(4);  // Packed colors.
   cursor.Skip(9 * 36 + 3 * 16 + 4 * 4);
   cursor.Counted(8);
@@ -180,7 +182,7 @@ ProfileEnvironment ProfileEnvironment::Decode(std::span<const uint8_t> bytes) {
   result.StatChange = cursor.Signed();
   result.PrefixBytes = cursor.Position();
   for (const auto duration :
-       {result.IntroFade, result.Carousel, result.ResultProgress,
+       {result.IntroFade, result.WavePeriod, result.Carousel, result.ResultProgress,
         result.SecondaryProgress, result.StatChange})
     if (duration < 0) throw FormatError("negative profile transition duration");
   return result;

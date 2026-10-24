@@ -615,7 +615,7 @@ VmEvent VirtualMachine::Step(uint64_t now, const CommandInput& input) {
         throw UnsupportedCommand("owning profile resources and environment are unavailable");
       // Command Update requests outer entry; it does not run the new mode in
       // that same manager update or mark the command complete.
-      profile_ = std::make_unique<ProfileMode>(state_, *services, *environment, *shared);
+      profile_ = std::make_unique<ProfileMode>(state_, *services, *environment, *shared, now);
       boundary_ = VmBoundary::WaitingInput;
       return Event(boundary_);
     }

@@ -10,4 +10,8 @@ int RunModelViewer(const std::filesystem::path& resourceDat,
 int RunModelScenes(const std::filesystem::path& resourceDat,
                    const std::filesystem::path& environmentDat,
                    const std::filesystem::path& captureDirectory = {});
+int RunProfileBackdropViewer(
+    const std::filesystem::path& resourceDat,
+    const std::filesystem::path& environmentDat,
+    const std::filesystem::path& captureDirectory = {});
 }  // namespace Impacto::Saekano

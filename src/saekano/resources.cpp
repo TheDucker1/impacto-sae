@@ -115,6 +115,25 @@ std::vector<ProfileMenuAsset> GameResources::LoadProfileMenu() const {
     append(GpdaArchive(RawEntry(*profileCharacterUi_, i)), ProfileTextureSection::Character, int32_t(i));
   return result;
 }
+ProfileMenuAsset GameResources::LoadProfileTexture(ProfileTextureKey key) const {
+  const auto load = [&](const GpdaArchive& archive) {
+    if (key.Entry >= archive.Entries().size())
+      throw FormatError("profile texture entry outside original archive");
+    return ProfileMenuAsset{key, archive.Entries()[key.Entry].Name,
+                            CompressedEntry(archive, key.Entry, 1)};
+  };
+  if (key.Section == ProfileTextureSection::Character) {
+    if (!profileCharacterUi_ || key.Character < 0 || key.Character >= 4)
+      throw FormatError("profile character texture pack outside original archive");
+    return load(GpdaArchive(RawEntry(*profileCharacterUi_, size_t(key.Character))));
+  }
+  if (key.Character != -1) throw FormatError("common profile texture has a character pack");
+  if (key.Section == ProfileTextureSection::Portraits && profilePortraits_)
+    return load(*profilePortraits_);
+  if (key.Section == ProfileTextureSection::Interface && profileUi_)
+    return load(*profileUi_);
+  throw FormatError("profile texture section is unavailable");
+}
 ProfileVoiceAssets GameResources::LoadProfileVoice(size_t characterId,
                                                    size_t entry) const {
   if (!profileVoices_ || characterId >= 4)

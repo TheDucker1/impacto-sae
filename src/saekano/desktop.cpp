@@ -3,6 +3,8 @@
 #include "live2dsdk.h"
 #include "modelscene.h"
 #include "resources.h"
+#include "uisprite.h"
+#include "profilewave.h"
 #include "../io/memorystream.h"
 #include "../texture/texture.h"
 
@@ -13,6 +15,7 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <map>
 
 namespace Impacto::Saekano {
 namespace {
@@ -190,6 +193,150 @@ struct ViewerModel {
   }
 };
 
+struct UiBlitRenderer {
+  GLuint Program = 0, Vertex = 0, Fragment = 0, Vao = 0, Buffer = 0;
+  GLint Tint = -1;
+  struct BoundTexture {
+    GLuint Handle;
+    uint32_t Width, Height;
+  };
+  std::map<ProfileTextureKey, BoundTexture> Textures;
+  static GLuint Compile(GLenum type, const char* source) {
+    const auto shader = glCreateShader(type);
+    glShaderSource(shader, 1, &source, nullptr);
+    glCompileShader(shader);
+    GLint ok = 0;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
+    if (!ok) {
+      char log[1024]{};
+      glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
+      glDeleteShader(shader);
+      throw FormatError(std::string("UI shader: ") + log);
+    }
+    return shader;
+  }
+  UiBlitRenderer() {
+    try {
+      Vertex = Compile(GL_VERTEX_SHADER, R"GLSL(#version 330
+layout(location=0) in vec2 position;
+layout(location=1) in vec2 uv;
+out vec2 texturePosition;
+void main(){texturePosition=uv;gl_Position=vec4(position.x/480.0-1.0,1.0-position.y/272.0,0.0,1.0);}
+)GLSL");
+      Fragment = Compile(GL_FRAGMENT_SHADER, R"GLSL(#version 330
+in vec2 texturePosition;
+uniform sampler2D image;
+uniform vec4 tint;
+out vec4 outputColor;
+void main(){outputColor=texture(image,texturePosition)*tint;}
+)GLSL");
+      Program = glCreateProgram();
+      glAttachShader(Program, Vertex);
+      glAttachShader(Program, Fragment);
+      glLinkProgram(Program);
+      GLint ok = 0;
+      glGetProgramiv(Program, GL_LINK_STATUS, &ok);
+      if (!ok) throw FormatError("UI shader program link failed");
+      glDeleteShader(Vertex);
+      Vertex = 0;
+      glDeleteShader(Fragment);
+      Fragment = 0;
+      glGenVertexArrays(1, &Vao);
+      glGenBuffers(1, &Buffer);
+      glBindVertexArray(Vao);
+      glBindBuffer(GL_ARRAY_BUFFER, Buffer);
+      glBufferData(GL_ARRAY_BUFFER, 24 * sizeof(float), nullptr,
+                   GL_DYNAMIC_DRAW);
+      glEnableVertexAttribArray(0);
+      glEnableVertexAttribArray(1);
+      glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+                            nullptr);
+      glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+                            reinterpret_cast<void*>(2 * sizeof(float)));
+      glUseProgram(Program);
+      glUniform1i(glGetUniformLocation(Program, "image"), 0);
+      Tint = glGetUniformLocation(Program, "tint");
+      GlCheck("UI renderer initialization");
+    } catch (...) {
+      Release();
+      throw;
+    }
+  }
+  void Upload(ProfileTextureKey key, const ImagePixels& pixels) {
+    if (Textures.contains(key))
+      throw FormatError("duplicate UI texture binding");
+    GLuint handle = 0;
+    glGenTextures(1, &handle);
+    Textures.emplace(key, BoundTexture{handle, pixels.Width, pixels.Height});
+    glBindTexture(GL_TEXTURE_2D, handle);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, pixels.Width, pixels.Height, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, pixels.Rgba.data());
+    GlCheck("profile UI texture upload");
+  }
+  void Draw(std::span<const UiSpriteBlit> blits, int width, int height) {
+    if (width <= 0 || height <= 0) return;
+    glViewport(0, 0, width, height);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    const auto scale = std::min(float(width) / 960, float(height) / 544);
+    const int w = int(960 * scale), h = int(544 * scale);
+    glViewport((width - w) / 2, (height - h) / 2, w, h);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_FRAMEBUFFER_SRGB);
+    glEnable(GL_BLEND);
+    glBlendEquation(GL_FUNC_ADD);
+    // Same normal sprite blend policy as Impacto's OpenGL renderer.
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE);
+    glUseProgram(Program);
+    glBindVertexArray(Vao);
+    glBindBuffer(GL_ARRAY_BUFFER, Buffer);
+    glActiveTexture(GL_TEXTURE0);
+    for (const auto& blit : blits) {
+      const auto& texture = Textures.at(blit.Texture);
+      if (blit.Source[2] < 0 || blit.Source[3] < 0)
+        throw UnsupportedCommand(
+            "mirrored UI sampling needs native backend binding");
+      const float x = float(blit.Destination[0]),
+                  y = float(blit.Destination[1]);
+      const float r = x + blit.Destination[2], b = y + blit.Destination[3];
+      const float u = float(blit.Source[0]) / texture.Width,
+                  v = float(blit.Source[1]) / texture.Height;
+      const float ur = (float(blit.Source[0]) + blit.Source[2]) / texture.Width;
+      const float vb =
+          (float(blit.Source[1]) + blit.Source[3]) / texture.Height;
+      const std::array<float, 24> vertices{x, y, u,  v,  r, y, ur, v,
+                                           x, b, u,  vb, x, b, u,  vb,
+                                           r, y, ur, v,  r, b, ur, vb};
+      glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices.data());
+      glBindTexture(GL_TEXTURE_2D, texture.Handle);
+      glUniform4f(Tint, blit.Color[0] / 255.0f, blit.Color[1] / 255.0f,
+                  blit.Color[2] / 255.0f, blit.Color[3] / 255.0f);
+      glDrawArrays(GL_TRIANGLES, 0, 6);
+    }
+    GlCheck("profile UI drawing");
+  }
+  void Release() {
+    for (const auto& [key, texture] : Textures) {
+      (void)key;
+      glDeleteTextures(1, &texture.Handle);
+    }
+    Textures.clear();
+    if (Buffer) glDeleteBuffers(1, &Buffer);
+    if (Vao) glDeleteVertexArrays(1, &Vao);
+    if (Program) glDeleteProgram(Program);
+    if (Vertex) glDeleteShader(Vertex);
+    if (Fragment) glDeleteShader(Fragment);
+    Buffer = Vao = Program = Vertex = Fragment = 0;
+  }
+  ~UiBlitRenderer() { Release(); }
+};
 void Capture(const std::filesystem::path& file, int width, int height) {
   std::vector<uint8_t> pixels(size_t(width) * size_t(height) * 4);
   glPixelStorei(GL_PACK_ALIGNMENT, 4);
@@ -380,6 +527,124 @@ int RunModelScenes(const std::filesystem::path& resourceDat,
     return 0;
   } catch (const std::exception& error) {
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Saekano model scenes: %s",
+                 error.what());
+    return 1;
+  }
+}
+int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
+                             const std::filesystem::path& environmentDat,
+                             const std::filesystem::path& captureDirectory) {
+  bool captureCreated = false;
+  try {
+    const bool capture = !captureDirectory.empty();
+    if (capture) {
+      const auto output = std::filesystem::weakly_canonical(captureDirectory);
+      for (const auto& input : {resourceDat, environmentDat}) {
+        const auto root =
+            std::filesystem::weakly_canonical(input).parent_path();
+        for (auto parent = output; !parent.empty();
+             parent = parent.parent_path()) {
+          if (parent == root)
+            throw FormatError("backdrop capture overlaps input data");
+          if (parent == parent.parent_path()) break;
+        }
+      }
+      if (std::filesystem::exists(output))
+        throw FormatError("choose a fresh backdrop capture directory");
+      std::filesystem::create_directories(output);
+      captureCreated = true;
+    }
+    const auto read = [](const std::filesystem::path& path) {
+      std::ifstream file(path, std::ios::binary);
+      if (!file) throw FormatError("cannot open profile drawing input");
+      Bytes result{std::istreambuf_iterator<char>(file), {}};
+      if (file.bad()) throw FormatError("cannot read profile drawing input");
+      return result;
+    };
+    GameResources resources(read(resourceDat));
+    const auto environment =
+        ProfileBackdropEnvironment::Decode(read(environmentDat));
+    ViewerWindow window(capture);
+    SdlCheck(SDL_SetWindowTitle(window.Window, "Saekano"), "window title");
+    SdlCheck(SDL_SetWindowSize(window.Window, 960, 544), "window size");
+    UiBlitRenderer renderer;
+    for (const auto id : {2u, 22u, 23u}) {
+      const ProfileTextureKey key{ProfileTextureSection::Interface, -1, id};
+      renderer.Upload(key,
+                      DecodeSceneImage(resources.LoadProfileTexture(key).Data));
+    }
+    ProfileWaveAnimation wave;
+    wave.Begin(environment.WavePeriod, 0);
+    const std::array<uint64_t, 3> times{0, 1147, 8001};
+    size_t selected = 0;
+    std::ofstream report;
+    if (capture) {
+      report.open(captureDirectory / "frames.jsonl");
+      if (!report) throw FormatError("cannot create profile frame report");
+    }
+    const auto epoch = SDL_GetTicks();
+    bool quit = false;
+    while (!quit) {
+      SDL_Event event;
+      while (SDL_PollEvent(&event))
+        if (event.type == SDL_EVENT_QUIT ||
+            (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE))
+          quit = true;
+      if (quit) break;
+      const uint64_t now = capture ? times[selected] : SDL_GetTicks() - epoch;
+      wave.Update(now);
+      int width = 0, height = 0;
+      SdlCheck(SDL_GetWindowSizeInPixels(window.Window, &width, &height),
+               "frame size");
+      const auto blits = BuildProfileBackdrop(environment, wave.Current);
+      renderer.Draw(blits, width, height);
+      if (capture) {
+        const auto filename = std::to_string(selected) + ".bmp";
+        Capture(captureDirectory / filename, width, height);
+        report << "{\"frame\":" << selected << ",\"file\":\"" << filename
+               << "\",\"now\":" << now << ",\"wave\":" << wave.Current
+               << ",\"epoch\":" << wave.Epoch << ",\"sample\":" << wave.Sample
+               << ",\"width\":" << width << ",\"height\":" << height
+               << ",\"draws\":[";
+        for (size_t i = 0; i < blits.size(); ++i) {
+          if (i) report << ',';
+          const auto& blit = blits[i];
+          report << "{\"texture\":[" << uint32_t(blit.Texture.Section) << ','
+                 << blit.Texture.Character << ',' << blit.Texture.Entry
+                 << "],\"destination\":[";
+          for (size_t j = 0; j < 4; ++j) {
+            if (j) report << ',';
+            report << blit.Destination[j];
+          }
+          report << "],\"source\":[";
+          for (size_t j = 0; j < 4; ++j) {
+            if (j) report << ',';
+            report << blit.Source[j];
+          }
+          report << "],\"color\":[";
+          for (size_t j = 0; j < 4; ++j) {
+            if (j) report << ',';
+            report << unsigned(blit.Color[j]);
+          }
+          report << "]}";
+        }
+        report << "]}\n";
+        if (++selected == times.size()) quit = true;
+      }
+      SdlCheck(SDL_GL_SwapWindow(window.Window), "frame swap");
+      if (!capture) SDL_Delay(16);
+    }
+    if (capture) {
+      report.close();
+      if (!report) throw FormatError("cannot save profile frame report");
+    }
+    return 0;
+  } catch (const std::exception& error) {
+    if (captureCreated) {
+      std::ofstream report(captureDirectory / "error.txt");
+      report << std::string(error.what()).substr(0, 2048) << '\n';
+    }
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Saekano backdrop: %s",
                  error.what());
     return 1;
   }
