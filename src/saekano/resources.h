@@ -2,6 +2,7 @@
 
 #include "vm.h"
 #include "image.h"
+#include "profile.h"
 
 #include <array>
 
@@ -48,6 +49,8 @@ class GameResources final : public ScriptSource {
   Live2dModelAssets LoadLive2d(size_t modelId) const;
   CharacterPoseAssets LoadCharacterPose(size_t poseId) const;
   size_t CharacterPoseCount() const;
+  size_t ProfileSceneCount() const;
+  ProfileScene LoadProfileScene(size_t sceneId) const;
   ResourceAsset LoadImage(ImageSection section, size_t imageId) const;
   size_t ImageCount(ImageSection section) const;
   size_t ScriptCount() const { return scripts_.Entries().size(); }
@@ -59,6 +62,7 @@ class GameResources final : public ScriptSource {
   GpdaArchive scripts_;
   GpdaArchive live2d_;
   std::optional<GpdaArchive> characterPoses_;
+  std::optional<GpdaArchive> profileScenes_;
   std::map<ImageSection, GpdaArchive> images_;
 };
 

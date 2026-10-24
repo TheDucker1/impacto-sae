@@ -68,10 +68,24 @@ GameResources::GameResources(const GpdaArchive& root)
     : scripts_(ResourceSection(root, 4)), live2d_(ResourceSection(root, 0)) {
   if (root.Entries().size() > 6)
     characterPoses_.emplace(ResourceSection(root, 6));
+  if (root.Entries().size() > 3) {
+    const auto profile = ResourceSection(root, 3);
+    if (profile.Entries().size() > 1)
+      profileScenes_.emplace(RawEntry(profile, 1));
+  }
   for (auto section : {ImageSection::Background, ImageSection::Event,
                        ImageSection::Free, ImageSection::Rule})
     if (size_t(section) < root.Entries().size())
       images_.emplace(section, ResourceSection(root, size_t(section)));
+}
+
+size_t GameResources::ProfileSceneCount() const {
+  return profileScenes_ ? profileScenes_->Entries().size() : 0;
+}
+ProfileScene GameResources::LoadProfileScene(size_t sceneId) const {
+  if (sceneId >= ProfileSceneCount())
+    throw FormatError("profile scene ID outside original archive");
+  return DecodeProfileScene(RawEntry(*profileScenes_, sceneId));
 }
 
 CharacterPoseAssets DecodeCharacterPoseArchive(Bytes bytes) {
