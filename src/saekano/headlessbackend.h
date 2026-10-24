@@ -1,6 +1,7 @@
 #pragma once
 
 #include "vm.h"
+#include "texttiming.h"
 
 namespace Impacto::Saekano {
 
@@ -24,6 +25,7 @@ class HeadlessBackend : public VmBackend {
   std::optional<ChapterEnvironment> ChapterSettings;
   std::optional<ProfileEnvironment> ProfileSettings;
   std::optional<ModeResultEnvironment> ModeResultSettings;
+  std::optional<TextTimingEnvironment> TextTimingSettings;
   const ModeResultEnvironment* ModeResultConfig() const override {
     return ModeResultSettings ? &*ModeResultSettings : nullptr;
   }
