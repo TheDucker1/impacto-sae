@@ -1,6 +1,7 @@
 #pragma once
 
 #include "flow.h"
+#include "profilemode.h"
 
 #include <memory>
 
@@ -43,6 +44,7 @@ class VmBackend {
   virtual const ChapterEnvironment* ChapterConfig() const { return nullptr; }
   virtual const ProfileEnvironment* ProfileConfig() const { return nullptr; }
   virtual const ModeResultEnvironment* ModeResultConfig() const { return nullptr; }
+  virtual ProfileServices* ProfileHost() { return nullptr; }
   virtual bool Supports(uint16_t) const { return false; }
   virtual CompletedCommand Route(uint16_t opcode, std::span<const uint8_t> payload) const;
   virtual void StartPresentation(size_t command, uint16_t opcode,
@@ -52,7 +54,7 @@ class VmBackend {
 
 enum class VmBoundary {
   BeforeStart, CommandStarted, WaitingInput, WaitingBackend,
-  CommandCompletedBeforeDispatch, FileLoadedBeforeStart, Ended
+  CommandCompletedBeforeDispatch, FileLoadedBeforeStart, ProfileDestinationLoaded, Ended
 };
 struct VmEvent {
   VmBoundary Boundary;
@@ -74,6 +76,7 @@ class VirtualMachine {
   uint16_t Opcode() const;
   const QuakeAnimation* CurrentQuake() const;
   const ChapterTitleAnimation* CurrentChapter() const;
+  const ProfileMode* CurrentProfile() const { return profile_.get(); }
   VmEvent Step(uint64_t now, const CommandInput& input = {});
   void SetGauge(bool battle, int32_t value);
   void ActivateLane(size_t lane);
@@ -144,6 +147,7 @@ class VirtualMachine {
   std::vector<RuntimeCommand> commands_;
   std::array<std::vector<int32_t>, 2> messageKeywords_;
   VmBoundary boundary_ = VmBoundary::BeforeStart;
+  std::unique_ptr<ProfileMode> profile_;
   void Load(bool preserveOwnerState);
   void Start(size_t index, uint64_t now, bool lane);
   bool Update(size_t index, uint64_t now, const CommandInput& input, bool lane);

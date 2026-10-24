@@ -209,17 +209,20 @@ VmEvent VirtualMachine::FrameEvent(VmBoundary boundary, uint64_t now) {
   return Event(boundary);
 }
 void VirtualMachine::SetMessageContext(MessageRuntimeContext context) {
-  if (boundary_ != VmBoundary::BeforeStart && boundary_ != VmBoundary::FileLoadedBeforeStart)
+  if (boundary_ != VmBoundary::BeforeStart && boundary_ != VmBoundary::FileLoadedBeforeStart &&
+      boundary_ != VmBoundary::ProfileDestinationLoaded)
     throw std::runtime_error("message context must be supplied before Start");
   messageContext_ = context;
 }
 void VirtualMachine::SetGauge(bool battle, int32_t value) {
-  if (boundary_ != VmBoundary::BeforeStart && boundary_ != VmBoundary::FileLoadedBeforeStart)
+  if (boundary_ != VmBoundary::BeforeStart && boundary_ != VmBoundary::FileLoadedBeforeStart &&
+      boundary_ != VmBoundary::ProfileDestinationLoaded)
     throw std::runtime_error("gauge intervention must precede Start");
   (battle ? state_.BattleGauge : state_.ApproachGauge) = value;
 }
 void VirtualMachine::SeedRandom(uint32_t seed) {
-  if (boundary_ != VmBoundary::BeforeStart && boundary_ != VmBoundary::FileLoadedBeforeStart)
+  if (boundary_ != VmBoundary::BeforeStart && boundary_ != VmBoundary::FileLoadedBeforeStart &&
+      boundary_ != VmBoundary::ProfileDestinationLoaded)
     throw std::runtime_error("random initialization must precede Start");
   state_.Random.Seed(seed);
 }
@@ -277,6 +280,16 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
   }
   if (opcode == 0x64) {
     if (lane || !command.Routing.QueueForLane) SetupMessage(index, now);
+  } else if (opcode == 0x3ed && !lane) {
+    PayloadReader reader(script_->Payload(index));
+    state_.OtakuMode = reader.I32();
+    // Native decoder8007de52 consumes only this word; original records also
+    // carry six trailing bytes that are not decoded as profile fields.
+    state_.PendingEvents.push_back({GameEventKind::PauseChannel, 0, {}, 1});
+    state_.PendingEvents.push_back({GameEventKind::PumpAudio, 0});
+    state_.PendingEvents.push_back({GameEventKind::StopBgm, 0});
+    state_.PendingEvents.push_back({GameEventKind::StopSe, 2});
+    state_.PendingEvents.push_back({GameEventKind::StopSe, 3});
   } else if (opcode == 0x3ec && !lane) {
     const auto* environment = backend_.ChapterConfig();
     if (!environment) throw UnsupportedCommand("chapter title environment is unavailable");
@@ -548,6 +561,24 @@ void VirtualMachine::UpdateLanes(uint64_t now) {
 VmEvent VirtualMachine::Step(uint64_t now, const CommandInput& input) {
   try {
     if (boundary_ == VmBoundary::Ended) return FrameEvent(boundary_, now);
+    // Profile owns the outer loop, not a completed script command. Native
+    // outer80030ba2 replaces the manager without dispatching3ed's successor.
+    if (profile_) {
+      if (!profile_->Update(state_, input.Profile, now)) {
+        boundary_ = VmBoundary::WaitingInput;
+        return Event(boundary_);  // Main manager/lane queues are suspended.
+      }
+      const int32_t destination = profile_->TargetScript();
+      profile_.reset();
+      if (destination < 0) boundary_ = VmBoundary::Ended;
+      else {
+        state_.ScriptFileId = destination;
+        state_.CurrentCommandIndex = 0;
+        Load(true);
+        boundary_ = VmBoundary::ProfileDestinationLoaded;
+      }
+      return Event(boundary_);
+    }
     if (boundary_ == VmBoundary::CommandCompletedBeforeDispatch) {
       const auto index = size_t(state_.CurrentCommandIndex);
       const auto result = DispatchCompleted(state_, dispatcher_, script_->Records().size(), commands_[index].Routing);
@@ -567,11 +598,26 @@ VmEvent VirtualMachine::Step(uint64_t now, const CommandInput& input) {
       return FrameEvent(boundary_, now);
     }
     const auto index = size_t(state_.CurrentCommandIndex);
-    if (boundary_ == VmBoundary::BeforeStart || boundary_ == VmBoundary::FileLoadedBeforeStart) {
+    if (boundary_ == VmBoundary::BeforeStart || boundary_ == VmBoundary::FileLoadedBeforeStart ||
+        boundary_ == VmBoundary::ProfileDestinationLoaded) {
       Start(index, now, false);
       boundary_ = VmBoundary::CommandStarted;
       if (Opcode() == 0x64) UpdateLanes(now);
       return FrameEvent(boundary_, now);
+    }
+    if (Opcode() == 0x3ed) {
+      if (!commands_[index].Started)
+        throw UnsupportedCommand("profile command Start was suppressed");
+      auto* services = backend_.ProfileHost();
+      const auto* environment = backend_.ProfileConfig();
+      const auto* shared = backend_.ModeResultConfig();
+      if (!services || !environment || !shared)
+        throw UnsupportedCommand("owning profile resources and environment are unavailable");
+      // Command Update requests outer entry; it does not run the new mode in
+      // that same manager update or mark the command complete.
+      profile_ = std::make_unique<ProfileMode>(state_, *services, *environment, *shared);
+      boundary_ = VmBoundary::WaitingInput;
+      return Event(boundary_);
     }
     if (Update(index, now, input, false)) boundary_ = VmBoundary::CommandCompletedBeforeDispatch;
     else {

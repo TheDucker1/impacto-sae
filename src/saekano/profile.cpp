@@ -546,9 +546,12 @@ bool UpdateProfileResult(SemanticState& state, ProfileResultState& result,
     result.ResultProgress.Tick(now);
     result.SecondaryProgress.Tick(now);
     TickProfileStatChanges(state.ProfileOwner, result.Stats, now);
-    if (!input.TextRevealed)
+    const bool revealed = input.Text ? input.Text->Update(result.Text, now)
+                                    : input.TextRevealed;
+    if (!revealed) {
       result.RevealRequested = input.Accept;
-    else {
+      if (result.RevealRequested && input.Text) input.Text->Reveal(now);
+    } else {
       if (!result.TextAlphaActive) {
         const auto category = result.Event.Values[1];
         if (category >= 0 && category <= 2)

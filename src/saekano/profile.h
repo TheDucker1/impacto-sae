@@ -84,8 +84,15 @@ std::u16string BuildProfileResultText(const ProfileOwnerState& owner,
                                       const ProfileEnvironment& environment,
                                       int32_t characterId, size_t ordinal,
                                       const ProfileEvent& event);
+class ProfileResultText {
+ public:
+  virtual ~ProfileResultText() = default;
+  virtual bool Update(std::u16string_view text, uint64_t now) = 0;
+  virtual void Reveal(uint64_t now) = 0;
+};
 struct ProfileResultInput {
   bool TextRevealed = false, Accept = false;
+  ProfileResultText* Text = nullptr;
 };
 struct ProfileResultState {
   bool Started = false, Visible = false, ResponseMode = false;

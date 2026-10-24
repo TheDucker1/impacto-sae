@@ -66,6 +66,7 @@ if(SAEKANO_CUBISM2_SDK_ROOT)
 endif()
 
 add_executable(saekano_inspect inspect.cpp)
+target_sources(saekano_core PRIVATE profilemode.cpp profilearchive.cpp)
 target_link_libraries(saekano_inspect PRIVATE saekano_core)
 add_executable(saekano_core_tests ../../tests/saekano/formats_test.cpp)
 target_link_libraries(saekano_core_tests PRIVATE saekano_core)
@@ -79,6 +80,9 @@ add_test(NAME saekano_flow COMMAND saekano_flow_tests)
 add_executable(saekano_vm_tests ../../tests/saekano/vm_test.cpp)
 target_link_libraries(saekano_vm_tests PRIVATE saekano_core)
 add_test(NAME saekano_vm COMMAND saekano_vm_tests)
+add_executable(saekano_profile_tests ../../tests/saekano/profilemode_test.cpp)
+target_link_libraries(saekano_profile_tests PRIVATE saekano_core)
+add_test(NAME saekano_profile_ownership COMMAND saekano_profile_tests)
 add_executable(saekano_headless headless.cpp)
 target_link_libraries(saekano_headless PRIVATE saekano_core)
 if(TARGET saekano_live2d_driver)
@@ -132,7 +136,7 @@ add_test(NAME saekano_sprite_poses COMMAND saekano_pose_tests)
 # A packaged/static toolchain can leave this unset.
 set(SAEKANO_ZLIB_RUNTIME "" CACHE FILEPATH "Zlib DLL to deploy beside Saekano tools")
 if(WIN32 AND SAEKANO_ZLIB_RUNTIME)
-    foreach(target saekano_inspect saekano_audio_probe saekano_core_tests saekano_command_tests
+    foreach(target saekano_inspect saekano_audio_probe saekano_core_tests saekano_command_tests saekano_profile_tests
                    saekano_flow_tests saekano_vm_tests saekano_headless saekano_resource_tests saekano_text_tests saekano_io_tests saekano_live2d_tests saekano_live2denv_tests saekano_nativesave_tests saekano_imagesave_tests saekano_imagelayer_tests saekano_character_tests saekano_gauge_tests saekano_keyword_tests saekano_approach_tests saekano_transition_tests saekano_pose_tests saekano_music_tests saekano_se_tests)
         add_custom_command(TARGET ${target} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different

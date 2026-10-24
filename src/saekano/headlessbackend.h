@@ -28,6 +28,8 @@ class HeadlessBackend : public VmBackend {
   std::optional<ModeResultEnvironment> ModeResultSettings;
   std::optional<TextTimingEnvironment> TextTimingSettings;
   std::optional<TextFormatEnvironment> TextFormatSettings;
+  ProfileServices* ProfileConsumer = nullptr;
+  ProfileServices* ProfileHost() override { return ProfileConsumer; }
   const ModeResultEnvironment* ModeResultConfig() const override {
     return ModeResultSettings ? &*ModeResultSettings : nullptr;
   }

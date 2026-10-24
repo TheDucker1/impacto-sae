@@ -70,6 +70,12 @@ GameResources::GameResources(const GpdaArchive& root)
     characterPoses_.emplace(ResourceSection(root, 6));
   if (root.Entries().size() > 3) {
     const auto profile = ResourceSection(root, 3);
+    if (!profile.Entries().empty())
+      profilePortraits_.emplace(RawEntry(profile, 0));
+    if (profile.Entries().size() > 3) {
+      profileCharacterUi_.emplace(RawEntry(profile, 2));
+      profileUi_.emplace(RawEntry(profile, 3));
+    }
     if (profile.Entries().size() > 1)
       profileScenes_.emplace(RawEntry(profile, 1));
     if (profile.Entries().size() > 4)
@@ -88,6 +94,24 @@ ProfileScene GameResources::LoadProfileScene(size_t sceneId) const {
   if (sceneId >= ProfileSceneCount())
     throw FormatError("profile scene ID outside original archive");
   return DecodeProfileScene(RawEntry(*profileScenes_, sceneId));
+}
+std::vector<ResourceAsset> GameResources::LoadProfileMenu() const {
+  if (!profilePortraits_ || !profileCharacterUi_ || !profileUi_)
+    throw FormatError("profile menu sections are missing");
+  std::vector<ResourceAsset> result;
+  const auto append = [&](const GpdaArchive& archive) {
+    if (archive.Entries().size() > 256)
+      throw FormatError("profile UI texture count exceeds budget");
+    for (size_t i = 0; i < archive.Entries().size(); ++i)
+      result.push_back({archive.Entries()[i].Name, CompressedEntry(archive, i, 1)});
+  };
+  append(*profilePortraits_);
+  append(*profileUi_);
+  if (profileCharacterUi_->Entries().size() != 4)
+    throw FormatError("profile UI requires four character packs");
+  for (size_t i = 0; i < 4; ++i)
+    append(GpdaArchive(RawEntry(*profileCharacterUi_, i)));
+  return result;
 }
 ProfileVoiceAssets GameResources::LoadProfileVoice(size_t characterId,
                                                    size_t entry) const {

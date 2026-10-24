@@ -55,6 +55,7 @@ class GameResources final : public ScriptSource {
   size_t CharacterPoseCount() const;
   size_t ProfileSceneCount() const;
   ProfileScene LoadProfileScene(size_t sceneId) const;
+  std::vector<ResourceAsset> LoadProfileMenu() const;
   ProfileVoiceAssets LoadProfileVoice(size_t characterId, size_t entry) const;
   ResourceAsset LoadImage(ImageSection section, size_t imageId) const;
   size_t ImageCount(ImageSection section) const;
@@ -69,6 +70,7 @@ class GameResources final : public ScriptSource {
   std::optional<GpdaArchive> characterPoses_;
   std::optional<GpdaArchive> profileScenes_;
   std::optional<GpdaArchive> profileVoices_;
+  std::optional<GpdaArchive> profilePortraits_, profileCharacterUi_, profileUi_;
   std::map<ImageSection, GpdaArchive> images_;
 };
 
