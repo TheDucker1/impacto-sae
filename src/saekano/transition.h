@@ -3,6 +3,9 @@
 #include "image.h"
 #include "gauge.h"
 
+#include <map>
+#include <variant>
+
 namespace Impacto::Saekano {
 struct SemanticState;
 struct ScreenFadeCommand {
@@ -53,11 +56,24 @@ struct EffectContext {
   int32_t RestoreValue = 0,
           CurrentValue = 0;  // C160c/1610; consumer meaning unproved.
 };
+enum class CgStatusSet { AnyI32, OneTwoOrThree };
+using CgHistoryValue = std::variant<int32_t, CgStatusSet>;
+struct CgPartialHistory {
+  uint32_t InitialExtent = 0, Extent = 0;
+  // Absent initial entries are unknown. New slots are implicitly Default;
+  // overrides retain exact values or a proved set, never invented zeros.
+  std::map<uint32_t, CgHistoryValue> Overrides;
+};
 struct CgHistoryState {
   bool Known = false;
   std::vector<int32_t> Values, Required;
   int32_t Default = 0;
+  std::optional<CgPartialHistory> Partial;
 };
+size_t CgHistoryExtent(const CgHistoryState& history);
+CgHistoryValue CgHistoryStatus(const CgHistoryState& history, int32_t id);
+CgHistoryState RestorePartialCgHistory(uint32_t extent, int32_t fallback,
+                                       std::vector<int32_t> required);
 void ValidateCgHistory(const CgHistoryState& history, int32_t id);
 void MarkCgViewed(SemanticState& state, int32_t id);
 struct RuleWipeState {

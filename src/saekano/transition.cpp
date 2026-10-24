@@ -9,10 +9,53 @@ namespace Impacto::Saekano {
 namespace {
 int32_t Signed(uint32_t value) { return std::bit_cast<int32_t>(value); }
 bool Unlocked(int32_t value) { return value == 1 || value == 2 || value == 3; }
-int32_t HistoryValue(const CgHistoryState& history, int32_t id) {
-  if (id < 0) throw FormatError("negative CG history index");
-  return size_t(id) < history.Values.size() ? history.Values[size_t(id)]
-                                            : history.Default;
+std::optional<bool> IsUnlocked(const CgHistoryValue& value) {
+  if (const auto* exact = std::get_if<int32_t>(&value)) return Unlocked(*exact);
+  if (std::get<CgStatusSet>(value) == CgStatusSet::OneTwoOrThree) return true;
+  return std::nullopt;
+}
+void CheckCgMetadata(const CgHistoryState& history) {
+  if (!history.Known)
+    throw UnsupportedCommand("initial CG history/required list is missing");
+  if (history.Partial) {
+    const auto& partial = *history.Partial;
+    if (!history.Values.empty() || partial.InitialExtent > partial.Extent ||
+        partial.Extent > 1000001)
+      throw FormatError("inconsistent partial CG history");
+    for (const auto& [id, value] : partial.Overrides) {
+      (void)value;
+      if (id >= partial.Extent)
+        throw FormatError("CG override outside known extent");
+    }
+  }
+  for (const auto id : history.Required)
+    if (id < 0 || id > 1000000)
+      throw FormatError("CG requirement outside host budget");
+}
+void ApplyCgView(CgHistoryState& history, int32_t id) {
+  const auto status = CgHistoryStatus(history, id);
+  const auto unlocked = IsUnlocked(status);
+  if (unlocked && *unlocked) return;
+  if (history.Partial) {
+    auto& partial = *history.Partial;
+    partial.Extent = std::max(partial.Extent, uint32_t(id) + 1);
+    partial.Overrides[uint32_t(id)] =
+        unlocked ? CgHistoryValue(int32_t(1))
+                 : CgHistoryValue(CgStatusSet::OneTwoOrThree);
+  } else {
+    if (size_t(id) >= history.Values.size())
+      history.Values.resize(size_t(id) + 1, history.Default);
+    history.Values[size_t(id)] = 1;
+  }
+}
+std::optional<bool> CgComplete(const CgHistoryState& history) {
+  bool unknown = false;
+  for (const auto id : history.Required) {
+    const auto unlocked = IsUnlocked(CgHistoryStatus(history, id));
+    if (unlocked && !*unlocked) return false;
+    if (!unlocked) unknown = true;
+  }
+  return unknown ? std::nullopt : std::optional(true);
 }
 ImageSection BackgroundSection(int32_t kind) {
   if (kind == 2) return ImageSection::Background;
@@ -21,24 +64,51 @@ ImageSection BackgroundSection(int32_t kind) {
   throw UnsupportedCommand("unsupported rule-wipe background kind");
 }
 }  // namespace
-void ValidateCgHistory(const CgHistoryState& history, int32_t id) {
+size_t CgHistoryExtent(const CgHistoryState& history) {
+  CheckCgMetadata(history);
+  return history.Partial ? history.Partial->Extent : history.Values.size();
+}
+CgHistoryValue CgHistoryStatus(const CgHistoryState& history, int32_t id) {
   if (!history.Known)
     throw UnsupportedCommand("initial CG history/required list is missing");
   if (id < 0 || id > 1000000)
     throw FormatError("CG history exceeds host budget");
-  for (auto required : history.Required) HistoryValue(history, required);
+  if (history.Partial) {
+    const auto& partial = *history.Partial;
+    if (const auto found = partial.Overrides.find(uint32_t(id));
+        found != partial.Overrides.end())
+      return found->second;
+    if (uint32_t(id) < partial.InitialExtent) return CgStatusSet::AnyI32;
+    return history.Default;
+  }
+  return size_t(id) < history.Values.size() ? history.Values[size_t(id)]
+                                            : history.Default;
+}
+CgHistoryState RestorePartialCgHistory(uint32_t extent, int32_t fallback,
+                                       std::vector<int32_t> required) {
+  if (extent > 1000000)
+    throw FormatError("CG initial extent exceeds host budget");
+  CgHistoryState result{true,
+                        {},
+                        std::move(required),
+                        fallback,
+                        CgPartialHistory{extent, extent, {}}};
+  CheckCgMetadata(result);
+  return result;
+}
+void ValidateCgHistory(const CgHistoryState& history, int32_t id) {
+  CheckCgMetadata(history);
+  if (id < 0 || id > 1000000)
+    throw FormatError("CG history exceeds host budget");
+  auto next = history;
+  ApplyCgView(next, id);
+  if (!CgComplete(next).has_value())
+    throw UnsupportedCommand("CG completion trophy predicate is unknown");
 }
 void MarkCgViewed(SemanticState& state, int32_t id) {
   ValidateCgHistory(state.CgHistory, id);
-  if (!Unlocked(HistoryValue(state.CgHistory, id))) {
-    if (size_t(id) >= state.CgHistory.Values.size())
-      state.CgHistory.Values.resize(size_t(id) + 1, state.CgHistory.Default);
-    state.CgHistory.Values[size_t(id)] = 1;
-  }
-  if (std::all_of(state.CgHistory.Required.begin(),
-                  state.CgHistory.Required.end(), [&](int32_t item) {
-                    return Unlocked(HistoryValue(state.CgHistory, item));
-                  }))
+  ApplyCgView(state.CgHistory, id);
+  if (*CgComplete(state.CgHistory))
     state.PendingEvents.push_back({GameEventKind::Trophy, 29});
 }
 ScreenFadeCommand ScreenFadeCommand::Decode(std::span<const uint8_t> payload,
