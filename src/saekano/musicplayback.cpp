@@ -2,6 +2,7 @@
 
 #include "headlessbackend.h"
 #include "resources.h"
+#include "profilearchive.h"
 #include "../audio/audiosystem.h"
 #include "../audio/openal/audiobackend.h"
 #include "../audio/openal/openalaudiochannel.h"
@@ -344,6 +345,11 @@ void MusicPlayback::StopProfileVoice() {
   impl_->ProfileVoice->Stop(0);
   AlCheck("profile voice stop");
 }
+void MusicPlayback::ResetProfileVoice() {
+  StopProfileVoice();
+  impl_->PreparedProfileVoice.reset();
+  impl_->HasProfileVoice = false;
+}
 bool MusicPlayback::ProfileVoiceStopped() const {
   return impl_->HasProfileVoice &&
          impl_->ProfileVoice->GetState() == Audio::ACS_Stopped;
@@ -351,6 +357,34 @@ bool MusicPlayback::ProfileVoiceStopped() const {
 std::optional<float> MusicPlayback::ProfileVoicePosition() const {
   if (!impl_->HasProfileVoice) return std::nullopt;
   return impl_->ProfileVoice->PositionInSeconds();
+}
+PlaybackProfileVoice::PlaybackProfileVoice(MusicPlayback& playback,
+                                           uint8_t option,
+                                           float channelCoefficient)
+    : playback_(playback), gain_(ProfileVoiceGain(option, channelCoefficient)) {
+  if (!std::isfinite(gain_) || gain_ < 0 || gain_ > 1)
+    throw FormatError("profile voice effective gain outside PC output range");
+}
+void PlaybackProfileVoice::Reset() {
+  if (present_) playback_.ResetProfileVoice();
+  present_ = false;
+}
+void PlaybackProfileVoice::Prepare(Bytes encoded) {
+  playback_.PrepareProfileVoice(std::move(encoded), gain_);
+  present_ = true;
+}
+void PlaybackProfileVoice::Start(uint64_t) {
+  if (!present_)
+    throw UnsupportedCommand("profile voice output is not prepared");
+  playback_.StartProfileVoice();
+}
+void PlaybackProfileVoice::Stop() {
+  if (!present_)
+    throw FormatError("profile voice output has no stop acknowledgement");
+  playback_.StopProfileVoice();
+}
+bool PlaybackProfileVoice::Stopped() const {
+  return present_ && playback_.ProfileVoiceStopped();
 }
 void MusicPlayback::Render(std::span<int16_t> output) {
   if (!impl_->RenderSamples || output.size() % 2)
@@ -606,6 +640,159 @@ int RunProfileVoiceSession(const std::filesystem::path& usrdir,
       report << std::string(error.what()).substr(0, 2048) << '\n';
     }
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Saekano profile voice: %s",
+                 error.what());
+    return 1;
+  }
+}
+int RunProfileServiceSession(const std::filesystem::path& usrdir,
+                             uint32_t scene, uint32_t ordinal, uint8_t volume,
+                             const std::filesystem::path& captureDirectory) {
+  bool captureCreated = false;
+  try {
+    const bool capture = !captureDirectory.empty();
+    if (capture) {
+      CreateCaptureDirectory(usrdir, captureDirectory);
+      captureCreated = true;
+    }
+    const auto read = [](const std::filesystem::path& path) {
+      std::ifstream file(path, std::ios::binary);
+      if (!file) throw FormatError("cannot open profile service data");
+      Bytes bytes{std::istreambuf_iterator<char>(file), {}};
+      if (file.bad()) throw FormatError("cannot read profile service data");
+      return bytes;
+    };
+    GameResources resources(read(usrdir / "resource.dat"));
+    ArchiveBgmResources music(usrdir);
+    if (!SDL_Init(SDL_INIT_EVENTS)) throw FormatError(SDL_GetError());
+    struct Cleanup {
+      ~Cleanup() { SDL_Quit(); }
+    } cleanup;
+    MusicPlayback playback(music, capture);
+    // This diagnostic supplies a known current setting and fresh coefficient;
+    // it does not infer a live channel gain or new-game defaults from captures.
+    PlaybackProfileVoice voice(playback, volume, 1.0f);
+    ArchiveProfileServices services(
+        resources,
+        ScriptNameIndex::FromFirstArchive(read(usrdir / "first.dat")),
+        TextFormatEnvironment::Decode(
+            read(usrdir / "env/env_string_format.dat"), true),
+        TextTimingEnvironment::Decode(read(usrdir / "env/env_config.dat"),
+                                      true),
+        &voice);
+    services.BeginMenu(int32_t(scene), 2);  // Explicit diagnostic text option.
+    if (!services.MenuReady() || !services.MenuTextureCount())
+      throw FormatError("profile menu preparation failed");
+    ProfileResponseState response;
+    response.Ordinal = ordinal;
+    response.CharacterId = services.Scene().at(ordinal).Id;
+    response.Event = SelectedProfileEvent(services.Scene(), ordinal, 0);
+    response.Background = -1;  // Explicit blank diagnostic background.
+    const auto assets = resources.LoadProfileVoice(size_t(response.CharacterId),
+                                                   size_t(response.Event.Tail));
+    HcaWaveReader metadata(assets.Hca);
+    const auto info = metadata.Info();
+    if (!info.SampleRate || !info.Frames ||
+        info.Frames / info.SampleRate > 120 ||
+        assets.Mouth.Samples.size() > 1400 || assets.Mouth.Duration > 120000)
+      throw FormatError("profile service diagnostic duration budget");
+    if (services.ResponseStatus(0).VoiceStopped)
+      throw FormatError("missing profile service voice acknowledged");
+    services.Act(ProfileResponseAction::BeginResources, response, 0);
+    if (!services.ResponseStatus(0).ResourcesReady)
+      throw FormatError("profile response resource preparation failed");
+    services.Act(ProfileResponseAction::PreparePresentation, response, 0);
+    services.Act(ProfileResponseAction::PrepareVoice, response, 0);
+    if (!services.ResponseStatus(0).VoiceStopped)
+      throw FormatError("prepared PC voice did not acknowledge stopped state");
+    services.Act(ProfileResponseAction::BeginTextReveal, response, 0);
+    services.Act(ProfileResponseAction::StartVoice, response, 0);
+    voice.Update(1000000);  // A clock tick must not fake the device's EOF.
+    if (voice.Stopped())
+      throw FormatError("PC voice completion follows supplied clock");
+    std::ofstream trace;
+    if (capture) trace.open(captureDirectory / "mouth.jsonl");
+    if (capture && !trace) throw FormatError("cannot create mouth trace");
+    std::array<uint64_t, 8> previous{};
+    bool first = true;
+    size_t transitions = 0;
+    std::vector<int16_t> output;
+    uint64_t now = 0, eof = UINT64_MAX;
+    const auto epoch = SDL_GetTicks();
+    while (true) {
+      const auto status = services.ResponseStatus(now);
+      services.Act(ProfileResponseAction::UpdatePresentation, response, now);
+      const auto& mouth = services.Mouth();
+      const std::array<uint64_t, 8> snapshot{
+          mouth.Active,         mouth.Armed,        mouth.Epoch,
+          uint64_t(mouth.From), uint64_t(mouth.To), uint64_t(mouth.Frame),
+          mouth.CycleStart,     mouth.CycleEnd};
+      if (first || snapshot != previous) {
+        if (capture)
+          trace << "{\"now\":" << now
+                << ",\"active\":" << (mouth.Active ? "true" : "false")
+                << ",\"armed\":" << (mouth.Armed ? "true" : "false")
+                << ",\"epoch\":" << mouth.Epoch << ",\"tween\":[" << mouth.From
+                << ',' << mouth.To << ',' << mouth.Frame << ','
+                << mouth.CycleStart << ',' << mouth.CycleEnd << "]}\n";
+        previous = snapshot;
+        first = false;
+        ++transitions;
+      }
+      if (status.VoiceStopped && eof == UINT64_MAX) eof = now;
+      if (status.VoiceStopped && status.TextRevealed && !mouth.Active) break;
+      if (now > 121000) throw FormatError("profile service failed to settle");
+      if (capture) {
+        const auto offset = output.size();
+        output.resize(offset + 1600);
+        playback.Render(std::span(output).subspan(offset));
+        now = (output.size() / 2) / 48;
+      } else {
+        playback.Update(1.0f / 60);
+        SDL_Delay(16);
+        now = SDL_GetTicks() - epoch;
+        SDL_Event event;
+        while (SDL_PollEvent(&event))
+          if (event.type == SDL_EVENT_QUIT) return 0;
+      }
+    }
+    services.Act(ProfileResponseAction::StopVoice, response, now);
+    if (!services.ResponseStatus(now).VoiceStopped || services.VoiceFrames())
+      throw FormatError(
+          "PC service lost actual stop acknowledgement or fabricated frame "
+          "count");
+    voice.Reset();
+    if (services.ResponseStatus(now).VoiceStopped ||
+        playback.ProfileVoiceStopped())
+      throw FormatError("PC voice reset retained stale stop acknowledgement");
+    if (capture) {
+      trace.close();
+      if (!trace) throw FormatError("cannot save mouth trace");
+      SaveWav(captureDirectory / "audio.wav", output);
+      std::ofstream report(captureDirectory / "summary.json");
+      report << "{\"scene\":" << scene << ",\"ordinal\":" << ordinal
+             << ",\"character\":" << response.CharacterId
+             << ",\"entry\":" << response.Event.Tail
+             << ",\"volume_option\":" << unsigned(volume)
+             << ",\"gain_bits\":" << std::bit_cast<uint32_t>(voice.Gain())
+             << ",\"text_option\":2,\"background\":-1,\"source_frames\":"
+             << info.Frames << ",\"source_rate\":" << info.SampleRate
+             << ",\"menu_textures\":" << services.MenuTextureCount()
+             << ",\"rendered_frames\":" << output.size() / 2
+             << ",\"finished_ms\":" << now << ",\"voice_eof_ms\":" << eof
+             << ",\"mouth_transitions\":" << transitions
+             << ",\"text_revealed\":true,\"mouth_finished\":true,\"stop_"
+                "acknowledged\":true"
+             << ",\"reset_clears_acknowledgement\":true,\"clock_only_update_"
+                "keeps_playing\":true}\n";
+      if (!report) throw FormatError("cannot save profile service report");
+    }
+    return 0;
+  } catch (const std::exception& error) {
+    if (captureCreated) {
+      std::ofstream report(captureDirectory / "error.txt");
+      report << std::string(error.what()).substr(0, 2048) << '\n';
+    }
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Saekano profile service: %s",
                  error.what());
     return 1;
   }

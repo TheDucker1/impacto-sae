@@ -6,21 +6,23 @@ namespace Impacto::Saekano {
 ArchiveProfileServices::ArchiveProfileServices(GameResources& resources,
                                                ScriptNameIndex scripts,
                                                TextFormatEnvironment format,
-                                               TextTimingEnvironment timing)
+                                               TextTimingEnvironment timing,
+                                               ProfileVoiceOutput* voiceOutput)
     : resources_(resources),
       scripts_(std::move(scripts)),
       format_(std::move(format)),
-      timing_(std::move(timing)) {}
+      timing_(std::move(timing)),
+      voice_(voiceOutput ? voiceOutput : &clockedVoice_) {}
 void ArchiveProfileServices::BeginMenu(int32_t scene, uint8_t textSpeed) {
   if (scene < 0) throw FormatError("negative profile scene");
   // Validate the option before loading textures. Never default captured inputs.
   (void)timing_.ForCharacters(textSpeed);
   (void)timing_.ForVoice(0, textSpeed);
-  menuReady_ = responseReady_ = playing_ = false;
+  menuReady_ = responseReady_ = false;
   actor_.reset();
   background_.reset();
   responseAssets_.reset();
-  voice_.reset();
+  voice_->Reset();
   mouth_ = {};
   resultText_ = {};
   responseText_ = {};
@@ -41,28 +43,8 @@ bool ArchiveProfileServices::Update(std::u16string_view text, uint64_t now) {
 }
 ProfileResponseInput ArchiveProfileServices::ResponseStatus(uint64_t now) {
   if (responseText_.Started) responseText_.Update(now);
-  if (playing_) {
-    if (!voice_ || now < voiceEpoch_)
-      throw FormatError("invalid profile voice clock");
-    const auto& info = voice_->Info();
-    const uint64_t elapsed = now - voiceEpoch_;
-    const uint64_t end =
-        elapsed / 1000 >= (info.Frames + info.SampleRate - 1) / info.SampleRate
-            ? info.Frames
-            : std::min(info.Frames, elapsed * info.SampleRate / 1000);
-    std::array<int16_t, 8192> block;
-    if (info.Channels == 0 || info.Channels > block.size())
-      throw FormatError("profile voice channel count exceeds PCM budget");
-    while (voice_->Position() < end) {
-      const size_t count = size_t(std::min<uint64_t>(
-          end - voice_->Position(), block.size() / info.Channels));
-      if (!voice_->Read(std::span(block).first(count * info.Channels)))
-        throw FormatError("profile voice ended before declared PCM length");
-    }
-    if (voice_->Position() == info.Frames) playing_ = false;
-  }
-  return {responseReady_, responseText_.Revealed, false,
-          bool(voice_) && !playing_};
+  voice_->Update(now);
+  return {responseReady_, responseText_.Revealed, false, voice_->Stopped()};
 }
 void ArchiveProfileServices::Act(ProfileResponseAction action,
                                  const ProfileResponseState& response,
@@ -98,8 +80,7 @@ void ArchiveProfileServices::Act(ProfileResponseAction action,
     case ProfileResponseAction::PrepareVoice:
       if (!responseAssets_)
         throw FormatError("profile voice resource is not ready");
-      voice_ = std::make_unique<HcaWaveReader>(std::move(responseAssets_->Hca));
-      playing_ = false;
+      voice_->Prepare(std::move(responseAssets_->Hca));
       break;
     case ProfileResponseAction::BeginTextReveal:
       if (!responseAssets_)
@@ -110,9 +91,7 @@ void ArchiveProfileServices::Act(ProfileResponseAction action,
           now);
       break;
     case ProfileResponseAction::StartVoice:
-      if (!voice_) throw FormatError("profile voice was not prepared");
-      voiceEpoch_ = now;
-      playing_ = true;
+      voice_->Start(now);
       mouth_.Begin(responseAssets_->Mouth, now);
       break;
     case ProfileResponseAction::UpdatePresentation:
@@ -122,9 +101,7 @@ void ArchiveProfileServices::Act(ProfileResponseAction action,
       responseText_.Reveal(now);
       break;
     case ProfileResponseAction::StopVoice:
-      if (!voice_)
-        throw FormatError("profile voice has no stop acknowledgement");
-      playing_ = false;
+      voice_->Stop();
       break;
     case ProfileResponseAction::StopBgm:
       throw FormatError("owning profile must route BGM stop through the host");

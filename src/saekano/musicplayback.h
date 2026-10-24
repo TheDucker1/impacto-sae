@@ -1,6 +1,7 @@
 #pragma once
 
 #include "commands.h"
+#include "profilevoiceoutput.h"
 
 namespace Impacto::Saekano {
 // Saekano's audio host uses Impacto's existing OpenAL channel and the same
@@ -21,12 +22,34 @@ class MusicPlayback {
   void PrepareProfileVoice(Bytes encoded, float gain);
   void StartProfileVoice();
   void StopProfileVoice();
+  void ResetProfileVoice();
   bool ProfileVoiceStopped() const;
   std::optional<float> ProfileVoicePosition() const;
 
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
+};
+
+// Uses the same device/channel as BGM/SE and the existing PC HCA stream.
+// Settings/coefficient must be known current state. The frontend pumps audio;
+// Update intentionally does not substitute the profile clock for device state.
+class PlaybackProfileVoice final : public ProfileVoiceOutput {
+ public:
+  PlaybackProfileVoice(MusicPlayback& playback, uint8_t option,
+                       float channelCoefficient);
+  void Reset() override;
+  void Prepare(Bytes encoded) override;
+  void Start(uint64_t now) override;
+  void Stop() override;
+  bool Stopped() const override;
+  void Update(uint64_t) override {}
+  float Gain() const { return gain_; }
+
+ private:
+  MusicPlayback& playback_;
+  float gain_;
+  bool present_ = false;
 };
 
 // Bounded owning-VM integration: BGM/wait/stop, or two overlapping SE channels
@@ -38,4 +61,7 @@ int RunMusicSession(const std::filesystem::path& usrdir, uint32_t track,
 int RunProfileVoiceSession(const std::filesystem::path& usrdir,
                            uint32_t character, uint32_t entry,
                            const std::filesystem::path& captureDirectory = {});
+int RunProfileServiceSession(
+    const std::filesystem::path& usrdir, uint32_t scene, uint32_t ordinal,
+    uint8_t volume, const std::filesystem::path& captureDirectory = {});
 }  // namespace Impacto::Saekano

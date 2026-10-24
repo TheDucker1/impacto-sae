@@ -5,6 +5,7 @@
 #include "audio.h"
 #include "textreveal.h"
 #include "profilemouth.h"
+#include "profilevoiceoutput.h"
 
 namespace Impacto::Saekano {
 // Deterministic headless consumer: real GXT/HCA/envelope preparation. It does
@@ -13,7 +14,10 @@ class ArchiveProfileServices final : public ProfileServices {
  public:
   ArchiveProfileServices(GameResources& resources, ScriptNameIndex scripts,
                          TextFormatEnvironment format,
-                         TextTimingEnvironment timing);
+                         TextTimingEnvironment timing,
+                         ProfileVoiceOutput* voiceOutput = nullptr);
+  ArchiveProfileServices(const ArchiveProfileServices&) = delete;
+  ArchiveProfileServices& operator=(const ArchiveProfileServices&) = delete;
   void BeginMenu(int32_t scene, uint8_t textSpeed) override;
   bool MenuReady() const override { return menuReady_; }
   const ProfileScene& Scene() const override { return scene_; }
@@ -26,7 +30,9 @@ class ArchiveProfileServices final : public ProfileServices {
   const VoiceTextReveal& ResultText() const { return resultText_; }
   const VoiceTextReveal& ResponseText() const { return responseText_; }
   const ProfileMouthPlayback& Mouth() const { return mouth_; }
-  uint64_t VoiceFrames() const { return voice_ ? voice_->Position() : 0; }
+  std::optional<uint64_t> VoiceFrames() const {
+    return voice_->FramesConsumed();
+  }
   size_t MenuTextureCount() const { return menu_.size(); }
 
  private:
@@ -39,11 +45,11 @@ class ArchiveProfileServices final : public ProfileServices {
   std::optional<PreparedCharacterPose> actor_;
   std::optional<ImagePixels> background_;
   std::optional<ProfileVoiceAssets> responseAssets_;
-  std::unique_ptr<HcaWaveReader> voice_;
+  ClockedProfileVoice clockedVoice_;
+  ProfileVoiceOutput* voice_;
   VoiceTextReveal resultText_, responseText_;
   ProfileMouthPlayback mouth_;
   uint8_t textSpeed_ = 0;
-  bool menuReady_ = false, responseReady_ = false, playing_ = false;
-  uint64_t voiceEpoch_ = 0;
+  bool menuReady_ = false, responseReady_ = false;
 };
 }  // namespace Impacto::Saekano

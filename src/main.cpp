@@ -199,6 +199,21 @@ int main(int argc, char* argv[]) {
   LogInit();
 
 #ifdef IMPACTO_HAS_SAEKANO
+  if (argc >= 2 && std::string_view(argv[1]) == "--saekano-profile-service") {
+    uint32_t scene = 0, ordinal = 0, volume = 0;
+    if (argc == 6 || (argc == 8 && std::string_view(argv[6]) == "--capture")) {
+      const std::string_view a = argv[3], b = argv[4], c = argv[5];
+      const auto x = std::from_chars(a.data(), a.data() + a.size(), scene);
+      const auto y = std::from_chars(b.data(), b.data() + b.size(), ordinal);
+      const auto z = std::from_chars(c.data(), c.data() + c.size(), volume);
+      if (x.ec == std::errc{} && x.ptr == a.data() + a.size() && y.ec == std::errc{} &&
+          y.ptr == b.data() + b.size() && z.ec == std::errc{} && z.ptr == c.data() + c.size() && volume <= 255)
+        return Saekano::RunProfileServiceSession(argv[2], scene, ordinal, uint8_t(volume), argc == 8 ? argv[7] : "");
+    }
+    ImpLog(LogLevel::Error, LogChannel::General,
+        "Usage: --saekano-profile-service USRDIR SCENE ORDINAL VOLUME [--capture DIRECTORY]\n");
+    return 1;
+  }
   if (argc >= 2 && std::string_view(argv[1]) == "--saekano-profile-voice") {
     uint32_t character = 0, entry = 0;
     if (argc == 5 || (argc == 7 && std::string_view(argv[5]) == "--capture")) {
