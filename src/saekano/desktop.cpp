@@ -33,7 +33,7 @@ void GlCheck(const char* operation) {
 struct ViewerWindow {
   SDL_Window* Window = nullptr;
   SDL_GLContext Context = nullptr;
-  explicit ViewerWindow(bool hidden) {
+  explicit ViewerWindow(bool hidden, bool stencil = false) {
     SdlCheck(SDL_Init(SDL_INIT_VIDEO), "SDL initialization");
     try {
       SdlCheck(SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3),
@@ -46,6 +46,10 @@ struct ViewerWindow {
                                    SDL_GL_CONTEXT_PROFILE_COMPATIBILITY),
                "GL profile");
       SdlCheck(SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1), "GL double buffer");
+      if (stencil) {
+        SdlCheck(SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24), "depth size");
+        SdlCheck(SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8), "stencil size");
+      }
       const auto flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE |
                          (hidden ? SDL_WINDOW_HIDDEN : 0);
       Window = SDL_CreateWindow("Saekano model viewer", 1000, 800, flags);
@@ -174,7 +178,12 @@ struct ViewerModel {
   void Draw(int width, int height) {
     glViewport(0, 0, width, height);
     glClearColor(32.0f / 255, 32.0f / 255, 32.0f / 255, 1);
-    glClear(GL_COLOR_BUFFER_BIT);
+    glDisable(GL_STENCIL_TEST);
+    glStencilMask(0xff);
+    glDepthMask(GL_TRUE);
+    glClearDepth(1);
+    glClearStencil(0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
     const auto scale = std::min(float(width) / Model->CanvasWidth(),
                                 float(height) / Model->CanvasHeight());
     const int viewWidth = int(Model->CanvasWidth() * scale);
@@ -194,9 +203,50 @@ struct ViewerModel {
   }
 };
 
+void WriteUiBlit(std::ostream& out, const UiSpriteBlit& blit) {
+  out << "{\"texture\":[" << uint32_t(blit.Texture.Section) << ','
+      << blit.Texture.Character << ',' << blit.Texture.Entry
+      << "],\"destination\":[";
+  for (size_t j = 0; j < 4; ++j) {
+    if (j) out << ',';
+    out << blit.Destination[j];
+  }
+  out << "],\"source\":[";
+  for (size_t j = 0; j < 4; ++j) {
+    if (j) out << ',';
+    out << blit.Source[j];
+  }
+  out << "],\"color\":[";
+  for (size_t j = 0; j < 4; ++j) {
+    if (j) out << ',';
+    out << unsigned(blit.Color[j]);
+  }
+  out << "]}";
+}
+void WriteUiCommand(std::ostream& out, const UiRenderCommand& command) {
+  if (command.Kind == UiRenderKind::Sprite) {
+    WriteUiBlit(out, command.Sprite);
+    return;
+  }
+  out << "{\"kind\":" << int(command.Kind) << ",\"mode\":" << command.Mode;
+  if (command.Kind == UiRenderKind::Rectangle) {
+    out << ",\"rectangle\":[";
+    for (size_t i = 0; i < 4; ++i) {
+      if (i) out << ',';
+      out << command.Rectangle[i];
+    }
+    out << "],\"color\":[";
+    for (size_t i = 0; i < 4; ++i) {
+      if (i) out << ',';
+      out << unsigned(command.Color[i]);
+    }
+    out << ']';
+  }
+  out << '}';
+}
 struct UiBlitRenderer {
   GLuint Program = 0, Vertex = 0, Fragment = 0, Vao = 0, Buffer = 0;
-  GLint Tint = -1;
+  GLint Tint = -1, Solid = -1, AlphaMode = -1;
   struct BoundTexture {
     GLuint Handle;
     uint32_t Width, Height;
@@ -228,8 +278,13 @@ void main(){texturePosition=uv;gl_Position=vec4(position.x/480.0-1.0,1.0-positio
 in vec2 texturePosition;
 uniform sampler2D image;
 uniform vec4 tint;
+uniform bool solid;
+uniform int alphaMode;
 out vec4 outputColor;
-void main(){outputColor=texture(image,texturePosition)*tint;}
+void main(){
+  outputColor=solid?tint:texture(image,texturePosition)*tint;
+  if((alphaMode==6 && outputColor.a<=0.0)||(alphaMode==3 && outputColor.a==0.0))discard;
+}
 )GLSL");
       Program = glCreateProgram();
       glAttachShader(Program, Vertex);
@@ -257,6 +312,8 @@ void main(){outputColor=texture(image,texturePosition)*tint;}
       glUseProgram(Program);
       glUniform1i(glGetUniformLocation(Program, "image"), 0);
       Tint = glGetUniformLocation(Program, "tint");
+      Solid = glGetUniformLocation(Program, "solid");
+      AlphaMode = glGetUniformLocation(Program, "alphaMode");
       GlCheck("UI renderer initialization");
     } catch (...) {
       Release();
@@ -279,11 +336,18 @@ void main(){outputColor=texture(image,texturePosition)*tint;}
                  GL_RGBA, GL_UNSIGNED_BYTE, pixels.Rgba.data());
     GlCheck("profile UI texture upload");
   }
-  void Draw(std::span<const UiSpriteBlit> blits, int width, int height) {
+  void Draw(std::span<const UiSpriteBlit> blits, int width, int height,
+            std::span<const UiRenderCommand> commands = {}) {
     if (width <= 0 || height <= 0) return;
     glViewport(0, 0, width, height);
     glClearColor(0, 0, 0, 1);
-    glClear(GL_COLOR_BUFFER_BIT);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_STENCIL_TEST);
+    glStencilMask(0xff);
+    glDepthMask(GL_TRUE);
+    glClearDepth(1);
+    glClearStencil(0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
     const auto scale = std::min(float(width) / 960, float(height) / 544);
     const int w = int(960 * scale), h = int(544 * scale);
     glViewport((width - w) / 2, (height - h) / 2, w, h);
@@ -299,29 +363,81 @@ void main(){outputColor=texture(image,texturePosition)*tint;}
     glBindVertexArray(Vao);
     glBindBuffer(GL_ARRAY_BUFFER, Buffer);
     glActiveTexture(GL_TEXTURE0);
-    for (const auto& blit : blits) {
-      const auto& texture = Textures.at(blit.Texture);
-      if (blit.Source[2] < 0 || blit.Source[3] < 0)
-        throw UnsupportedCommand(
-            "mirrored UI sampling needs native backend binding");
-      const float x = float(blit.Destination[0]),
-                  y = float(blit.Destination[1]);
-      const float r = x + blit.Destination[2], b = y + blit.Destination[3];
-      const float u = float(blit.Source[0]) / texture.Width,
-                  v = float(blit.Source[1]) / texture.Height;
-      const float ur = (float(blit.Source[0]) + blit.Source[2]) / texture.Width;
-      const float vb =
-          (float(blit.Source[1]) + blit.Source[3]) / texture.Height;
-      const std::array<float, 24> vertices{x, y, u,  v,  r, y, ur, v,
-                                           x, b, u,  vb, x, b, u,  vb,
-                                           r, y, ur, v,  r, b, ur, vb};
-      glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices.data());
-      glBindTexture(GL_TEXTURE_2D, texture.Handle);
-      glUniform4f(Tint, blit.Color[0] / 255.0f, blit.Color[1] / 255.0f,
-                  blit.Color[2] / 255.0f, blit.Color[3] / 255.0f);
-      glDrawArrays(GL_TRIANGLES, 0, 6);
+    glUniform1i(AlphaMode, 0);
+    for (const auto& blit : blits)
+      DrawQuad(blit, Textures.at(blit.Texture), false);
+    if (!commands.empty()) {
+      GLint bits = 0;
+      glGetIntegerv(GL_STENCIL_BITS, &bits);
+      if (bits < 8)
+        throw FormatError(
+            "profile item pass requires an eight-bit stencil buffer");
+    }
+    for (const auto& command : commands) {
+      switch (command.Kind) {
+        case UiRenderKind::ResetDepthStencilBackground:
+          glClearDepth(1);
+          glClearStencil(0);
+          break;
+        case UiRenderKind::Stencil:
+          if (command.Mode == 0) {
+            glDisable(GL_STENCIL_TEST);
+          } else if (command.Mode >= 1 && command.Mode <= 3) {
+            glEnable(GL_STENCIL_TEST);
+            glStencilMask(0xff);
+            glStencilFunc(command.Mode == 3 ? GL_EQUAL : GL_ALWAYS,
+                          command.Mode == 1 ? 1 : 0, 0xff);
+            glStencilOp(GL_KEEP, command.Mode == 3 ? GL_KEEP : GL_REPLACE,
+                        command.Mode == 3 ? GL_KEEP : GL_REPLACE);
+          } else
+            throw UnsupportedCommand("unknown profile stencil mode");
+          break;
+        case UiRenderKind::AlphaTest:
+          if (command.Mode != 3 && command.Mode != 6)
+            throw UnsupportedCommand("unsupported profile alpha comparison");
+          glUniform1i(AlphaMode, command.Mode);
+          break;
+        case UiRenderKind::DepthTest:
+          if (command.Mode != 0 && command.Mode != 5)
+            throw UnsupportedCommand("unsupported profile depth comparison");
+          glEnable(GL_DEPTH_TEST);
+          glDepthMask(GL_TRUE);
+          glDepthFunc(command.Mode == 0 ? GL_NEVER : GL_LEQUAL);
+          break;
+        case UiRenderKind::Rectangle: {
+          UiSpriteBlit solid;
+          solid.Destination = command.Rectangle;
+          solid.Color = command.Color;
+          DrawQuad(solid, {0, 1, 1}, true);
+          break;
+        }
+        case UiRenderKind::Sprite:
+          DrawQuad(command.Sprite, Textures.at(command.Sprite.Texture), false);
+          break;
+      }
     }
     GlCheck("profile UI drawing");
+  }
+  void DrawQuad(const UiSpriteBlit& blit, const BoundTexture& texture,
+                bool solid) {
+    glUniform1i(Solid, solid ? 1 : 0);
+    if (blit.Source[2] < 0 || blit.Source[3] < 0)
+      throw UnsupportedCommand(
+          "mirrored UI sampling needs native backend binding");
+    const float x = float(blit.Destination[0]), y = float(blit.Destination[1]);
+    const float r = x + blit.Destination[2], b = y + blit.Destination[3];
+    const float u = float(blit.Source[0]) / texture.Width,
+                v = float(blit.Source[1]) / texture.Height;
+    const float ur = (float(blit.Source[0]) + blit.Source[2]) / texture.Width;
+    const float vb = (float(blit.Source[1]) + blit.Source[3]) / texture.Height;
+    const std::array<float, 24> vertices{x, y, u,  v,  r, y, ur, v,
+                                         x, b, u,  vb, x, b, u,  vb,
+                                         r, y, ur, v,  r, b, ur, vb};
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices.data());
+    glBindTexture(GL_TEXTURE_2D, texture.Handle);
+    glUniform4f(Tint, blit.Color[0] / 255.0f, blit.Color[1] / 255.0f,
+                blit.Color[2] / 255.0f, blit.Color[3] / 255.0f);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
   }
   void Release() {
     for (const auto& [key, texture] : Textures) {
@@ -535,9 +651,10 @@ int RunModelScenes(const std::filesystem::path& resourceDat,
 int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
                              const std::filesystem::path& environmentDat,
                              const std::filesystem::path& captureDirectory,
-                             bool menuChrome) {
+                             bool menuChrome, bool itemFrames) {
   bool captureCreated = false;
   try {
+    if (itemFrames) menuChrome = true;
     const bool capture = !captureDirectory.empty();
     if (capture) {
       const auto output = std::filesystem::weakly_canonical(captureDirectory);
@@ -569,7 +686,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
     std::optional<ProfileEnvironment> chromeEnvironment;
     if (menuChrome)
       chromeEnvironment = ProfileEnvironment::Decode(read(environmentDat));
-    ViewerWindow window(capture);
+    ViewerWindow window(capture, itemFrames);
     SdlCheck(SDL_SetWindowTitle(window.Window, "Saekano"), "window title");
     SdlCheck(SDL_SetWindowSize(window.Window, 960, 544), "window size");
     UiBlitRenderer renderer;
@@ -581,9 +698,14 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
     if (menuChrome) {
       for (const auto id : {3u, 11u, 17u, 24u}) {
         const ProfileTextureKey key{ProfileTextureSection::Interface, -1, id};
-        renderer.Upload(key,
-                        DecodeSceneImage(resources.LoadProfileTexture(key).Data));
+        renderer.Upload(
+            key, DecodeSceneImage(resources.LoadProfileTexture(key).Data));
       }
+    }
+    if (itemFrames) {
+      const ProfileTextureKey key{ProfileTextureSection::Interface, -1, 18};
+      renderer.Upload(key,
+                      DecodeSceneImage(resources.LoadProfileTexture(key).Data));
     }
     ProfileWaveAnimation wave;
     wave.Begin(environment.WavePeriod, 0);
@@ -609,14 +731,19 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
       SdlCheck(SDL_GetWindowSizeInPixels(window.Window, &width, &height),
                "frame size");
       auto blits = BuildProfileBackdrop(environment, wave.Current);
-      const int32_t phase = capture ? std::array<int32_t, 3>{5, 6, 12}[selected] : 5;
+      const int32_t phase =
+          capture ? std::array<int32_t, 3>{5, 6, 12}[selected] : 5;
       const int32_t slide = capture && selected == 2 ? 137 : 0;
       if (menuChrome) {
         const auto chrome =
             BuildProfileMenuChrome(chromeEnvironment->Chrome, phase, slide);
         blits.insert(blits.end(), chrome.begin(), chrome.end());
       }
-      renderer.Draw(blits, width, height);
+      std::vector<UiRenderCommand> commands;
+      if (itemFrames)
+        commands = BuildProfileItemFramePass(chromeEnvironment->ItemFrames,
+                                             phase, 960, 544);
+      renderer.Draw(blits, width, height, commands);
       if (capture) {
         const auto filename = std::to_string(selected) + ".bmp";
         Capture(captureDirectory / filename, width, height);
@@ -627,29 +754,34 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
                << ",\"draws\":[";
         for (size_t i = 0; i < blits.size(); ++i) {
           if (i) report << ',';
-          const auto& blit = blits[i];
-          report << "{\"texture\":[" << uint32_t(blit.Texture.Section) << ','
-                 << blit.Texture.Character << ',' << blit.Texture.Entry
-                 << "],\"destination\":[";
-          for (size_t j = 0; j < 4; ++j) {
-            if (j) report << ',';
-            report << blit.Destination[j];
-          }
-          report << "],\"source\":[";
-          for (size_t j = 0; j < 4; ++j) {
-            if (j) report << ',';
-            report << blit.Source[j];
-          }
-          report << "],\"color\":[";
-          for (size_t j = 0; j < 4; ++j) {
-            if (j) report << ',';
-            report << unsigned(blit.Color[j]);
-          }
-          report << "]}";
+          WriteUiBlit(report, blits[i]);
         }
         report << ']';
         if (menuChrome)
           report << ",\"phase\":" << phase << ",\"result_slide\":" << slide;
+        if (itemFrames) {
+          const auto stencilName = std::to_string(selected) + ".stencil";
+          std::vector<uint8_t> stencil(size_t(width) * size_t(height));
+          glPixelStorei(GL_PACK_ALIGNMENT, 1);
+          glReadPixels(0, 0, width, height, GL_STENCIL_INDEX, GL_UNSIGNED_BYTE,
+                       stencil.data());
+          glPixelStorei(GL_PACK_ALIGNMENT, 4);
+          GlCheck("profile stencil readback");
+          std::ofstream stencilFile(captureDirectory / stencilName,
+                                    std::ios::binary);
+          stencilFile.write(reinterpret_cast<const char*>(stencil.data()),
+                            stencil.size());
+          stencilFile.close();
+          if (!stencilFile)
+            throw FormatError("cannot save profile stencil report");
+          report << ",\"stencil_file\":\"" << stencilName
+                 << "\",\"item_frame_commands\":[";
+          for (size_t i = 0; i < commands.size(); ++i) {
+            if (i) report << ',';
+            WriteUiCommand(report, commands[i]);
+          }
+          report << ']';
+        }
         report << "}\n";
         if (++selected == times.size()) quit = true;
       }

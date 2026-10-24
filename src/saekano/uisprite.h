@@ -26,7 +26,8 @@ struct ProfileBackdropEnvironment {
   static ProfileBackdropEnvironment Decode(std::span<const uint8_t> bytes);
 };
 struct ProfileMenuChromeEnvironment {
-  UiSpriteDefinition Frame, Header, Stretch, EarlyOverlay, LateOverlay, Footer, Marker;
+  UiSpriteDefinition Frame, Header, Stretch, EarlyOverlay, LateOverlay, Footer,
+      Marker;
   std::array<int32_t, 2> StretchSize{}, MarkerStep{};
   std::vector<std::array<int32_t, 2>> MarkerPositions;
 };
@@ -34,6 +35,30 @@ struct ProfileMenuChromeEnvironment {
 std::vector<UiSpriteBlit> BuildProfileMenuChrome(
     const ProfileMenuChromeEnvironment& environment, int32_t phase,
     int32_t resultSlide);
+enum class UiRenderKind {
+  ResetDepthStencilBackground,
+  Stencil,
+  AlphaTest,
+  DepthTest,
+  Rectangle,
+  Sprite
+};
+struct UiRenderCommand {
+  UiRenderKind Kind = UiRenderKind::ResetDepthStencilBackground;
+  int32_t Mode = 0;
+  std::array<int32_t, 4> Rectangle{};
+  std::array<uint8_t, 4> Color{};
+  UiSpriteBlit Sprite;
+};
+struct ProfileItemFrameEnvironment {
+  UiSpriteDefinition Sprite;
+  std::vector<std::array<int32_t, 2>> Positions;
+};
+// Native50372..50472, with the factory's initial eight widget positions.
+// Subsequent carousel movement must supply its updated widget geometry.
+std::vector<UiRenderCommand> BuildProfileItemFramePass(
+    const ProfileItemFrameEnvironment& environment, int32_t phase,
+    int32_t canvasWidth, int32_t canvasHeight);
 // Native4ff68..500a8. Caller supplies actual animation state, never an oracle.
 std::vector<UiSpriteBlit> BuildProfileBackdrop(
     const ProfileBackdropEnvironment& environment, int32_t waveOffset);

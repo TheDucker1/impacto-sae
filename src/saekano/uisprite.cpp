@@ -82,14 +82,18 @@ std::vector<UiSpriteBlit> BuildProfileMenuChrome(
   std::vector<UiSpriteBlit> result;
   if (phase >= 12) {
     if (environment.MarkerPositions.size() < 3)
-      throw FormatError("profile result markers require three authored positions");
+      throw FormatError(
+          "profile result markers require three authored positions");
     for (size_t i = 0; i < 3; ++i) {
       auto sprite = environment.Marker;
       const auto& position = environment.MarkerPositions[i];
-      sprite.X = std::bit_cast<int32_t>(uint32_t(position[0]) +
+      sprite.X = std::bit_cast<int32_t>(
+          uint32_t(position[0]) +
           uint32_t(resultSlide) * uint32_t(environment.MarkerStep[0]));
-      sprite.Y = Subtract(position[1], std::bit_cast<int32_t>(
-          uint32_t(resultSlide) * uint32_t(environment.MarkerStep[1])));
+      sprite.Y =
+          Subtract(position[1],
+                   std::bit_cast<int32_t>(uint32_t(resultSlide) *
+                                          uint32_t(environment.MarkerStep[1])));
       result.push_back(ResolveUiSprite(key(17), sprite));
     }
   }
@@ -105,9 +109,59 @@ std::vector<UiSpriteBlit> BuildProfileMenuChrome(
   result.push_back(stretch);
   result.push_back(ResolveUiSprite(key(24), environment.Header));
   result.push_back(ResolveUiSprite(key(24), phase <= 5
-      ? environment.EarlyOverlay : environment.LateOverlay));
+                                                ? environment.EarlyOverlay
+                                                : environment.LateOverlay));
   result.push_back(ResolveUiSprite(key(3), environment.Frame));
   result.push_back(ResolveUiSprite(key(11), environment.Footer));
+  return result;
+}
+std::vector<UiRenderCommand> BuildProfileItemFramePass(
+    const ProfileItemFrameEnvironment& environment, int32_t phase,
+    int32_t canvasWidth, int32_t canvasHeight) {
+  if (canvasWidth <= 0 || canvasHeight <= 0)
+    throw FormatError("invalid profile mask canvas extent");
+  if (environment.Positions.size() < 8)
+    throw FormatError("profile item frames require eight authored positions");
+  std::vector<UiRenderCommand> result;
+  const auto state = [&](UiRenderKind kind, int32_t mode = 0) {
+    UiRenderCommand command;
+    command.Kind = kind;
+    command.Mode = mode;
+    result.push_back(command);
+  };
+  const auto rectangle = [&](std::array<int32_t, 4> bounds,
+                             std::array<uint8_t, 4> color) {
+    UiRenderCommand command;
+    command.Kind = UiRenderKind::Rectangle;
+    command.Rectangle = bounds;
+    command.Color = color;
+    result.push_back(command);
+  };
+  state(UiRenderKind::ResetDepthStencilBackground);
+  state(UiRenderKind::Stencil, 1);  // Replace with reference1.
+  state(UiRenderKind::DepthTest,
+        0);  // Never; stencil depth-fail still replaces.
+  state(UiRenderKind::AlphaTest, 6);  // Greater than zero.
+  rectangle({0, 0, canvasWidth, canvasHeight}, {0, 0, 0, 1});
+  state(UiRenderKind::Stencil, 2);  // Replace with reference0.
+  rectangle({500, 96, 460, 300}, {255, 255, 255, 255});
+  state(UiRenderKind::Stencil, 3);    // Equal to zero, keep.
+  state(UiRenderKind::AlphaTest, 3);  // Not equal to zero.
+  state(UiRenderKind::DepthTest, 5);  // Less or equal, depth writes enabled.
+  for (size_t i = 0; i < 8; ++i) {
+    auto sprite = environment.Sprite;
+    sprite.X = environment.Positions[i][0];
+    sprite.Y = environment.Positions[i][1];
+    // Factory uses white local color, not the descriptor's tint. Widget draw
+    // multiplies by the parent's phase-dependent byte color.
+    const uint8_t tint = phase <= 5 ? 200 : 255;
+    sprite.Color = {tint, tint, tint, 255};
+    UiRenderCommand command;
+    command.Kind = UiRenderKind::Sprite;
+    command.Sprite =
+        ResolveUiSprite({ProfileTextureSection::Interface, -1, 18}, sprite);
+    result.push_back(command);
+  }
   return result;
 }
 std::vector<UiSpriteBlit> BuildProfileBackdrop(

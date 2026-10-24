@@ -14,5 +14,5 @@ int RunProfileBackdropViewer(
     const std::filesystem::path& resourceDat,
     const std::filesystem::path& environmentDat,
     const std::filesystem::path& captureDirectory = {},
-    bool menuChrome = false);
+    bool menuChrome = false, bool itemFrames = false);
 }  // namespace Impacto::Saekano
