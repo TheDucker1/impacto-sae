@@ -24,7 +24,7 @@ uint32_t Duration(uint32_t duration, float factor) {
 }
 }  // namespace
 TextTimingEnvironment TextTimingEnvironment::Decode(
-    std::span<const uint8_t> bytes) {
+    std::span<const uint8_t> bytes, bool readIntervals) {
   if (bytes.size() < 3) throw FormatError("truncated text timing prefix");
   TextTimingEnvironment result;
   std::copy_n(bytes.begin(), 3, result.Flags.begin());
@@ -40,7 +40,21 @@ TextTimingEnvironment TextTimingEnvironment::Decode(
     result.Factors.push_back(factor);
   }
   result.PrefixBytes = bytes.size() - reader.Remaining();
+  if (readIntervals) {
+    const auto intervals = reader.U32();
+    reader.CheckCount(intervals, 4);
+    if (!intervals || intervals > 4096)
+      throw FormatError("invalid character interval count");
+    for (uint32_t i = 0; i < intervals; ++i)
+      result.Intervals.push_back(reader.U32());
+    result.IntervalPrefixBytes = bytes.size() - reader.Remaining();
+  }
   return result;
+}
+uint32_t TextTimingEnvironment::ForCharacters(uint8_t option) const {
+  if (option >= Intervals.size())
+    throw FormatError("text speed option outside interval table");
+  return Intervals[option];
 }
 VoiceTextDurations TextTimingEnvironment::ForVoice(uint32_t duration,
                                                    uint8_t option) const {

@@ -13,8 +13,12 @@ struct VoiceTextDurations {
 struct TextTimingEnvironment {
   std::array<uint8_t, 3> Flags{};
   std::vector<float> Factors;
+  std::vector<uint32_t> Intervals;
   size_t PrefixBytes = 0;
-  static TextTimingEnvironment Decode(std::span<const uint8_t> bytes);
+  size_t IntervalPrefixBytes = 0;
+  static TextTimingEnvironment Decode(std::span<const uint8_t> bytes,
+                                      bool readIntervals = false);
   VoiceTextDurations ForVoice(uint32_t duration, uint8_t option) const;
+  uint32_t ForCharacters(uint8_t option) const;
 };
 }  // namespace Impacto::Saekano

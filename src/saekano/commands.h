@@ -58,6 +58,7 @@ struct SemanticState {
   std::optional<bool> TitleDisplay;  // C14515; omitted from portable restores.
   std::optional<ChapterTitleCommand> SavedChapter;  // S600b4/6007c/60044.
   ProfileOwnerState ProfileOwner;
+  std::optional<uint8_t> TextSpeed;  // Owner S6022c, omitted from SAS1.
   std::map<uint16_t, CharacterState> Characters;
   CharacterRuntime CharacterRuntimeState;
   CharacterPoseCache PoseCache;
