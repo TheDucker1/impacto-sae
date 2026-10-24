@@ -34,6 +34,16 @@ class ArchiveProfileServices final : public ProfileServices {
     return voice_->FramesConsumed();
   }
   size_t MenuTextureCount() const { return menu_.size(); }
+  const std::vector<PreparedProfileTexture>& MenuTextures() const {
+    return menu_;
+  }
+  const PreparedProfileTexture* MenuTexture(ProfileTextureKey key) const;
+  const PreparedCharacterPose* ActorPixels() const {
+    return actor_ ? &*actor_ : nullptr;
+  }
+  const ImagePixels* BackgroundPixels() const {
+    return background_ ? &*background_ : nullptr;
+  }
 
  private:
   GameResources& resources_;
@@ -41,7 +51,7 @@ class ArchiveProfileServices final : public ProfileServices {
   TextFormatEnvironment format_;
   TextTimingEnvironment timing_;
   ProfileScene scene_;
-  std::vector<ImagePixels> menu_;
+  std::vector<PreparedProfileTexture> menu_;
   std::optional<PreparedCharacterPose> actor_;
   std::optional<ImagePixels> background_;
   std::optional<ProfileVoiceAssets> responseAssets_;

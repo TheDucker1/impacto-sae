@@ -29,9 +29,17 @@ void ArchiveProfileServices::BeginMenu(int32_t scene, uint8_t textSpeed) {
   menu_.clear();
   scene_ = resources_.LoadProfileScene(size_t(scene));
   for (const auto& asset : resources_.LoadProfileMenu())
-    menu_.push_back(DecodeSceneImage(asset.Data));
+    menu_.push_back({asset.Key, asset.Name, DecodeSceneImage(asset.Data)});
   textSpeed_ = textSpeed;
   menuReady_ = true;
+}
+const PreparedProfileTexture* ArchiveProfileServices::MenuTexture(
+    ProfileTextureKey key) const {
+  const auto found = std::find_if(menu_.begin(), menu_.end(),
+                                  [key](const PreparedProfileTexture& texture) {
+                                    return texture.Key == key;
+                                  });
+  return found == menu_.end() ? nullptr : &*found;
 }
 bool ArchiveProfileServices::Update(std::u16string_view text, uint64_t now) {
   if (!resultText_.Prepared) {
