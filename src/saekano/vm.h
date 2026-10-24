@@ -41,6 +41,8 @@ class VmBackend {
   virtual const BattleGaugeEnvironment* BattleEnvironment() const { return nullptr; }
   virtual const ApproachGaugeEnvironment* ApproachEnvironment() const { return nullptr; }
   virtual const ChapterEnvironment* ChapterConfig() const { return nullptr; }
+  virtual const ProfileEnvironment* ProfileConfig() const { return nullptr; }
+  virtual const ModeResultEnvironment* ModeResultConfig() const { return nullptr; }
   virtual bool Supports(uint16_t) const { return false; }
   virtual CompletedCommand Route(uint16_t opcode, std::span<const uint8_t> payload) const;
   virtual void StartPresentation(size_t command, uint16_t opcode,

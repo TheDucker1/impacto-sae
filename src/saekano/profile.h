@@ -8,6 +8,12 @@
 
 namespace Impacto::Saekano {
 struct SemanticState;
+struct ProfileEnvironment {
+  int32_t IntroFade = 0, Carousel = 0, ResultProgress = 0,
+          SecondaryProgress = 0, StatChange = 0;
+  size_t PrefixBytes = 0;
+  static ProfileEnvironment Decode(std::span<const uint8_t> bytes);
+};
 struct ProfileEvent {
   // Event+00..10: two presentation fields and three stat changes. Keep unknown
   // presentation meanings neutral until their actual consumers are traced.

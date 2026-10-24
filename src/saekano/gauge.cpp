@@ -66,6 +66,7 @@ class EnvironmentReader {
       throw FormatError("invalid battle environment table count");
     return size_t(count);
   }
+  size_t Position() const { return cursor_; }
 
  private:
   std::span<const uint8_t> bytes_;
@@ -249,9 +250,8 @@ bool UpdateBattleGauge(SemanticState& state, BattleGaugeAnimation& animation,
   return animation.Display.Finished();
 }
 
-ApproachGaugeEnvironment ApproachGaugeEnvironment::Decode(
-    std::span<const uint8_t> bytes) {
-  EnvironmentReader reader(bytes);
+namespace {
+ApproachGaugeEnvironment ReadApproachGauge(EnvironmentReader& reader) {
   ApproachGaugeEnvironment result;
   reader.Skip(3 + 3 * 4);
   for (size_t i = 0; i < 6; ++i) {
@@ -283,6 +283,37 @@ ApproachGaugeEnvironment ApproachGaugeEnvironment::Decode(
       result.ParticleRegion[3] < 0)
     throw FormatError("invalid approach gauge environment");
   result.ParticleCount = size_t(count);
+  return result;
+}
+}  // namespace
+ApproachGaugeEnvironment ApproachGaugeEnvironment::Decode(
+    std::span<const uint8_t> bytes) {
+  EnvironmentReader reader(bytes);
+  return ReadApproachGauge(reader);
+}
+ModeResultEnvironment ModeResultEnvironment::DecodeApproach(
+    std::span<const uint8_t> bytes) {
+  EnvironmentReader reader(bytes);
+  ReadApproachGauge(reader);
+  // Native801c9692..801c9c8c: six prior scalar settings, then nine result
+  // fields. Walk the variable gauge tables above instead of byte1289.
+  reader.Skip(6 * 4);
+  ModeResultEnvironment result;
+  result.Progress = reader.Word();
+  result.HorizontalSlide = reader.Word();
+  result.HorizontalStart = reader.Word();
+  result.HorizontalOpacity = reader.Word();
+  result.VerticalSlide = reader.Word();
+  result.VerticalStart = reader.Word();
+  result.VerticalOpacity = reader.Word();
+  result.SecondaryProgress = reader.Word();
+  result.TextOpacity = reader.Word();
+  result.PrefixBytes = reader.Position();
+  for (const auto duration :
+       {result.Progress, result.HorizontalSlide, result.HorizontalOpacity,
+        result.VerticalSlide, result.VerticalOpacity, result.SecondaryProgress,
+        result.TextOpacity})
+    if (duration < 0) throw FormatError("negative mode result duration");
   return result;
 }
 ApproachGaugeCommand ApproachGaugeCommand::Decode(

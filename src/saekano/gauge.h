@@ -69,6 +69,15 @@ struct ApproachGaugeEnvironment {
   UiSpriteDescriptor ParticleSprite;
   static ApproachGaugeEnvironment Decode(std::span<const uint8_t> bytes);
 };
+// Profile and approach use the same result animation configuration, loaded
+// from env_approach rather than their respective scene data.
+struct ModeResultEnvironment {
+  int32_t Progress = 0, HorizontalSlide = 0, HorizontalStart = 0,
+          HorizontalOpacity = 0, VerticalSlide = 0, VerticalStart = 0,
+          VerticalOpacity = 0, SecondaryProgress = 0, TextOpacity = 0;
+  size_t PrefixBytes = 0;
+  static ModeResultEnvironment DecodeApproach(std::span<const uint8_t> bytes);
+};
 struct ApproachParticle {
   ScriptLinearTween Opacity;
   std::optional<std::array<float, 2>> Position;

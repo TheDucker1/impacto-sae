@@ -22,6 +22,14 @@ class HeadlessBackend : public VmBackend {
   std::optional<BattleGaugeEnvironment> BattleConfig;
   std::optional<ApproachGaugeEnvironment> ApproachConfig;
   std::optional<ChapterEnvironment> ChapterSettings;
+  std::optional<ProfileEnvironment> ProfileSettings;
+  std::optional<ModeResultEnvironment> ModeResultSettings;
+  const ModeResultEnvironment* ModeResultConfig() const override {
+    return ModeResultSettings ? &*ModeResultSettings : nullptr;
+  }
+  const ProfileEnvironment* ProfileConfig() const override {
+    return ProfileSettings ? &*ProfileSettings : nullptr;
+  }
   const ChapterEnvironment* ChapterConfig() const override {
     return ChapterSettings ? &*ChapterSettings : nullptr;
   }

@@ -92,7 +92,86 @@ void AddStat(int32_t& value, int32_t change) {
   value = std::bit_cast<int32_t>(uint32_t(value) + uint32_t(change));
   if (value > 100) value = 100;
 }
+class EnvironmentCursor {
+ public:
+  explicit EnvironmentCursor(std::span<const uint8_t> bytes) : bytes_(bytes) {}
+  void Skip(size_t count) {
+    if (count > bytes_.size() - position_)
+      throw FormatError("truncated profile environment prefix");
+    position_ += count;
+  }
+  uint32_t Word() {
+    const auto at = position_;
+    Skip(4);
+    return uint32_t(bytes_[at]) | uint32_t(bytes_[at + 1]) << 8 |
+           uint32_t(bytes_[at + 2]) << 16 | uint32_t(bytes_[at + 3]) << 24;
+  }
+  int32_t Signed() { return std::bit_cast<int32_t>(Word()); }
+  uint32_t Count(size_t minimum) {
+    const auto count = Word();
+    if (count > 1000000 || count > (bytes_.size() - position_) / minimum)
+      throw FormatError(
+          "profile environment collection exceeds available input/budget");
+    return count;
+  }
+  void Counted(size_t stride) {
+    const auto count = Count(stride);
+    Skip(size_t(count) * stride);
+  }
+  void String() { Counted(2); }
+  size_t Position() const { return position_; }
+
+ private:
+  std::span<const uint8_t> bytes_;
+  size_t position_ = 0;
+};
 }  // namespace
+ProfileEnvironment ProfileEnvironment::Decode(std::span<const uint8_t> bytes) {
+  if (bytes.size() > 32 * 1024 * 1024)
+    throw FormatError("profile environment exceeds input budget");
+  EnvironmentCursor cursor(bytes);
+  ProfileEnvironment result;
+  cursor.Skip(3 + 3 * 4);
+  result.IntroFade = cursor.Signed();
+  // Native reader801c0cdc consumes nine words (36 bytes), distinct from the
+  // older34-byte sprite descriptor. Rect and vector2 readers consume16 and8.
+  cursor.Skip(3 * 36 + 4 + 4 * 36 + 8 + 2 * 36 + 4 + 5 * 36);
+  cursor.Counted(4);  // Packed colors.
+  cursor.Skip(9 * 36 + 3 * 16 + 4 * 4);
+  cursor.Counted(8);
+  cursor.Skip(36);
+  cursor.Counted(36);
+  cursor.Skip(8 + 4 * 4);
+  result.Carousel = cursor.Signed();
+  cursor.Counted(8);
+  cursor.Skip(2 * 4 + 2 * 36);
+  result.ResultProgress = cursor.Signed();
+  cursor.Skip(8);
+  cursor.String();
+  const auto labels = cursor.Count(8);  // UTF16 string plus packed color.
+  for (uint32_t i = 0; i < labels; ++i) {
+    cursor.String();
+    cursor.Skip(4);
+  }
+  cursor.String();
+  cursor.Skip(4 + 36);
+  for (size_t group = 0; group < 3; ++group) {
+    const auto strings = cursor.Count(4);
+    for (uint32_t i = 0; i < strings; ++i) cursor.String();
+  }
+  cursor.String();
+  cursor.Skip(36);
+  cursor.Counted(8);
+  result.SecondaryProgress = cursor.Signed();
+  cursor.Skip(8);
+  result.StatChange = cursor.Signed();
+  result.PrefixBytes = cursor.Position();
+  for (const auto duration :
+       {result.IntroFade, result.Carousel, result.ResultProgress,
+        result.SecondaryProgress, result.StatChange})
+    if (duration < 0) throw FormatError("negative profile transition duration");
+  return result;
+}
 ProfileScene DecodeProfileScene(std::span<const uint8_t> bytes) {
   if (bytes.size() > 32 * 1024 * 1024)
     throw FormatError("profile scene exceeds input budget");
