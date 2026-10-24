@@ -2,6 +2,7 @@
 
 #include "formats.h"
 #include "gauge.h"
+#include "uisprite.h"
 
 #include <array>
 #include <string>
@@ -12,6 +13,7 @@ class ScriptNameIndex;
 struct ProfileEnvironment {
   int32_t IntroFade = 0, WavePeriod = 0, Carousel = 0, ResultProgress = 0,
           SecondaryProgress = 0, StatChange = 0;
+  ProfileMenuChromeEnvironment Chrome;
   size_t PrefixBytes = 0;
   std::array<std::vector<std::u16string>, 3> ResultLabels;
   std::u16string ResultFormat;

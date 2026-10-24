@@ -131,6 +131,13 @@ class EnvironmentCursor {
                                 uint16_t(bytes_[at + i * 2 + 1]) << 8));
     return result;
   }
+  UiSpriteDefinition Sprite() {
+    const auto at = position_;
+    Skip(36);
+    PayloadReader reader(bytes_.subspan(at, 36));
+    return UiSpriteDefinition::Read(reader);
+  }
+  std::array<int32_t, 2> Vector() { return {Signed(), Signed()}; }
   size_t Position() const { return position_; }
 
  private:
@@ -149,7 +156,14 @@ ProfileEnvironment ProfileEnvironment::Decode(std::span<const uint8_t> bytes) {
   // older34-byte sprite descriptor. Rect and vector2 readers consume16 and8.
   cursor.Skip(3 * 36);
   result.WavePeriod = cursor.Signed();
-  cursor.Skip(4 * 36 + 8 + 2 * 36 + 4 + 5 * 36);
+  result.Chrome.Frame = cursor.Sprite();  // e734
+  cursor.Skip(36);  // e758
+  result.Chrome.Header = cursor.Sprite();  // e77c
+  result.Chrome.Stretch = cursor.Sprite();  // e7a0
+  result.Chrome.StretchSize = cursor.Vector();  // e7c4
+  result.Chrome.EarlyOverlay = cursor.Sprite();  // e7cc
+  result.Chrome.LateOverlay = cursor.Sprite();  // e7f0
+  cursor.Skip(4 + 5 * 36);
   cursor.Counted(4);  // Packed colors.
   cursor.Skip(9 * 36 + 3 * 16 + 4 * 4);
   cursor.Counted(8);
@@ -158,7 +172,9 @@ ProfileEnvironment ProfileEnvironment::Decode(std::span<const uint8_t> bytes) {
   cursor.Skip(8 + 4 * 4);
   result.Carousel = cursor.Signed();
   cursor.Counted(8);
-  cursor.Skip(2 * 4 + 2 * 36);
+  cursor.Skip(2 * 4);
+  result.Chrome.Footer = cursor.Sprite();  // ead8
+  cursor.Skip(36);
   result.ResultProgress = cursor.Signed();
   cursor.Skip(8);
   cursor.String();
@@ -175,10 +191,12 @@ ProfileEnvironment ProfileEnvironment::Decode(std::span<const uint8_t> bytes) {
       result.ResultLabels[group].push_back(cursor.String());
   }
   result.ResultFormat = cursor.String();
-  cursor.Skip(36);
-  cursor.Counted(8);
+  result.Chrome.Marker = cursor.Sprite();  // ec3c
+  const auto positions = cursor.Count(8);
+  for (uint32_t i = 0; i < positions; ++i)
+    result.Chrome.MarkerPositions.push_back(cursor.Vector());
   result.SecondaryProgress = cursor.Signed();
-  cursor.Skip(8);
+  result.Chrome.MarkerStep = cursor.Vector();  // ec74
   result.StatChange = cursor.Signed();
   result.PrefixBytes = cursor.Position();
   for (const auto duration :

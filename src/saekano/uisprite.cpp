@@ -73,6 +73,43 @@ ProfileBackdropEnvironment ProfileBackdropEnvironment::Decode(
     throw FormatError("negative profile backdrop transition duration");
   return result;
 }
+std::vector<UiSpriteBlit> BuildProfileMenuChrome(
+    const ProfileMenuChromeEnvironment& environment, int32_t phase,
+    int32_t resultSlide) {
+  const auto key = [](uint32_t entry) {
+    return ProfileTextureKey{ProfileTextureSection::Interface, -1, entry};
+  };
+  std::vector<UiSpriteBlit> result;
+  if (phase >= 12) {
+    if (environment.MarkerPositions.size() < 3)
+      throw FormatError("profile result markers require three authored positions");
+    for (size_t i = 0; i < 3; ++i) {
+      auto sprite = environment.Marker;
+      const auto& position = environment.MarkerPositions[i];
+      sprite.X = std::bit_cast<int32_t>(uint32_t(position[0]) +
+          uint32_t(resultSlide) * uint32_t(environment.MarkerStep[0]));
+      sprite.Y = Subtract(position[1], std::bit_cast<int32_t>(
+          uint32_t(resultSlide) * uint32_t(environment.MarkerStep[1])));
+      result.push_back(ResolveUiSprite(key(17), sprite));
+    }
+  }
+  // Native raw backend receives independent destination size; its source
+  // extent remains the authored sprite extent, rather than scaling the source.
+  auto stretch = ResolveUiSprite(key(24), environment.Stretch);
+  stretch.Destination = {
+      Anchor(environment.Stretch.X, environment.StretchSize[0],
+             environment.Stretch.Alignment % 3),
+      Anchor(environment.Stretch.Y, environment.StretchSize[1],
+             environment.Stretch.Alignment / 3),
+      environment.StretchSize[0], environment.StretchSize[1]};
+  result.push_back(stretch);
+  result.push_back(ResolveUiSprite(key(24), environment.Header));
+  result.push_back(ResolveUiSprite(key(24), phase <= 5
+      ? environment.EarlyOverlay : environment.LateOverlay));
+  result.push_back(ResolveUiSprite(key(3), environment.Frame));
+  result.push_back(ResolveUiSprite(key(11), environment.Footer));
+  return result;
+}
 std::vector<UiSpriteBlit> BuildProfileBackdrop(
     const ProfileBackdropEnvironment& environment, int32_t waveOffset) {
   const auto key = [](uint32_t entry) {

@@ -256,6 +256,14 @@ int main(int argc, char* argv[]) {
            "Usage: --saekano-audio USRDIR TRACK [--capture DIRECTORY]\n");
     return 1;
   }
+  if (argc >= 2 && std::string_view(argv[1]) == "--saekano-profile-menu-frame") {
+    if (argc == 4) return Saekano::RunProfileBackdropViewer(argv[2], argv[3], {}, true);
+    if (argc == 6 && std::string_view(argv[4]) == "--capture")
+      return Saekano::RunProfileBackdropViewer(argv[2], argv[3], argv[5], true);
+    ImpLog(LogLevel::Error, LogChannel::General,
+      "Usage: --saekano-profile-menu-frame RESOURCE.DAT ENV_OTAKU_MODE.DAT [--capture DIRECTORY]\n");
+    return 1;
+  }
   if (argc >= 2 && std::string_view(argv[1]) == "--saekano-profile-backdrop") {
     if (argc == 4) return Saekano::RunProfileBackdropViewer(argv[2], argv[3]);
     if (argc == 6 && std::string_view(argv[4]) == "--capture")

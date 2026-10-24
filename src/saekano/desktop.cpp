@@ -5,6 +5,7 @@
 #include "resources.h"
 #include "uisprite.h"
 #include "profilewave.h"
+#include "profile.h"
 #include "../io/memorystream.h"
 #include "../texture/texture.h"
 
@@ -533,7 +534,8 @@ int RunModelScenes(const std::filesystem::path& resourceDat,
 }
 int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
                              const std::filesystem::path& environmentDat,
-                             const std::filesystem::path& captureDirectory) {
+                             const std::filesystem::path& captureDirectory,
+                             bool menuChrome) {
   bool captureCreated = false;
   try {
     const bool capture = !captureDirectory.empty();
@@ -564,6 +566,9 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
     GameResources resources(read(resourceDat));
     const auto environment =
         ProfileBackdropEnvironment::Decode(read(environmentDat));
+    std::optional<ProfileEnvironment> chromeEnvironment;
+    if (menuChrome)
+      chromeEnvironment = ProfileEnvironment::Decode(read(environmentDat));
     ViewerWindow window(capture);
     SdlCheck(SDL_SetWindowTitle(window.Window, "Saekano"), "window title");
     SdlCheck(SDL_SetWindowSize(window.Window, 960, 544), "window size");
@@ -572,6 +577,13 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
       const ProfileTextureKey key{ProfileTextureSection::Interface, -1, id};
       renderer.Upload(key,
                       DecodeSceneImage(resources.LoadProfileTexture(key).Data));
+    }
+    if (menuChrome) {
+      for (const auto id : {3u, 11u, 17u, 24u}) {
+        const ProfileTextureKey key{ProfileTextureSection::Interface, -1, id};
+        renderer.Upload(key,
+                        DecodeSceneImage(resources.LoadProfileTexture(key).Data));
+      }
     }
     ProfileWaveAnimation wave;
     wave.Begin(environment.WavePeriod, 0);
@@ -596,7 +608,14 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
       int width = 0, height = 0;
       SdlCheck(SDL_GetWindowSizeInPixels(window.Window, &width, &height),
                "frame size");
-      const auto blits = BuildProfileBackdrop(environment, wave.Current);
+      auto blits = BuildProfileBackdrop(environment, wave.Current);
+      const int32_t phase = capture ? std::array<int32_t, 3>{5, 6, 12}[selected] : 5;
+      const int32_t slide = capture && selected == 2 ? 137 : 0;
+      if (menuChrome) {
+        const auto chrome =
+            BuildProfileMenuChrome(chromeEnvironment->Chrome, phase, slide);
+        blits.insert(blits.end(), chrome.begin(), chrome.end());
+      }
       renderer.Draw(blits, width, height);
       if (capture) {
         const auto filename = std::to_string(selected) + ".bmp";
@@ -628,7 +647,10 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
           }
           report << "]}";
         }
-        report << "]}\n";
+        report << ']';
+        if (menuChrome)
+          report << ",\"phase\":" << phase << ",\"result_slide\":" << slide;
+        report << "}\n";
         if (++selected == times.size()) quit = true;
       }
       SdlCheck(SDL_GL_SwapWindow(window.Window), "frame swap");

@@ -25,6 +25,15 @@ struct ProfileBackdropEnvironment {
   size_t PrefixBytes = 0;
   static ProfileBackdropEnvironment Decode(std::span<const uint8_t> bytes);
 };
+struct ProfileMenuChromeEnvironment {
+  UiSpriteDefinition Frame, Header, Stretch, EarlyOverlay, LateOverlay, Footer, Marker;
+  std::array<int32_t, 2> StretchSize{}, MarkerStep{};
+  std::vector<std::array<int32_t, 2>> MarkerPositions;
+};
+// Native500ac..50372, after backdrop and before stencil rendering.
+std::vector<UiSpriteBlit> BuildProfileMenuChrome(
+    const ProfileMenuChromeEnvironment& environment, int32_t phase,
+    int32_t resultSlide);
 // Native4ff68..500a8. Caller supplies actual animation state, never an oracle.
 std::vector<UiSpriteBlit> BuildProfileBackdrop(
     const ProfileBackdropEnvironment& environment, int32_t waveOffset);
