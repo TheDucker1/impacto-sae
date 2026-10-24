@@ -2,6 +2,7 @@
 
 #include "vm.h"
 #include "texttiming.h"
+#include "textreveal.h"
 
 namespace Impacto::Saekano {
 
@@ -26,6 +27,7 @@ class HeadlessBackend : public VmBackend {
   std::optional<ProfileEnvironment> ProfileSettings;
   std::optional<ModeResultEnvironment> ModeResultSettings;
   std::optional<TextTimingEnvironment> TextTimingSettings;
+  std::optional<TextFormatEnvironment> TextFormatSettings;
   const ModeResultEnvironment* ModeResultConfig() const override {
     return ModeResultSettings ? &*ModeResultSettings : nullptr;
   }
