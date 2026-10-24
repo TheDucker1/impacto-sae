@@ -199,6 +199,22 @@ int main(int argc, char* argv[]) {
   LogInit();
 
 #ifdef IMPACTO_HAS_SAEKANO
+  if (argc >= 2 && std::string_view(argv[1]) == "--saekano-profile-voice") {
+    uint32_t character = 0, entry = 0;
+    if (argc == 5 || (argc == 7 && std::string_view(argv[5]) == "--capture")) {
+      const std::string_view a = argv[3], b = argv[4];
+      const auto x = std::from_chars(a.data(), a.data() + a.size(), character);
+      const auto y = std::from_chars(b.data(), b.data() + b.size(), entry);
+      if (x.ec == std::errc{} && x.ptr == a.data() + a.size() &&
+          y.ec == std::errc{} && y.ptr == b.data() + b.size())
+        return Saekano::RunProfileVoiceSession(argv[2], character, entry,
+                                               argc == 7 ? argv[6] : "");
+    }
+    ImpLog(LogLevel::Error, LogChannel::General,
+           "Usage: --saekano-profile-voice USRDIR CHARACTER ENTRY [--capture "
+           "DIRECTORY]\n");
+    return 1;
+  }
   if (argc >= 2 && std::string_view(argv[1]) == "--saekano-se") {
     uint32_t track = 0, channel = 0;
     if (argc == 5 || (argc == 7 && std::string_view(argv[5]) == "--capture")) {

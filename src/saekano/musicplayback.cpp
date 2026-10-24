@@ -1,6 +1,7 @@
 #include "musicplayback.h"
 
 #include "headlessbackend.h"
+#include "resources.h"
 #include "../audio/audiosystem.h"
 #include "../audio/openal/audiobackend.h"
 #include "../audio/openal/openalaudiochannel.h"
@@ -13,17 +14,22 @@
 #include <cmath>
 #include <fstream>
 #include <limits>
+#include <iterator>
 
 namespace Impacto::Saekano {
 namespace {
-class AwbAudioStream final : public Audio::AudioStream {
+class HcaPlaybackStream final : public Audio::AudioStream {
  public:
-  AwbAudioStream(ArchiveBgmResources& resources, int32_t track)
-      : AwbAudioStream(resources.Open(track), track, "bgm.awb") {}
-  AwbAudioStream(ArchiveSeResources& resources, int32_t track)
-      : AwbAudioStream(resources.Open(track), track, "se.awb") {}
-  AwbAudioStream(std::unique_ptr<HcaWaveReader> reader, int32_t track,
-                  const char* bank) : reader_(std::move(reader)) {
+  HcaPlaybackStream(ArchiveBgmResources& resources, int32_t track)
+      : HcaPlaybackStream(resources.Open(track), track, "bgm.awb") {}
+  HcaPlaybackStream(ArchiveSeResources& resources, int32_t track)
+      : HcaPlaybackStream(resources.Open(track), track, "se.awb") {}
+  explicit HcaPlaybackStream(Bytes encoded)
+      : HcaPlaybackStream(std::make_unique<HcaWaveReader>(std::move(encoded)),
+                          0, "profile.hca") {}
+  HcaPlaybackStream(std::unique_ptr<HcaWaveReader> reader, int32_t track,
+                    const char* bank)
+      : reader_(std::move(reader)) {
     const auto& info = reader_->Info();
     if (info.Frames > INT32_MAX || info.LoopEnd > INT32_MAX)
       throw FormatError("HCA exceeds Impacto channel sample range");
@@ -141,6 +147,20 @@ void SaveWav(const std::filesystem::path& path,
   }
   if (!out) throw FormatError("cannot write captured WAV");
 }
+void CreateCaptureDirectory(const std::filesystem::path& usrdir,
+                            const std::filesystem::path& captureDirectory) {
+  const auto output = std::filesystem::weakly_canonical(captureDirectory);
+  const auto data = std::filesystem::weakly_canonical(usrdir);
+  for (auto parent = output; !parent.empty(); parent = parent.parent_path()) {
+    if (parent == data ||
+        (data.filename() == "USRDIR" && parent == data.parent_path()))
+      throw FormatError("audio capture overlaps original game data");
+    if (parent == parent.parent_path()) break;
+  }
+  if (std::filesystem::exists(output))
+    throw FormatError("choose a fresh audio capture directory");
+  std::filesystem::create_directories(output);
+}
 }  // namespace
 
 struct MusicPlayback::Impl {
@@ -152,9 +172,13 @@ struct MusicPlayback::Impl {
   LPALCRENDERSAMPLESSOFT RenderSamples = nullptr;
   std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> Channel;
   std::array<std::unique_ptr<Audio::OpenAL::OpenALAudioChannel>,4> SeChannels;
+  std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> ProfileVoice;
+  std::unique_ptr<HcaPlaybackStream> PreparedProfileVoice;
+  bool HasProfileVoice = false;
   float OldMaster = Audio::MasterVolume;
   float OldGroup = Audio::GroupVolumes[Audio::ACG_BGM];
   float OldSeGroup = Audio::GroupVolumes[Audio::ACG_SE];
+  float OldVoiceGroup = Audio::GroupVolumes[Audio::ACG_Voice];
   explicit Impl(ArchiveBgmResources& resources, bool loopback, ArchiveSeResources* sounds)
       : Resources(resources), Sounds(sounds) {
     try {
@@ -189,8 +213,11 @@ struct MusicPlayback::Impl {
       Audio::MasterVolume = 1;
       Audio::GroupVolumes[Audio::ACG_BGM] = 1;
       Audio::GroupVolumes[Audio::ACG_SE] = 1;
+      Audio::GroupVolumes[Audio::ACG_Voice] = 1;
       Channel = std::make_unique<Audio::OpenAL::OpenALAudioChannel>(
           Audio::AC_BGM0, Audio::ACG_BGM);
+      ProfileVoice = std::make_unique<Audio::OpenAL::OpenALAudioChannel>(
+          Audio::AC_VOICE0, Audio::ACG_Voice);
       if (Sounds) for (size_t i=0; i<SeChannels.size(); ++i)
         SeChannels[i] = std::make_unique<Audio::OpenAL::OpenALAudioChannel>(
             Audio::AudioChannelId(int(Audio::AC_SSE0) + i), Audio::ACG_SE);
@@ -202,6 +229,8 @@ struct MusicPlayback::Impl {
   }
   void Cleanup() {
     Channel.reset();
+    ProfileVoice.reset();
+    PreparedProfileVoice.reset();
     for (auto& channel : SeChannels) channel.reset();
     alcMakeContextCurrent(nullptr);
     if (Backend) {
@@ -219,6 +248,7 @@ struct MusicPlayback::Impl {
     Audio::MasterVolume = OldMaster;
     Audio::GroupVolumes[Audio::ACG_BGM] = OldGroup;
     Audio::GroupVolumes[Audio::ACG_SE] = OldSeGroup;
+    Audio::GroupVolumes[Audio::ACG_Voice] = OldVoiceGroup;
   }
   ~Impl() { Cleanup(); }
 };
@@ -237,7 +267,7 @@ void MusicPlayback::Submit(const GameEvent& event) {
       throw UnsupportedCommand(
           "BGM output gain outside authored settings range");
     auto stream =
-        std::make_unique<AwbAudioStream>(impl_->Resources, request.Track);
+        std::make_unique<HcaPlaybackStream>(impl_->Resources, request.Track);
     const bool loop = impl_->Resources.Info(request.Track).Loop;
     impl_->Channel->SetVolume(request.Volume->Gain);
     impl_->Channel->Play(std::move(stream), loop, 0);
@@ -257,7 +287,7 @@ void MusicPlayback::Submit(const GameEvent& event) {
     const float gain = request.Volume->Gain;
     if (!std::isfinite(gain) || gain < 0 || gain > 1)
       throw UnsupportedCommand("SE output gain outside authored settings range");
-    auto stream = std::make_unique<AwbAudioStream>(*impl_->Sounds, request.Track);
+    auto stream = std::make_unique<HcaPlaybackStream>(*impl_->Sounds, request.Track);
     // The final service refresh writes the same SE gain to backend2..5.
     // BGM is recomputed from unchanged service percentages, preserving its
     // applied gain here. The voice consumer remains separate. Remember is
@@ -279,10 +309,12 @@ void MusicPlayback::Submit(const GameEvent& event) {
 void MusicPlayback::Update(float seconds) {
   impl_->Channel->Update(seconds);
   for (auto& channel : impl_->SeChannels) if (channel) channel->Update(seconds);
+  impl_->ProfileVoice->Update(seconds);
   AlCheck("BGM frame");
 }
 bool MusicPlayback::Playing() const {
   if (impl_->Channel->GetState() != Audio::ACS_Stopped) return true;
+  if (impl_->ProfileVoice->GetState() != Audio::ACS_Stopped) return true;
   for (auto& channel : impl_->SeChannels)
     if (channel && channel->GetState() != Audio::ACS_Stopped) return true;
   return false;
@@ -290,6 +322,35 @@ bool MusicPlayback::Playing() const {
 bool MusicPlayback::SoundPlaying(size_t logicalChannel) const {
   const auto& channel = impl_->SeChannels.at(logicalChannel);
   return channel && channel->GetState() != Audio::ACS_Stopped;
+}
+void MusicPlayback::PrepareProfileVoice(Bytes encoded, float gain) {
+  if (!std::isfinite(gain) || gain < 0 || gain > 1)
+    throw FormatError("profile voice gain outside supported range");
+  auto stream = std::make_unique<HcaPlaybackStream>(std::move(encoded));
+  impl_->ProfileVoice->Stop(0);
+  impl_->ProfileVoice->SetVolume(gain);
+  impl_->PreparedProfileVoice = std::move(stream);
+  impl_->HasProfileVoice = true;
+  AlCheck("profile voice preparation");
+}
+void MusicPlayback::StartProfileVoice() {
+  if (!impl_->PreparedProfileVoice)
+    throw UnsupportedCommand(
+        "profile voice must be prepared before each start");
+  impl_->ProfileVoice->Play(std::move(impl_->PreparedProfileVoice), false, 0);
+  AlCheck("profile voice start");
+}
+void MusicPlayback::StopProfileVoice() {
+  impl_->ProfileVoice->Stop(0);
+  AlCheck("profile voice stop");
+}
+bool MusicPlayback::ProfileVoiceStopped() const {
+  return impl_->HasProfileVoice &&
+         impl_->ProfileVoice->GetState() == Audio::ACS_Stopped;
+}
+std::optional<float> MusicPlayback::ProfileVoicePosition() const {
+  if (!impl_->HasProfileVoice) return std::nullopt;
+  return impl_->ProfileVoice->PositionInSeconds();
 }
 void MusicPlayback::Render(std::span<int16_t> output) {
   if (!impl_->RenderSamples || output.size() % 2)
@@ -318,20 +379,7 @@ int RunMusicSession(const std::filesystem::path& usrdir, uint32_t track,
       sounds = std::make_unique<ArchiveSeResources>(usrdir);
       sounds->Prepare(int32_t(track));
     } else resources.Prepare(int32_t(track));
-    if (capture) {
-      const auto output = std::filesystem::weakly_canonical(captureDirectory);
-      const auto data = std::filesystem::weakly_canonical(usrdir);
-      for (auto parent = output; !parent.empty();
-           parent = parent.parent_path()) {
-        if (parent == data ||
-            (data.filename() == "USRDIR" && parent == data.parent_path()))
-          throw FormatError("audio capture overlaps original game data");
-        if (parent == parent.parent_path()) break;
-      }
-      if (std::filesystem::exists(output))
-        throw FormatError("choose a fresh audio capture directory");
-      std::filesystem::create_directories(output);
-    }
+    if (capture) CreateCaptureDirectory(usrdir,captureDirectory);
     if (!SDL_Init(SDL_INIT_EVENTS)) throw FormatError(SDL_GetError());
     struct SdlCleanup {
       ~SdlCleanup() { SDL_Quit(); }
@@ -422,6 +470,142 @@ int RunMusicSession(const std::filesystem::path& usrdir, uint32_t track,
     return 0;
   } catch (const std::exception& error) {
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Saekano audio: %s",
+                 error.what());
+    return 1;
+  }
+}
+int RunProfileVoiceSession(const std::filesystem::path& usrdir,
+                           uint32_t character, uint32_t entry,
+                           const std::filesystem::path& captureDirectory) {
+  bool captureCreated = false;
+  try {
+    const bool capture = !captureDirectory.empty();
+    if (capture) {
+      CreateCaptureDirectory(usrdir, captureDirectory);
+      captureCreated = true;
+    }
+    std::ifstream file(usrdir / "resource.dat", std::ios::binary);
+    if (!file) throw FormatError("cannot open profile voice resources");
+    Bytes raw{std::istreambuf_iterator<char>(file), {}};
+    if (file.bad()) throw FormatError("cannot read profile voice resources");
+    GameResources resources(std::move(raw));
+    auto assets = resources.LoadProfileVoice(character, entry);
+    HcaWaveReader metadata(assets.Hca);
+    const auto info = metadata.Info();
+    if (!info.SampleRate || !info.Frames || info.Frames / info.SampleRate > 120)
+      throw FormatError("profile voice diagnostic duration budget");
+    ArchiveBgmResources music(usrdir);
+    if (!SDL_Init(SDL_INIT_EVENTS)) throw FormatError(SDL_GetError());
+    struct Cleanup {
+      ~Cleanup() { SDL_Quit(); }
+    } cleanup;
+    MusicPlayback playback(music, capture);
+    if (playback.ProfileVoiceStopped() || playback.ProfileVoicePosition())
+      throw FormatError("missing profile voice incorrectly acknowledged");
+    bool missingStartRejected = false;
+    try {
+      playback.StartProfileVoice();
+    } catch (const UnsupportedCommand&) {
+      missingStartRejected = true;
+    }
+    if (!missingStartRejected) throw FormatError("unprepared voice started");
+    playback.PrepareProfileVoice(assets.Hca, 1.0f);
+    if (!playback.ProfileVoiceStopped())
+      throw FormatError("prepared voice is not stopped");
+    playback.StartProfileVoice();
+    if (playback.ProfileVoiceStopped())
+      throw FormatError("started voice incorrectly acknowledged as stopped");
+    float position = 0;
+    int settledStopPeak = 0;
+    if (capture) {
+      // Exercise actual output and an explicit interruption before the full
+      // playback. The second preparation must restart at the beginning.
+      std::vector<int16_t> early(4800 * 2);
+      playback.Render(early);
+      position = playback.ProfileVoicePosition().value_or(0);
+      if (!(position > 0) || playback.ProfileVoiceStopped())
+        throw FormatError("profile voice output/position did not advance");
+      bool badPrepareRejected = false;
+      try {
+        playback.PrepareProfileVoice(Bytes{0, 1}, 1.0f);
+      } catch (const FormatError&) {
+        badPrepareRejected = true;
+      }
+      if (!badPrepareRejected || playback.ProfileVoiceStopped())
+        throw FormatError(
+            "invalid voice preparation interrupted current output");
+      playback.StopProfileVoice();
+      if (!playback.ProfileVoiceStopped())
+        throw FormatError("explicit profile voice stop not acknowledged");
+      std::vector<int16_t> silence(4800 * 2);
+      playback.Render(silence);
+      // Existing OpenAL output includes a short zero-time stop smoothing tail
+      // and signed16 dither. Use the same settled-tail bound as the BGM probe.
+      for (auto sample : std::span(silence).last(512))
+        settledStopPeak = std::max(settledStopPeak, std::abs(int(sample)));
+      if (settledStopPeak > 1)
+        throw FormatError("profile voice output did not settle after stop");
+      SaveWav(captureDirectory / "early-stop.wav", early);
+      playback.PrepareProfileVoice(assets.Hca, 1.0f);
+      playback.StartProfileVoice();
+    }
+    const uint64_t expectedFrames =
+        (info.Frames * 48000 + info.SampleRate - 1) / info.SampleRate;
+    std::vector<int16_t> output;
+    const auto epoch = SDL_GetTicks();
+    while (!playback.ProfileVoiceStopped()) {
+      if (capture) {
+        if (output.size() / 2 > expectedFrames + 48000)
+          throw FormatError("profile voice failed to reach natural end");
+        const auto offset = output.size();
+        output.resize(offset + 1600);
+        playback.Render(std::span(output).subspan(offset));
+      } else {
+        if (SDL_GetTicks() - epoch > expectedFrames / 48 + 2000)
+          throw FormatError(
+              "profile voice exceeded real-time playback deadline");
+        playback.Update(1.0f / 60);
+        SDL_Delay(16);
+        SDL_Event event;
+        while (SDL_PollEvent(&event))
+          if (event.type == SDL_EVENT_QUIT) return 0;
+      }
+    }
+    playback.StopProfileVoice();
+    if (!playback.ProfileVoiceStopped() || playback.Playing())
+      throw FormatError("profile voice did not finish on the shared host");
+    if (capture) {
+      if (!std::any_of(output.begin(), output.end(),
+                       [](int16_t v) { return v != 0; }))
+        throw FormatError("profile voice software output was silent");
+      SaveWav(captureDirectory / "audio.wav", output);
+      std::ofstream report(captureDirectory / "summary.json");
+      report << "{\"character\":" << character << ",\"entry\":" << entry
+             << ",\"source_frames\":" << info.Frames
+             << ",\"source_rate\":" << info.SampleRate
+             << ",\"sample_rate\":48000,\"channels\":2,\"rendered_frames\":"
+             << output.size() / 2 << ",\"expected_frames\":" << expectedFrames
+             << ",\"early_position_seconds\":" << position
+             << ",\"mouth_duration\":" << assets.Mouth.Duration
+             << ",\"mouth_samples\":" << assets.Mouth.Samples.size()
+             << ",\"settled_stop_peak\":" << settledStopPeak
+             << ",\"missing_voice_ready\":false,\"missing_start_rejected\":"
+                "true,\"prepared_ready\":true"
+             << ",\"running_ready\":false,\"invalid_prepare_preserves_"
+                "playback\":true,\"explicit_stop_ready\":true"
+             << ",\"output_after_stop_silent\":true,\"natural_end_ready\":true,"
+                "\"stopped\":true}\n";
+      if (!report) throw FormatError("cannot write profile voice report");
+    }
+    SDL_Log(
+        "Saekano profile voice completed through existing HCA/OpenAL services");
+    return 0;
+  } catch (const std::exception& error) {
+    if (captureCreated) {
+      std::ofstream report(captureDirectory / "error.txt");
+      report << std::string(error.what()).substr(0, 2048) << '\n';
+    }
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Saekano profile voice: %s",
                  error.what());
     return 1;
   }

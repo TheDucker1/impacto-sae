@@ -15,6 +15,14 @@ class MusicPlayback {
   void Render(std::span<int16_t> stereoPcm);  // Offline 48kHz loopback only.
   bool Playing() const;
   bool SoundPlaying(size_t logicalChannel) const;
+  // Native profile channel7, mapped onto an existing Impacto voice channel.
+  // Caller supplies known effective gain. Preparation parses/owns HCA bytes;
+  // no playback or successful missing-channel stop is fabricated.
+  void PrepareProfileVoice(Bytes encoded, float gain);
+  void StartProfileVoice();
+  void StopProfileVoice();
+  bool ProfileVoiceStopped() const;
+  std::optional<float> ProfileVoicePosition() const;
 
  private:
   struct Impl;
@@ -27,4 +35,7 @@ class MusicPlayback {
 int RunMusicSession(const std::filesystem::path& usrdir, uint32_t track,
                     const std::filesystem::path& captureDirectory = {},
                     std::optional<uint32_t> soundChannel = std::nullopt);
+int RunProfileVoiceSession(const std::filesystem::path& usrdir,
+                           uint32_t character, uint32_t entry,
+                           const std::filesystem::path& captureDirectory = {});
 }  // namespace Impacto::Saekano
