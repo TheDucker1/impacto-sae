@@ -8,6 +8,7 @@
 
 namespace Impacto::Saekano {
 struct SemanticState;
+class ScriptNameIndex;
 struct ProfileEnvironment {
   int32_t IntroFade = 0, Carousel = 0, ResultProgress = 0,
           SecondaryProgress = 0, StatChange = 0;
@@ -112,6 +113,44 @@ bool UpdateProfileResult(SemanticState& state, ProfileResultState& result,
                          const ProfileEnvironment& environment,
                          const ModeResultEnvironment& shared,
                          const ProfileResultInput& input, uint64_t now);
+enum class ProfileResponseAction {
+  BeginResources,
+  PreparePresentation,
+  PrepareVoice,
+  BeginTextReveal,
+  StartVoice,
+  UpdatePresentation,
+  RevealText,
+  StopVoice,
+  StopBgm
+};
+struct ProfileResponseInput {
+  bool ResourcesReady = false, TextRevealed = false, Accept = false;
+  // Native800aa88c requires an existing prepared channel whose state is0;
+  // absence of a voice object is not a successful stop acknowledgement.
+  bool VoiceStopped = false;
+};
+struct ProfileResponseState {
+  bool Started = false, Visible = false, Completed = false;
+  int32_t Phase = 15;
+  std::optional<int32_t> PendingPhase;
+  int32_t CharacterId = 0, Background = -1, TargetScript = -2;
+  size_t Ordinal = 0;
+  ProfileEvent Event;
+  ScriptLinearTween Fade;
+  std::vector<ProfileResponseAction> Actions;
+  std::vector<int32_t> UiSounds;
+  // PreparePresentation uses Event.Presentation[0] pose, [1] face, white tint,
+  // opacity255 and X700. Voice/envelope entry is Event.Tail on channel7.
+  // Text is the original Event.Response bytes; its consumer owns CP932/reveal.
+};
+void BeginProfileResponse(const SemanticState& state,
+                          ProfileResponseState& response,
+                          const ProfileResultState& result);
+bool UpdateProfileResponse(SemanticState& state, ProfileResponseState& response,
+                           const ProfileEnvironment& environment,
+                           const ScriptNameIndex& scripts,
+                           const ProfileResponseInput& input, uint64_t now);
 size_t InitialProfileOrdinal(const ProfileOwnerState& owner,
                              const ProfileScene& scene);
 void StepProfileSelector(uint32_t& selector, bool forward);

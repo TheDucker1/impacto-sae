@@ -1,5 +1,6 @@
 #include "profile.h"
 #include "commands.h"
+#include "seekmap.h"
 
 #include <bit>
 #include <algorithm>
@@ -588,5 +589,97 @@ bool UpdateProfileResult(SemanticState& state, ProfileResultState& result,
       result.Phase != 19)
     throw FormatError("invalid profile result phase");
   return result.Phase == 15;
+}
+void BeginProfileResponse(const SemanticState& state,
+                          ProfileResponseState& response,
+                          const ProfileResultState& result) {
+  CheckOwner(state.ProfileOwner);
+  if (!result.Started || result.Phase != 15 || result.PendingPhase ||
+      !result.ResponseMode || result.Visible)
+    throw UnsupportedCommand(
+        "profile result has not reached response resource entry");
+  if (!state.LastBackgroundId)
+    throw UnsupportedCommand("initial profile response background is missing");
+  if (*state.LastBackgroundId < -1 || result.Ordinal >= 4 ||
+      result.CharacterId < 0 || result.CharacterId >= 4 ||
+      result.Event.Presentation[0] < 0 || result.Event.Presentation[1] < 0 ||
+      result.Event.Tail < 0)
+    throw FormatError("invalid profile response resource selection");
+  ProfileResponseState next;
+  next.Started = true;
+  next.CharacterId = result.CharacterId;
+  next.Ordinal = result.Ordinal;
+  next.Background = *state.LastBackgroundId;
+  next.Event = result.Event;
+  next.Fade = result.Fade;
+  response = std::move(next);
+}
+bool UpdateProfileResponse(SemanticState& state, ProfileResponseState& response,
+                           const ProfileEnvironment& environment,
+                           const ScriptNameIndex& scripts,
+                           const ProfileResponseInput& input, uint64_t now) {
+  if (!response.Started)
+    throw UnsupportedCommand("profile response has not been initialized");
+  response.Actions.clear();
+  response.UiSounds.clear();
+  if (response.Completed) return true;
+  if (response.PendingPhase) {
+    response.Phase = *response.PendingPhase;
+    response.PendingPhase.reset();
+  }
+  // Keep native block order: fade3/4 precedes response loading15/16.
+  if (response.Phase == 3) {
+    response.Fade.Start(255, 0, environment.IntroFade, now);
+    response.Phase = 4;
+  }
+  if (response.Phase == 4) {
+    response.Fade.Tick(now);
+    if (response.Fade.Finished()) {
+      response.Actions.push_back(ProfileResponseAction::BeginTextReveal);
+      response.Actions.push_back(ProfileResponseAction::StartVoice);
+      response.PendingPhase = 17;
+    }
+  }
+  if (response.Phase == 15) {
+    response.Actions.push_back(ProfileResponseAction::BeginResources);
+    response.Phase = 16;
+  }
+  if (response.Phase == 16 && input.ResourcesReady) {
+    response.Visible = true;
+    response.Actions.push_back(ProfileResponseAction::PreparePresentation);
+    response.Actions.push_back(ProfileResponseAction::PrepareVoice);
+    response.PendingPhase = 3;
+  }
+  if (response.Phase == 17) {
+    response.Actions.push_back(ProfileResponseAction::UpdatePresentation);
+    if (!input.TextRevealed) {
+      if (input.Accept)
+        response.Actions.push_back(ProfileResponseAction::RevealText);
+    } else if (input.Accept) {
+      response.UiSounds.push_back(3);
+      response.Phase = 18;
+    }
+  }
+  if (response.Phase == 18) {
+    response.Fade.Start(0, 255, 1500, now);
+    response.Phase = 19;
+  }
+  if (response.Phase == 19) {
+    response.Fade.Tick(now);
+    if (response.Fade.Finished()) response.PendingPhase = 20;
+  }
+  if (response.Phase == 20) {
+    response.Actions.push_back(ProfileResponseAction::StopVoice);
+    if (input.VoiceStopped) {
+      PublishProfileStats(state, int32_t(response.Ordinal));
+      response.Actions.push_back(ProfileResponseAction::StopBgm);
+      response.TargetScript = scripts.Resolve(response.Event.ScriptName);
+      response.Completed = true;
+    }
+  }
+  if (response.Phase != 4 && response.Phase != 16 && response.Phase != 17 &&
+      response.Phase != 19 && response.Phase != 20)
+    throw FormatError("invalid profile response phase");
+  return response.Completed;
 }
 }  // namespace Impacto::Saekano
