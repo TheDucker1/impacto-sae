@@ -11,6 +11,7 @@
 #include "music.h"
 #include "se.h"
 #include "chapter.h"
+#include "profile.h"
 
 #include <array>
 #include <map>
@@ -56,6 +57,7 @@ struct SemanticState {
   std::vector<std::u16string> Titles;
   std::optional<bool> TitleDisplay;  // C14515; omitted from portable restores.
   std::optional<ChapterTitleCommand> SavedChapter;  // S600b4/6007c/60044.
+  ProfileOwnerState ProfileOwner;
   std::map<uint16_t, CharacterState> Characters;
   CharacterRuntime CharacterRuntimeState;
   CharacterPoseCache PoseCache;

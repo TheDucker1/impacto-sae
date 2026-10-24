@@ -1,4 +1,5 @@
 #include "profile.h"
+#include "commands.h"
 
 #include <bit>
 #include <limits>
@@ -78,6 +79,19 @@ std::string DualText(std::string text) {
     text.resize(end);
   return text;
 }
+void CheckOwner(const ProfileOwnerState& owner) {
+  if (!owner.Known)
+    throw UnsupportedCommand("initial owner profile stats are missing");
+}
+size_t CharacterStatIndex(int32_t id) {
+  if (id < 0 || id >= 4)
+    throw FormatError("profile character ID outside owner stat array");
+  return size_t(id) * 3;
+}
+void AddStat(int32_t& value, int32_t change) {
+  value = std::bit_cast<int32_t>(uint32_t(value) + uint32_t(change));
+  if (value > 100) value = 100;
+}
 }  // namespace
 ProfileScene DecodeProfileScene(std::span<const uint8_t> bytes) {
   if (bytes.size() > 32 * 1024 * 1024)
@@ -110,5 +124,94 @@ ProfileScene DecodeProfileScene(std::span<const uint8_t> bytes) {
     }
   }
   return result;
+}
+size_t InitialProfileOrdinal(const ProfileOwnerState& owner,
+                             const ProfileScene& scene) {
+  CheckOwner(owner);
+  if (scene.empty() || scene.size() > 4)
+    throw FormatError("profile character count outside mode capacity");
+  if (owner.CachedOrdinal < 0)
+    throw FormatError("negative cached profile ordinal");
+  return size_t(owner.CachedOrdinal) < scene.size()
+             ? size_t(owner.CachedOrdinal)
+             : 0;
+}
+void StepProfileSelector(uint32_t& selector, bool forward) {
+  if (selector >= 10)
+    throw FormatError("profile selector outside native cycle");
+  selector = (selector + (forward ? 1u : 9u)) % 10;
+}
+const ProfileEvent& SelectedProfileEvent(const ProfileScene& scene,
+                                         size_t ordinal, uint32_t selector) {
+  if (ordinal >= scene.size() || selector >= 10)
+    throw FormatError("profile selection outside scene");
+  const size_t index = (selector + 3) % 10;
+  if (index >= scene[ordinal].Events.size())
+    throw UnsupportedCommand(
+        "selected profile event has unwritten native fields");
+  return scene[ordinal].Events[index];
+}
+void StartProfileStatChanges(const ProfileOwnerState& owner,
+                             ProfileStatAnimation& animation,
+                             int32_t characterId, const ProfileEvent& event,
+                             int32_t duration, uint64_t now) {
+  CheckOwner(owner);
+  CharacterStatIndex(characterId);
+  if (duration < 0)
+    throw FormatError("negative profile stat transition duration");
+  ProfileStatAnimation next;
+  next.Started = true;
+  next.CharacterId = characterId;
+  for (size_t i = 0; i < 3; ++i)
+    next.Changes[i].Start(0, event.Values[i + 2], duration, now);
+  animation = next;
+}
+void TickProfileStatChanges(ProfileOwnerState& owner,
+                            ProfileStatAnimation& animation, uint64_t now) {
+  CheckOwner(owner);
+  if (!animation.Started)
+    throw UnsupportedCommand("profile stat Start was suppressed");
+  const auto base = CharacterStatIndex(animation.CharacterId);
+  for (size_t i = 0; i < 3; ++i) {
+    auto& change = animation.Changes[i];
+    change.Tick(now);
+    if (change.Finished()) {
+      AddStat(owner.Stats[base + i], change.Current);
+      change.Start(0, 0, 0, now);
+    }
+  }
+}
+void FinishProfileStatChanges(ProfileOwnerState& owner,
+                              ProfileStatAnimation& animation, uint64_t now) {
+  CheckOwner(owner);
+  if (!animation.Started)
+    throw UnsupportedCommand("profile stat Start was suppressed");
+  const auto base = CharacterStatIndex(animation.CharacterId);
+  for (size_t i = 0; i < 3; ++i) {
+    AddStat(owner.Stats[base + i], animation.Changes[i].To);
+    animation.Changes[i].Start(0, 0, 0, now);
+  }
+}
+void RequestProfileCategoryTrophy(SemanticState& state,
+                                  const ProfileEvent& event) {
+  const auto category = event.Values[1];
+  if (category >= 0 && category <= 2)
+    state.PendingEvents.push_back({GameEventKind::Trophy, 34 - category});
+}
+void RequestProfileStatTrophies(SemanticState& state, int32_t characterId) {
+  CheckOwner(state.ProfileOwner);
+  const auto base = CharacterStatIndex(characterId);
+  for (size_t i = 0; i < 3; ++i)
+    if (state.ProfileOwner.Stats[base + i] == 100)
+      state.PendingEvents.push_back({GameEventKind::Trophy, int32_t(26 + i)});
+}
+void PublishProfileStats(SemanticState& state, int32_t ordinal) {
+  CheckOwner(state.ProfileOwner);
+  if (ordinal < 0 || ordinal >= 4)
+    throw FormatError("profile ordinal outside mode capacity");
+  for (size_t i = 0; i < 12; ++i)
+    state.Bank0[30 + i] =
+        std::bit_cast<int16_t>(uint16_t(state.ProfileOwner.Stats[i]));
+  state.ProfileOwner.CachedOrdinal = ordinal;
 }
 }  // namespace Impacto::Saekano
