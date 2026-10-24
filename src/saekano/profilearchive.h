@@ -4,6 +4,7 @@
 #include "resources.h"
 #include "audio.h"
 #include "textreveal.h"
+#include "profilemouth.h"
 
 namespace Impacto::Saekano {
 // Deterministic headless consumer: real GXT/HCA/envelope preparation. It does
@@ -24,6 +25,7 @@ class ArchiveProfileServices final : public ProfileServices {
            uint64_t now) override;
   const VoiceTextReveal& ResultText() const { return resultText_; }
   const VoiceTextReveal& ResponseText() const { return responseText_; }
+  const ProfileMouthPlayback& Mouth() const { return mouth_; }
   uint64_t VoiceFrames() const { return voice_ ? voice_->Position() : 0; }
   size_t MenuTextureCount() const { return menu_.size(); }
 
@@ -39,6 +41,7 @@ class ArchiveProfileServices final : public ProfileServices {
   std::optional<ProfileVoiceAssets> responseAssets_;
   std::unique_ptr<HcaWaveReader> voice_;
   VoiceTextReveal resultText_, responseText_;
+  ProfileMouthPlayback mouth_;
   uint8_t textSpeed_ = 0;
   bool menuReady_ = false, responseReady_ = false, playing_ = false;
   uint64_t voiceEpoch_ = 0;

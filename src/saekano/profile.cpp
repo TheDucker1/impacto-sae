@@ -262,6 +262,11 @@ ProfileScene DecodeProfileScene(std::span<const uint8_t> bytes) {
   }
   return result;
 }
+float ProfileVoiceGain(uint8_t option, float channelCoefficient) {
+  if (!(channelCoefficient >= 0) || channelCoefficient > 1)
+    throw FormatError("profile voice channel coefficient outside known range");
+  return (float(uint32_t(option) * 10) * channelCoefficient) / 100.0f;
+}
 ProfileMouthAnimation DecodeProfileMouth(std::span<const uint8_t> bytes) {
   if (bytes.size() > 1024 * 1024)
     throw FormatError("profile mouth data exceeds budget");

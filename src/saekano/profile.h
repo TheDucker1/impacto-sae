@@ -39,6 +39,10 @@ struct ProfileMouthAnimation {
   std::vector<uint8_t> Samples;
 };
 ProfileMouthAnimation DecodeProfileMouth(std::span<const uint8_t> bytes);
+// Settings application60236*10 -> channel7 percentage, then channel coefficient
+// multiplication/division by100. Coefficient is known service state, never
+// reconstructed from a captured saved setting alone. Fresh channels use1.
+float ProfileVoiceGain(uint8_t option, float channelCoefficient);
 struct ProfileOwnerState {
   bool Known = false;
   int32_t CachedOrdinal = 0;  // S60108, independent of script Bank0.

@@ -21,6 +21,7 @@ void ArchiveProfileServices::BeginMenu(int32_t scene, uint8_t textSpeed) {
   background_.reset();
   responseAssets_.reset();
   voice_.reset();
+  mouth_ = {};
   resultText_ = {};
   responseText_ = {};
   menu_.clear();
@@ -112,8 +113,10 @@ void ArchiveProfileServices::Act(ProfileResponseAction action,
       if (!voice_) throw FormatError("profile voice was not prepared");
       voiceEpoch_ = now;
       playing_ = true;
+      mouth_.Begin(responseAssets_->Mouth, now);
       break;
     case ProfileResponseAction::UpdatePresentation:
+      mouth_.Update(now);
       break;
     case ProfileResponseAction::RevealText:
       responseText_.Reveal(now);
