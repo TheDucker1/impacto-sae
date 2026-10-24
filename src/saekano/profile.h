@@ -12,6 +12,8 @@ struct ProfileEnvironment {
   int32_t IntroFade = 0, Carousel = 0, ResultProgress = 0,
           SecondaryProgress = 0, StatChange = 0;
   size_t PrefixBytes = 0;
+  std::array<std::vector<std::u16string>, 3> ResultLabels;
+  std::u16string ResultFormat;
   static ProfileEnvironment Decode(std::span<const uint8_t> bytes);
 };
 struct ProfileEvent {
@@ -36,6 +38,10 @@ struct ProfileOwnerState {
   int32_t CachedOrdinal = 0;  // S60108, independent of script Bank0.
   std::array<int32_t, 12>
       Stats{};  // S6010c, four characters, three stats each.
+  // Inline owner S73814 + ordinal*1b30 + eventId*e8. Separate from stats;
+  // absent in PFO1 and never inferred from the event ID or category field.
+  // Owned rows keep repeated VM/state values small on the Windows stack.
+  std::optional<std::vector<std::array<int32_t, 30>>> ResultCategories;
 };
 struct ProfileStatAnimation {
   bool Started = false;
@@ -68,6 +74,39 @@ void BeginProfileSelection(ProfileSelectionState& selection,
 bool UpdateProfileSelection(ProfileSelectionState& selection,
                             const ProfileEnvironment& environment,
                             const ProfileSelectionInput& input, uint64_t now);
+std::u16string BuildProfileResultText(const ProfileOwnerState& owner,
+                                      const ProfileEnvironment& environment,
+                                      int32_t characterId, size_t ordinal,
+                                      const ProfileEvent& event);
+struct ProfileResultInput {
+  bool TextRevealed = false, Accept = false;
+};
+struct ProfileResultState {
+  bool Started = false, Visible = false, ResponseMode = false;
+  bool SlidesActive = false, CompletionActive = false, TextAlphaActive = false;
+  bool TextStarted = false, RevealRequested = false;
+  int32_t Phase = 10;
+  std::optional<int32_t> PendingPhase;
+  int32_t CharacterId = 0;
+  size_t Ordinal = 0;
+  ProfileEvent Event;
+  std::u16string Text;
+  ScriptLinearTween Primary, HorizontalOffset, HorizontalAlpha, VerticalOffset,
+      VerticalAlpha, EntryCompletion, TextAlpha, ResultProgress,
+      SecondaryProgress, Fade;
+  ProfileStatAnimation Stats;
+  std::vector<int32_t>
+      UiSounds;  // Per-update requests to the UI sound service.
+};
+void BeginProfileResult(ProfileResultState& result, const ProfileScene& scene,
+                        size_t ordinal, uint32_t selector);
+// Phases10..14 and18/19, stopping at deferred response-resource entry15.
+// Text reveal is a real presentation gate; this never publishes final banks
+// or pretends response playback/file replacement has completed.
+bool UpdateProfileResult(SemanticState& state, ProfileResultState& result,
+                         const ProfileEnvironment& environment,
+                         const ModeResultEnvironment& shared,
+                         const ProfileResultInput& input, uint64_t now);
 size_t InitialProfileOrdinal(const ProfileOwnerState& owner,
                              const ProfileScene& scene);
 void StepProfileSelector(uint32_t& selector, bool forward);

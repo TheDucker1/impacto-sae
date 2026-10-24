@@ -118,7 +118,17 @@ class EnvironmentCursor {
     const auto count = Count(stride);
     Skip(size_t(count) * stride);
   }
-  void String() { Counted(2); }
+  std::u16string String() {
+    const auto count = Count(2);
+    const auto at = position_;
+    Skip(size_t(count) * 2);
+    std::u16string result;
+    result.reserve(count);
+    for (size_t i = 0; i < count; ++i)
+      result.push_back(char16_t(uint16_t(bytes_[at + i * 2]) |
+                                uint16_t(bytes_[at + i * 2 + 1]) << 8));
+    return result;
+  }
   size_t Position() const { return position_; }
 
  private:
@@ -157,9 +167,10 @@ ProfileEnvironment ProfileEnvironment::Decode(std::span<const uint8_t> bytes) {
   cursor.Skip(4 + 36);
   for (size_t group = 0; group < 3; ++group) {
     const auto strings = cursor.Count(4);
-    for (uint32_t i = 0; i < strings; ++i) cursor.String();
+    for (uint32_t i = 0; i < strings; ++i)
+      result.ResultLabels[group].push_back(cursor.String());
   }
-  cursor.String();
+  result.ResultFormat = cursor.String();
   cursor.Skip(36);
   cursor.Counted(8);
   result.SecondaryProgress = cursor.Signed();
@@ -170,6 +181,51 @@ ProfileEnvironment ProfileEnvironment::Decode(std::span<const uint8_t> bytes) {
        {result.IntroFade, result.Carousel, result.ResultProgress,
         result.SecondaryProgress, result.StatChange})
     if (duration < 0) throw FormatError("negative profile transition duration");
+  return result;
+}
+std::u16string BuildProfileResultText(const ProfileOwnerState& owner,
+                                      const ProfileEnvironment& environment,
+                                      int32_t characterId, size_t ordinal,
+                                      const ProfileEvent& event) {
+  if (!owner.ResultCategories)
+    throw UnsupportedCommand("initial profile result categories are missing");
+  if (owner.ResultCategories->size() != 4)
+    throw FormatError("profile result owner table must contain four rows");
+  if (ordinal >= 4 || event.Values[0] < 0 || event.Values[0] >= 30)
+    throw FormatError("profile result event outside owner table");
+  const auto category =
+      (*owner.ResultCategories)[ordinal][size_t(event.Values[0])];
+  if (characterId < 0 ||
+      size_t(characterId) >= environment.ResultLabels[0].size() ||
+      category < 0 || size_t(category) >= environment.ResultLabels[1].size() ||
+      size_t(category) >= environment.ResultLabels[2].size())
+    throw FormatError("profile result label outside environment table");
+  const auto cString = [](const std::u16string& text) {
+    return std::u16string_view(text).substr(0, text.find(u'\0'));
+  };
+  const std::array<std::u16string_view, 3> arguments{
+      cString(environment.ResultLabels[0][size_t(characterId)]),
+      cString(environment.ResultLabels[2][size_t(category)]),
+      cString(environment.ResultLabels[1][size_t(category)])};
+  const auto format = cString(environment.ResultFormat);
+  std::u16string result;
+  size_t argument = 0;
+  for (size_t i = 0; i < format.size();) {
+    if (format[i] != u'%')
+      result.push_back(format[i++]);
+    else if (format.substr(i, 2) == u"%%") {
+      result.push_back(u'%');
+      i += 2;
+    } else if (format.substr(i, 3) == u"%ls" && argument < arguments.size()) {
+      result.append(arguments[argument++]);
+      i += 3;
+    } else
+      throw UnsupportedCommand("unsupported profile result format directive");
+    if (result.size() >= 128)
+      throw FormatError("profile result text exceeds native128-unit buffer");
+  }
+  if (argument != arguments.size())
+    throw FormatError("profile result format does not consume three labels");
   return result;
 }
 ProfileScene DecodeProfileScene(std::span<const uint8_t> bytes) {
@@ -370,5 +426,134 @@ void PublishProfileStats(SemanticState& state, int32_t ordinal) {
     state.Bank0[30 + i] =
         std::bit_cast<int16_t>(uint16_t(state.ProfileOwner.Stats[i]));
   state.ProfileOwner.CachedOrdinal = ordinal;
+}
+void BeginProfileResult(ProfileResultState& result, const ProfileScene& scene,
+                        size_t ordinal, uint32_t selector) {
+  if (scene.empty() || scene.size() > 4 || ordinal >= 4)
+    throw FormatError("profile result outside mode character capacity");
+  ProfileResultState next;
+  next.Event = SelectedProfileEvent(scene, ordinal, selector);
+  next.CharacterId = scene[ordinal].Id;
+  CharacterStatIndex(next.CharacterId);
+  next.Ordinal = ordinal;
+  next.Started = true;
+  result = std::move(next);
+}
+bool UpdateProfileResult(SemanticState& state, ProfileResultState& result,
+                         const ProfileEnvironment& environment,
+                         const ModeResultEnvironment& shared,
+                         const ProfileResultInput& input, uint64_t now) {
+  if (!result.Started)
+    throw UnsupportedCommand("profile result has no confirmed selection");
+  CheckOwner(state.ProfileOwner);
+  result.UiSounds.clear();
+  result.RevealRequested = false;
+  if (result.PendingPhase) {
+    result.Phase = *result.PendingPhase;
+    result.PendingPhase.reset();
+  }
+  const auto setup = [now](ScriptLinearTween& tween, int32_t from, int32_t to,
+                           int32_t duration) {
+    tween.Start(from, to, duration, now);
+  };
+  const auto activate = [now](ScriptLinearTween& tween) {
+    tween.StartUnsigned(tween.From, tween.To, tween.Duration, now);
+  };
+  if (result.Phase == 10) {
+    result.Primary.Start(0, 100, shared.Progress, now);
+    setup(result.HorizontalOffset, shared.HorizontalStart, 0,
+          shared.HorizontalSlide);
+    setup(result.HorizontalAlpha, 0, 255, shared.HorizontalOpacity);
+    setup(result.VerticalOffset, shared.VerticalStart, 0, shared.VerticalSlide);
+    setup(result.VerticalAlpha, 0, 255, shared.VerticalOpacity);
+    setup(result.EntryCompletion, 0, 100, shared.SecondaryProgress);
+    setup(result.TextAlpha, 0, 255, shared.TextOpacity);
+    result.Visible = true;
+    result.Phase = 11;
+  }
+  if (result.Phase == 11) {
+    result.Primary.Tick(now);
+    if (result.Primary.Finished()) {
+      if (!result.SlidesActive) {
+        activate(result.HorizontalOffset);
+        activate(result.HorizontalAlpha);
+        activate(result.VerticalOffset);
+        activate(result.VerticalAlpha);
+        result.SlidesActive = true;
+      }
+      result.HorizontalOffset.Tick(now);
+      result.HorizontalAlpha.Tick(now);
+      result.VerticalOffset.Tick(now);
+      result.VerticalAlpha.Tick(now);
+      if (result.HorizontalAlpha.Finished() &&
+          result.VerticalAlpha.Finished()) {
+        if (!result.CompletionActive) {
+          activate(result.EntryCompletion);
+          result.CompletionActive = true;
+        }
+        result.EntryCompletion.Tick(now);
+        if (result.EntryCompletion.Finished()) {
+          result.Text = BuildProfileResultText(state.ProfileOwner, environment,
+                                               result.CharacterId,
+                                               result.Ordinal, result.Event);
+          result.TextStarted = true;
+          result.ResultProgress.Start(0, 100, environment.ResultProgress, now);
+          result.SecondaryProgress.Start(0, 100, environment.SecondaryProgress,
+                                         now);
+          StartProfileStatChanges(state.ProfileOwner, result.Stats,
+                                  result.CharacterId, result.Event,
+                                  environment.StatChange, now);
+          result.Phase = 12;
+        }
+      }
+    }
+  }
+  if (result.Phase == 12) {
+    result.ResultProgress.Tick(now);
+    result.SecondaryProgress.Tick(now);
+    TickProfileStatChanges(state.ProfileOwner, result.Stats, now);
+    if (!input.TextRevealed)
+      result.RevealRequested = input.Accept;
+    else {
+      if (!result.TextAlphaActive) {
+        const auto category = result.Event.Values[1];
+        if (category >= 0 && category <= 2)
+          result.UiSounds.push_back(
+              std::array<int32_t, 3>{13, 12, 15}[size_t(category)]);
+        activate(result.TextAlpha);
+        result.TextAlphaActive = true;
+      }
+      result.TextAlpha.Tick(now);
+      if (result.TextAlpha.Finished() && input.Accept) {
+        result.UiSounds.push_back(3);
+        RequestProfileCategoryTrophy(state, result.Event);
+        result.Phase = 13;
+      }
+    }
+  }
+  if (result.Phase == 13) {
+    FinishProfileStatChanges(state.ProfileOwner, result.Stats, now);
+    result.Phase = 14;
+  }
+  if (result.Phase == 14) {
+    RequestProfileStatTrophies(state, result.CharacterId);
+    result.ResponseMode = true;
+    result.Phase = 18;
+  }
+  if (result.Phase == 18) {
+    result.Fade.Start(0, 255, 1500, now);
+    result.Phase = 19;
+  }
+  if (result.Phase == 19) {
+    result.Fade.Tick(now);
+    if (result.Fade.Finished()) {
+      result.Visible = false;
+      result.PendingPhase = 15;
+    }
+  }
+  if (result.Phase != 11 && result.Phase != 12 && result.Phase != 15 &&
+      result.Phase != 19)
+    throw FormatError("invalid profile result phase");
+  return result.Phase == 15;
 }
 }  // namespace Impacto::Saekano
