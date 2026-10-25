@@ -18,7 +18,8 @@ enum class ProfileTextureSection : uint32_t {
   // Prepared resource.dat/root6 pose textures; Character stores pose ID.
   CharacterPose = 0x102,
   ResponseBackground =
-      0x103  // Prepared scene background; Character is image ID.
+      0x103,          // Prepared scene background; Character is image ID.
+  SceneImage = 0x104  // Character stores ImageSection; Entry is original ID.
 };
 struct ProfileTextureKey {
   ProfileTextureSection Section;

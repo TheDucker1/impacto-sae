@@ -9,6 +9,9 @@
 
 namespace Impacto::Saekano {
 struct SemanticState;
+// Explicit fresh-owner operation, before loading persistent/global progress.
+// Existing or partial audio inputs reject; VM replacement never calls this.
+void InitializeFreshAudioOwner(SemanticState& state);
 
 struct AudioEnvironment {
   std::array<uint8_t, 3> Flags{};

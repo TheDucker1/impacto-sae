@@ -3,6 +3,7 @@
 #include "gauge.h"
 #include "image.h"
 #include "imagesave.h"
+#include "uisprite.h"
 
 namespace Impacto::Saekano {
 struct SemanticState;
@@ -21,6 +22,11 @@ SceneImageState RestoreSceneImages(const NativeImageSavePrefix& saved,
 // Fresh constructor/reset plus owner binding: inactive slots, zero counters,
 // extents from the actual BG/CG/free resource pools. Never apply to restores.
 SceneImageState FreshSceneImages(SceneImageDriver& images);
+// Native8008b4d4 float-slot draw primitive. Caller owns native scheduling,
+// resource readiness, bucket ordering and the actual runtime quake sample.
+UiSpriteBlit BuildFloatSceneImage(const NativeSavedFloatImageSlot& slot,
+                                  uint32_t category,
+                                  std::array<int32_t, 2> quake);
 void PollSceneImages(SceneImageState& state, SceneImageDriver& images);
 struct FillRectCommand {
   uint32_t Slot = 0, Color = 0;

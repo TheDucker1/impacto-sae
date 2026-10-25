@@ -1044,6 +1044,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
     if (owningFlow) {
       const auto root = resourceDat.parent_path();
       flowOwner = std::make_unique<SemanticState>();
+      InitializeFreshAudioOwner(*flowOwner);
       InitializeFreshProfileEntry(
           *flowOwner, ProfileInitialStats::Decode(read(environmentDat)),
           catalog);

@@ -5,6 +5,29 @@
 #include <bit>
 
 namespace Impacto::Saekano {
+UiSpriteBlit BuildFloatSceneImage(const NativeSavedFloatImageSlot& slot,
+                                  uint32_t category,
+                                  std::array<int32_t, 2> quake) {
+  if (category > 1 || slot.Texture < 0)
+    throw FormatError(
+        "float scene image requires a BG/CG category and resident texture ID");
+  const float scale = float(slot.Parameters[1]) / 100.0f;
+  const auto width = int32_t(scale * 960.0f), height = int32_t(scale * 544.0f);
+  const auto add = [](int32_t a, int32_t b) {
+    return std::bit_cast<int32_t>(uint32_t(a) + uint32_t(b));
+  };
+  UiSpriteBlit result;
+  result.Texture = {ProfileTextureSection::SceneImage,
+                    int32_t(ImageCategorySection(category)),
+                    uint32_t(slot.Texture)};
+  result.Destination = {add(add(quake[0], -width / 2), 480),
+                        add(add(quake[1], -height / 2), 272), width, height};
+  result.Source = {std::bit_cast<int32_t>(slot.Words[0]),
+                   std::bit_cast<int32_t>(slot.Words[1]),
+                   scale > 0 ? 960 : -960, scale > 0 ? 544 : -544};
+  result.Color = {255, 255, 255, slot.Parameters[0]};
+  return result;
+}
 ImageSection ImageCategorySection(uint32_t category) {
   if (category == 0) return ImageSection::Background;
   if (category == 1) return ImageSection::Event;

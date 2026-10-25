@@ -9,6 +9,16 @@
 #include <limits>
 
 namespace Impacto::Saekano {
+void InitializeFreshAudioOwner(SemanticState& state) {
+  if (state.MusicHistory.ExtentKnown || !state.MusicHistory.Entries.empty() ||
+      state.MusicHistory.Default != 0 || state.BgmMasterVolume ||
+      state.SeMasterVolume)
+    throw FormatError(
+        "fresh audio initialization would overwrite existing audio state");
+  state.MusicHistory = {true, {}, 0};
+  state.BgmMasterVolume = 80;
+  state.SeMasterVolume = 80;
+}
 bool MusicHistoryState::AllKnown() const {
   return ExtentKnown &&
          std::all_of(Entries.begin(), Entries.end(), [](const auto& entry) {
