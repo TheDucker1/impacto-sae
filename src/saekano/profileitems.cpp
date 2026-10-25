@@ -7,6 +7,25 @@
 #include <limits>
 
 namespace Impacto::Saekano {
+ProfileOwnerState MakeFreshProfileOwner(
+    const ProfileInitialStats& stats,
+    std::span<const ProfileItemCharacterTable> catalog) {
+  if (catalog.size() != 4)
+    throw FormatError("fresh profile owner needs four catalog tables");
+  ProfileOwnerState owner;
+  owner.Stats = stats.Values;
+  owner.CachedOrdinal = 0;  // Native owner constructor2159c, not script Bank0.
+  owner.ResultCategories.emplace(4);
+  for (size_t i = 0; i < 4; ++i) {
+    if (catalog[i].Rows.size() != 30)
+      throw FormatError(
+          "fresh profile owner needs all thirty authored numeric rows");
+    for (size_t j = 0; j < 30; ++j)
+      (*owner.ResultCategories)[i][j] = catalog[i].Rows[j].Category;
+  }
+  owner.Known = true;
+  return owner;
+}
 namespace {
 class WideTokens {
  public:

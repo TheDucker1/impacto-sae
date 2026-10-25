@@ -991,9 +991,12 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
     ProfileOwnerState previewOwner;
     const std::array<int32_t,3> previewStatChanges{};
     if (itemFrames) {
-      // Explicit single-character diagnostic boundary. These preview inputs
-      // do not initialize a new game or provide its persistent owner state.
-      previewOwner.Known = true;
+      if (itemScene)
+        previewOwner = MakeFreshProfileOwner(
+            ProfileInitialStats::Decode(read(environmentDat)), catalog);
+      else
+        // The frame-only viewer has no profile HUD/result consumers.
+        previewOwner.Known = true;
       BeginProfileSelection(selection, previewOwner,
                             itemScene ? authoredScene : ProfileScene(1));
       if (capture) {
@@ -1304,7 +1307,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
             report << previewOwner.Stats[i];
           }
           report << "],\"hud_stat_changes\":[0,0,0],\"hud_owner_source\":"
-                    "\"diagnostic_zero_stats\",\"hud_draws\":[";
+                    "\"fresh_constructor_profile\",\"hud_draws\":[";
           WriteUiBlit(report, hudDraws->BeforePortrait);
           for (const auto& blit : hudDraws->AfterPortrait) {
             report << ',';

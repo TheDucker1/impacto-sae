@@ -56,6 +56,12 @@ ProfileMouthAnimation DecodeProfileMouth(std::span<const uint8_t> bytes);
 // multiplication/division by100. Coefficient is known service state, never
 // reconstructed from a captured saved setting alone. Fresh channels use1.
 float ProfileVoiceGain(uint8_t option, float channelCoefficient);
+struct ProfileInitialStats {
+  std::array<int32_t, 12> Values{};
+  size_t PrefixBytes = 0;
+  // env_otaku_mode's final counted rows, consumed by owner constructor21408.
+  static ProfileInitialStats Decode(std::span<const uint8_t> bytes);
+};
 struct ProfileOwnerState {
   bool Known = false;
   int32_t CachedOrdinal = 0;  // S60108, independent of script Bank0.

@@ -232,6 +232,27 @@ ProfileEnvironment ProfileEnvironment::Decode(std::span<const uint8_t> bytes) {
     if (duration < 0) throw FormatError("negative profile transition duration");
   return result;
 }
+ProfileInitialStats ProfileInitialStats::Decode(
+    std::span<const uint8_t> bytes) {
+  const auto environment = ProfileEnvironment::Decode(bytes);
+  EnvironmentCursor cursor(bytes);
+  cursor.Skip(environment.PrefixBytes + 13 * 4);
+  cursor.String();  // Authored confirmation prompt; length relocates the tail.
+  cursor.Skip(2 * 16 + 2 * 36 + 2 * 4);
+  const auto rows = cursor.Count(4);
+  if (rows > 4)
+    throw FormatError("profile initial stats exceed four characters");
+  ProfileInitialStats result;
+  for (uint32_t i = 0; i < rows; ++i) {
+    const auto count = cursor.Count(4);
+    if (count > 3)
+      throw FormatError("profile initial stats exceed three fields");
+    for (uint32_t j = 0; j < count; ++j)
+      result.Values[i * 3 + j] = cursor.Signed();
+  }
+  result.PrefixBytes = cursor.Position();
+  return result;
+}
 std::u16string BuildProfileResultText(const ProfileOwnerState& owner,
                                       const ProfileEnvironment& environment,
                                       int32_t characterId, size_t ordinal,

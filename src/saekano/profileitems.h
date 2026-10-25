@@ -18,6 +18,13 @@ struct ProfileItemCharacterTable {
 };
 // first.dat section3 contains UTF16 item tables, not resource.dat scene CSVs.
 std::vector<ProfileItemCharacterTable> LoadProfileItemCatalog(Bytes firstDat);
+struct ProfileOwnerState;
+struct ProfileInitialStats;
+// One fresh owner only: never apply on mode entry, restore, or file replacement.
+// All numeric slots must have authored rows before a complete owner is known.
+ProfileOwnerState MakeFreshProfileOwner(
+    const ProfileInitialStats& stats,
+    std::span<const ProfileItemCharacterTable> catalog);
 struct ProfileDescriptionFormat {
   std::u16string Separator;
   size_t PrefixBytes = 0;
