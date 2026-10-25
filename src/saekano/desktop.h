@@ -3,6 +3,8 @@
 #include <filesystem>
 
 namespace Impacto::Saekano {
+int RunFontSample(const std::filesystem::path& usrdir,
+                   const std::filesystem::path& captureDirectory = {});
 // Diagnostic entry point for the loader/SDK rendering path intended for the
 // game backend. Capture mode is hidden and terminates after all models.
 int RunModelViewer(const std::filesystem::path& resourceDat,

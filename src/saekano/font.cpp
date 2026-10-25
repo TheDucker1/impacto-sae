@@ -1,6 +1,7 @@
 #include "font.h"
 
 #include <bit>
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -24,6 +25,13 @@ int32_t Scaled(uint8_t value, float scale) {
   return std::bit_cast<int32_t>(converted);
 }
 }  // namespace
+GameUtilityFont GameUtilityFont::Decode(std::span<const uint8_t> bytes) {
+  if (bytes.size() < 7) throw FormatError("truncated utility font prefix");
+  GameUtilityFont result;
+  std::copy_n(bytes.begin(), 3, result.Flags.begin());
+  result.Size = std::bit_cast<int32_t>(Word(bytes, 3));
+  return result;
+}
 GsfFont GsfFont::Decode(std::span<const uint8_t> bytes) {
   if (bytes.size() > 32 * 1024 * 1024 || Word(bytes, 0) != 0x544e4f46 ||
       Word(bytes, 4) != 0 || Word(bytes, 12) != bytes.size())

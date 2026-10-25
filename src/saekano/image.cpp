@@ -62,8 +62,8 @@ ImagePixels DecodeSceneImage(std::span<const uint8_t> bytes) {
   for (size_t i = 0; i < count; ++i) {
     const auto color = TexLoad::PaletteColor(
         palette,
-        bytes[size_t(pixelsBegin) + (i / result.Width) * rowStride +
-              i % result.Width],
+        bytes[size_t(uint64_t(pixelsBegin) + (i / result.Width) * rowStride +
+                     i % result.Width)],
         hasAlpha);
     size_t destination = i;
     if (swizzled) {

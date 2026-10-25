@@ -6,6 +6,8 @@
 #include "uisprite.h"
 #include "profilewave.h"
 #include "profile.h"
+#include "profileitems.h"
+#include "fontface.h"
 #include "../io/memorystream.h"
 #include "../texture/texture.h"
 
@@ -13,6 +15,7 @@
 #include <glad/glad.h>
 
 #include <algorithm>
+#include <bit>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -454,6 +457,81 @@ void main(){
   }
   ~UiBlitRenderer() { Release(); }
 };
+struct FontTextures {
+  std::map<std::pair<bool, uint32_t>, UiBlitRenderer::BoundTexture> Textures;
+  const UiBlitRenderer::BoundTexture& Get(bool bitmap, uint32_t id,
+                                          const ImagePixels& pixels) {
+    const auto key = std::pair{bitmap, id};
+    if (const auto found = Textures.find(key); found != Textures.end())
+      return found->second;
+    GLuint handle = 0;
+    glGenTextures(1, &handle);
+    const auto inserted = Textures.emplace(
+        key, UiBlitRenderer::BoundTexture{handle, pixels.Width, pixels.Height});
+    glBindTexture(GL_TEXTURE_2D, handle);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, pixels.Width, pixels.Height, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, pixels.Rgba.data());
+    GlCheck("font texture upload");
+    return inserted.first->second;
+  }
+  void DrawString(UiBlitRenderer& renderer, PcFontFace& font,
+                  std::u16string_view text, int32_t x, int32_t y, uint32_t size,
+                  std::array<uint8_t, 4> color,
+                  std::ostream* report = nullptr) {
+    if (size > 1024) throw FormatError("PC text size outside display budget");
+    for (const auto character : text) {
+      UiSpriteBlit blit;
+      blit.Color = color;
+      const auto cached = ResolveGsfGlyph(font.Cached(), character, x, y, size);
+      const bool bitmap = cached.has_value();
+      uint32_t id = 0;
+      const ImagePixels* pixels = nullptr;
+      if (cached) {
+        id = cached->Atlas;
+        pixels = &font.Atlas(id);
+        blit.Destination = cached->Destination;
+        blit.Source = cached->Source;
+      } else if ((pixels = font.Glyph(character))) {
+        id = uint16_t(character);
+        blit.Destination = {x, y, int32_t(PvfGlyphAdvance(character, size)),
+                            int32_t(size)};
+        blit.Source = {0, 0, int32_t(pixels->Width), int32_t(pixels->Height)};
+      }
+      if (pixels) {
+        renderer.DrawQuad(blit, Get(bitmap, id, *pixels), false);
+        if (report) {
+          *report << "{\"character\":" << uint16_t(character)
+                  << ",\"bitmap\":" << (bitmap ? "true" : "false")
+                  << ",\"texture\":" << id << ",\"destination\":[";
+          for (size_t i = 0; i < 4; ++i) {
+            if (i) *report << ',';
+            *report << blit.Destination[i];
+          }
+          *report << "],\"source\":[";
+          for (size_t i = 0; i < 4; ++i) {
+            if (i) *report << ',';
+            *report << blit.Source[i];
+          }
+          *report << "]}\n";
+        }
+      }
+      x = std::bit_cast<int32_t>(uint32_t(x) +
+                                 PvfGlyphAdvance(character, size));
+    }
+    GlCheck("font text drawing");
+  }
+  ~FontTextures() {
+    for (const auto& [key, texture] : Textures) {
+      (void)key;
+      glDeleteTextures(1, &texture.Handle);
+    }
+  }
+};
 void Capture(const std::filesystem::path& file, int width, int height) {
   std::vector<uint8_t> pixels(size_t(width) * size_t(height) * 4);
   glPixelStorei(GL_PACK_ALIGNMENT, 4);
@@ -478,6 +556,102 @@ void Capture(const std::filesystem::path& file, int width, int height) {
   SdlCheck(SDL_SaveBMP(surface.get(), file.string().c_str()), "frame capture");
 }
 }  // namespace
+
+int RunFontSample(const std::filesystem::path& usrdir,
+                  const std::filesystem::path& captureDirectory) {
+  try {
+    const bool capture = !captureDirectory.empty();
+    if (capture) {
+      const auto output = std::filesystem::weakly_canonical(captureDirectory);
+      const auto input = std::filesystem::weakly_canonical(usrdir);
+      for (auto parent = output; !parent.empty();
+           parent = parent.parent_path()) {
+        if (parent == input || parent == input.parent_path())
+          throw FormatError("font capture overlaps original data");
+        if (parent == parent.parent_path()) break;
+      }
+      if (std::filesystem::exists(output))
+        throw FormatError("choose a fresh font capture directory");
+      std::filesystem::create_directories(output);
+    }
+    const auto read = [](const std::filesystem::path& path) {
+      std::ifstream file(path, std::ios::binary);
+      if (!file) throw FormatError("cannot open font sample input");
+      Bytes bytes{std::istreambuf_iterator<char>(file), {}};
+      if (file.bad()) throw FormatError("cannot read font sample input");
+      return bytes;
+    };
+    PcFontFace font(read(usrdir / "DFHSR4.TTC"),
+                    GsfFont::Decode(read(usrdir / "Font.gsf")));
+    const auto utility =
+        GameUtilityFont::Decode(read(usrdir / "env/env_game_utility.dat"));
+    if (utility.Size < 0 || utility.Size > 1024)
+      throw FormatError("font sample UI size outside display budget");
+    const auto catalog = LoadProfileItemCatalog(read(usrdir / "first.dat"));
+    if (catalog.empty() || catalog.front().Rows.size() < 10)
+      throw FormatError("font sample requires authored item rows");
+    ViewerWindow window(capture);
+    SdlCheck(SDL_SetWindowTitle(window.Window, "Saekano authored font sample"),
+             "font window title");
+    SdlCheck(SDL_SetWindowSize(window.Window, 960, 544), "font window size");
+    UiBlitRenderer renderer;
+    FontTextures textures;
+    std::ofstream glyphReport;
+    if (capture) {
+      glyphReport.open(captureDirectory / "glyphs.jsonl");
+      if (!glyphReport) throw FormatError("cannot create font glyph report");
+      std::ofstream metadata(captureDirectory / "font.json");
+      metadata << "{\"face\":0,\"family\":\"" << font.Family()
+               << "\",\"nominal\":" << font.NominalSize()
+               << ",\"point_size\":" << font.PointSize()
+               << ",\"point_size_bits\":"
+               << std::bit_cast<uint32_t>(font.PointSize())
+               << ",\"baseline\":" << font.Baseline()
+               << ",\"ui_size\":" << utility.Size
+               << ",\"pvf_pixel_parity\":false,\"full_profile_ui\":false}\n";
+      metadata.close();
+      if (!metadata) throw FormatError("cannot save font metadata report");
+    }
+    bool quit = false;
+    while (!quit) {
+      SDL_Event event;
+      while (SDL_PollEvent(&event))
+        if (event.type == SDL_EVENT_QUIT ||
+            (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE))
+          quit = true;
+      if (quit) break;
+      int width = 0, height = 0;
+      SdlCheck(SDL_GetWindowSizeInPixels(window.Window, &width, &height),
+               "font frame size");
+      renderer.Draw({}, width, height);
+      auto report = capture ? &glyphReport : nullptr;
+      std::u16string symbols;
+      for (const auto& [character, glyph] : font.Cached().Glyphs) {
+        (void)glyph;
+        symbols.push_back(character);
+      }
+      textures.DrawString(renderer, font, symbols, 36, 28, 36,
+                          {255, 255, 255, 255}, report);
+      for (size_t i = 0; i < 10; ++i)
+        textures.DrawString(renderer, font, catalog.front().Rows[i].Name, 36,
+                            90 + int32_t(i) * 38, uint32_t(utility.Size),
+                            {240, 240, 240, 255}, report);
+      if (capture) {
+        Capture(captureDirectory / "0.bmp", width, height);
+        glyphReport.close();
+        if (!glyphReport) throw FormatError("cannot save font glyph report");
+        quit = true;
+      }
+      SdlCheck(SDL_GL_SwapWindow(window.Window), "font frame swap");
+      if (!capture) SDL_Delay(16);
+    }
+    return 0;
+  } catch (const std::exception& error) {
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Saekano font: %s",
+                 error.what());
+    return 1;
+  }
+}
 
 int RunModelViewer(const std::filesystem::path& resourceDat,
                    const std::filesystem::path& captureDirectory) {

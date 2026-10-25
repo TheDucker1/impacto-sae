@@ -3,6 +3,12 @@
 #include "image.h"
 
 namespace Impacto::Saekano {
+struct GameUtilityFont {
+  std::array<uint8_t, 3> Flags{};
+  int32_t Size = 0;
+  // Proven prefix of env_game_utility; later fields belong to other services.
+  static GameUtilityFont Decode(std::span<const uint8_t> bytes);
+};
 struct GsfGlyph {
   uint16_t Atlas = 0, X = 0, Y = 0;
   uint8_t Width = 0, Height = 0;
