@@ -271,4 +271,20 @@ ProfileDescriptionDraws BuildProfileDescription(
                        {tint, tint, tint, 255}};
   return result;
 }
+std::array<UiRenderCommand, 2> BuildProfilePortrait(
+    const ProfilePortraitEnvironment& environment,
+    std::span<const ProfileCharacter> scene, size_t ordinal) {
+  if (scene.empty() || scene.size() > 4 || ordinal >= scene.size())
+    throw FormatError("profile portrait selection outside loaded scene");
+  const auto id = scene[ordinal].Id;
+  if (id < 0) throw FormatError("negative profile portrait character ID");
+  std::array<UiRenderCommand, 2> result;
+  result[0].Kind = UiRenderKind::Sprite;
+  result[0].Sprite = ResolveUiSprite(
+      {ProfileTextureSection::Portraits, -1, uint32_t(id)}, environment.Sprite);
+  result[1].Kind = UiRenderKind::Rectangle;
+  result[1].Rectangle = environment.Area;
+  result[1].Color = {0, 0, 0, 0};
+  return result;
+}
 }  // namespace Impacto::Saekano

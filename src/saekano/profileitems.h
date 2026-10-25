@@ -28,6 +28,11 @@ std::array<std::u16string, 3> FormatProfileItemDescription(
     std::u16string_view text, std::u16string_view separator, uint32_t columns);
 struct ProfileEnvironment;
 struct ProfileCharacter;
+// Native50834 selects by ordinal; the factory binds the actual Character.Id
+// into the portrait texture pool. Row1 is a transparent rectangle, not motion.
+std::array<UiRenderCommand, 2> BuildProfilePortrait(
+    const ProfilePortraitEnvironment& environment,
+    std::span<const ProfileCharacter> scene, size_t ordinal);
 struct ProfileItemSlotDraw {
   int32_t OwnerRow = 0, Category = 0;
   UiSpriteBlit Icon;

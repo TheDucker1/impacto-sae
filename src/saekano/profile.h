@@ -22,6 +22,7 @@ struct ProfileEnvironment {
   float ArrowTravel = 0;
   int32_t ArrowDuration = 0;
   ProfileArrowEnvironment Arrows;
+  ProfilePortraitEnvironment Portrait;
   size_t PrefixBytes = 0;
   std::array<std::vector<std::u16string>, 3> ResultLabels;
   std::u16string ResultFormat;

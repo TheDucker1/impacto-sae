@@ -63,6 +63,10 @@ struct ProfileItemContentEnvironment {
 struct ProfileArrowEnvironment {
   std::array<UiSpriteDefinition, 2> Upper, Lower;
 };
+struct ProfilePortraitEnvironment {
+  UiSpriteDefinition Sprite;
+  std::array<int32_t, 4> Area{};
+};
 // Native800bf450..5b4: signed starts/destination ends, unsigned source ends.
 std::array<std::array<float, 4>, 4> ResolveUiQuad(
     const UiSpriteBlit& blit, uint32_t textureWidth, uint32_t textureHeight);

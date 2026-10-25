@@ -928,6 +928,14 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
         renderer.Upload(
             key, DecodeSceneImage(resources.LoadProfileTexture(key).Data));
       }
+      for (const auto& character : authoredScene) {
+        if (character.Id < 0) throw FormatError("negative profile portrait ID");
+        const ProfileTextureKey key{ProfileTextureSection::Portraits, -1,
+                                    uint32_t(character.Id)};
+        if (!renderer.Textures.contains(key))
+          renderer.Upload(
+              key, DecodeSceneImage(resources.LoadProfileTexture(key).Data));
+      }
     }
     ProfileWaveAnimation wave;
     wave.Begin(environment.WavePeriod, 0);
@@ -1006,6 +1014,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
       std::optional<ProfileItemContents> itemContents;
       std::optional<ProfileDescriptionDraws> description;
       std::vector<UiSpriteBlit> arrowDraws;
+      std::optional<std::array<UiRenderCommand, 2>> portraitDraws;
       if (itemScene) {
         std::array<std::array<int32_t, 2>, 8> offsets;
         for (size_t i = 0; i < 8; ++i)
@@ -1034,6 +1043,15 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
                                        arrowMotion);
         for (const auto& arrow : arrowDraws)
           renderer.DrawQuad(arrow, renderer.Textures.at(arrow.Texture), false);
+        portraitDraws = BuildProfilePortrait(chromeEnvironment->Portrait,
+                                             authoredScene, ordinal);
+        renderer.DrawQuad(
+            (*portraitDraws)[0].Sprite,
+            renderer.Textures.at((*portraitDraws)[0].Sprite.Texture), false);
+        UiSpriteBlit portraitArea;
+        portraitArea.Destination = (*portraitDraws)[1].Rectangle;
+        portraitArea.Color = (*portraitDraws)[1].Color;
+        renderer.DrawQuad(portraitArea, {0, 1, 1}, true);
         description = BuildProfileDescription(*chromeEnvironment, phase,
             authoredScene.at(ordinal), selection.Selectors.at(ordinal),
             catalog.at(ordinal).Rows, utility->Size, descriptionFormat->Separator);
@@ -1128,6 +1146,13 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
             if (i) report << ',';
             WriteUiBlit(report, arrowDraws[i]);
           }
+          report << ']';
+        }
+        if (portraitDraws) {
+          report << ",\"portrait_draws\":[";
+          WriteUiCommand(report, (*portraitDraws)[0]);
+          report << ',';
+          WriteUiCommand(report, (*portraitDraws)[1]);
           report << ']';
         }
         report << "}\n";
