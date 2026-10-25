@@ -178,8 +178,11 @@ ProfileEnvironment ProfileEnvironment::Decode(std::span<const uint8_t> bytes) {
   result.ItemContents.LabelScale = std::bit_cast<float>(cursor.Word());  // eaac
   cursor.Skip(3 * 4);
   result.Carousel = cursor.Signed();
-  cursor.Counted(8);
-  cursor.Skip(2 * 4);
+  const auto descriptionPositions = cursor.Count(8);
+  for (uint32_t i = 0; i < descriptionPositions; ++i)
+    result.DescriptionPositions.push_back(cursor.Vector());  // eac0
+  result.DescriptionScale = std::bit_cast<float>(cursor.Word());  // ead0
+  result.DescriptionColumns = cursor.Word();  // ead4
   result.Chrome.Footer = cursor.Sprite();  // ead8
   cursor.Skip(36);
   result.ResultProgress = cursor.Signed();

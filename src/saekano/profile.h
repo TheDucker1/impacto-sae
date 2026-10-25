@@ -16,6 +16,9 @@ struct ProfileEnvironment {
   ProfileMenuChromeEnvironment Chrome;
   ProfileItemFrameEnvironment ItemFrames;
   ProfileItemContentEnvironment ItemContents;
+  std::vector<std::array<int32_t, 2>> DescriptionPositions;
+  float DescriptionScale = 0;
+  uint32_t DescriptionColumns = 0;
   size_t PrefixBytes = 0;
   std::array<std::vector<std::u16string>, 3> ResultLabels;
   std::u16string ResultFormat;

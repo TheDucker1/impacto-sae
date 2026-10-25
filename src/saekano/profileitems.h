@@ -18,6 +18,14 @@ struct ProfileItemCharacterTable {
 };
 // first.dat section3 contains UTF16 item tables, not resource.dat scene CSVs.
 std::vector<ProfileItemCharacterTable> LoadProfileItemCatalog(Bytes firstDat);
+struct ProfileDescriptionFormat {
+  std::u16string Separator;
+  size_t PrefixBytes = 0;
+  // Proven prefix through global8025ca10, retaining only the needed separator.
+  static ProfileDescriptionFormat Decode(std::span<const uint8_t> globalEnv);
+};
+std::array<std::u16string, 3> FormatProfileItemDescription(
+    std::u16string_view text, std::u16string_view separator, uint32_t columns);
 struct ProfileEnvironment;
 struct ProfileCharacter;
 struct ProfileItemSlotDraw {
@@ -37,4 +45,13 @@ ProfileItemContents BuildProfileItemContents(
     const ProfileCharacter& character, uint32_t selector,
     std::span<const ProfileItemDefinition> ownerRows, int32_t baseFontSize,
     std::span<const std::array<int32_t, 2>> contentOffsets = {});
+struct ProfileDescriptionDraws {
+  int32_t OwnerRow = 0;
+  std::array<UiTextBlit, 3> Lines;
+};
+ProfileDescriptionDraws BuildProfileDescription(
+    const ProfileEnvironment& environment, int32_t phase,
+    const ProfileCharacter& character, uint32_t selector,
+    std::span<const ProfileItemDefinition> ownerRows, int32_t baseFontSize,
+    std::u16string_view separator);
 }  // namespace Impacto::Saekano

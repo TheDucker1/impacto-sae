@@ -263,6 +263,13 @@ void WriteItemLabel(std::ostream& out, const ProfileItemSlotDraw& slot) {
   }
   out << "]}";
 }
+void WriteDescription(std::ostream& out, int32_t row, const UiTextBlit& line) {
+  out<<"{\"row\":"<<row<<",\"text\":[";
+  for(size_t i=0;i<line.Text.size();++i){if(i)out<<',';out<<uint16_t(line.Text[i]);}
+  out<<"],\"position\":["<<line.Position[0]<<','<<line.Position[1]<<"],\"size\":"<<line.Size<<",\"color\":[";
+  for(size_t i=0;i<4;++i){if(i)out<<',';out<<unsigned(line.Color[i]);}
+  out<<"]}";
+}
 struct UiBlitRenderer {
   GLuint Program = 0, Vertex = 0, Fragment = 0, Vao = 0, Buffer = 0;
   GLint Tint = -1, Solid = -1, AlphaMode = -1;
@@ -883,6 +890,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
     std::vector<ProfileItemCharacterTable> catalog;
     std::unique_ptr<PcFontFace> font;
     std::optional<GameUtilityFont> utility;
+    std::optional<ProfileDescriptionFormat> descriptionFormat;
     if (itemScene) {
       const auto usrdir = resourceDat.parent_path();
       authoredScene = resources.LoadProfileScene(*itemScene);
@@ -892,6 +900,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
           GsfFont::Decode(read(usrdir / "Font.gsf")));
       utility =
           GameUtilityFont::Decode(read(usrdir / "env/env_game_utility.dat"));
+      descriptionFormat = ProfileDescriptionFormat::Decode(read(usrdir / "env/env_global.dat"));
       if (authoredScene.empty() || authoredScene.size() > catalog.size())
         throw FormatError(
             "profile item scene has no matching authored catalog");
@@ -995,6 +1004,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
                                       544, selection.FrameOffsets);
       renderer.Draw(blits, width, height, commands);
       std::optional<ProfileItemContents> itemContents;
+      std::optional<ProfileDescriptionDraws> description;
       if (itemScene) {
         std::array<std::array<int32_t, 2>, 8> offsets;
         for (size_t i = 0; i < 8; ++i)
@@ -1019,6 +1029,11 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
         glUniform1i(renderer.AlphaMode, 0);
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_STENCIL_TEST);
+        description = BuildProfileDescription(*chromeEnvironment, phase,
+            authoredScene.at(ordinal), selection.Selectors.at(ordinal),
+            catalog.at(ordinal).Rows, utility->Size, descriptionFormat->Separator);
+        for (const auto& line : description->Lines)
+          fontTextures.DrawString(renderer,*font,line.Text,line.Position[0],line.Position[1],line.Size,line.Color);
         GlCheck("profile item content pass");
       }
       if (capture) {
@@ -1087,6 +1102,11 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
             WriteItemLabel(report, slot);
           }
           report << ']';
+        }
+        if(description){
+          report<<",\"description_draws\":[";
+          for(size_t i=0;i<3;++i){if(i)report<<',';WriteDescription(report,description->OwnerRow,description->Lines[i]);}
+          report<<']';
         }
         report << "}\n";
         if (++selected == times.size()) quit = true;

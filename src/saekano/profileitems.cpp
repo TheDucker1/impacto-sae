@@ -1,5 +1,6 @@
 #include "profileitems.h"
 #include "profile.h"
+#include "commands.h"
 #include <cmath>
 
 #include <bit>
@@ -75,6 +76,73 @@ int32_t Number(std::u16string_view text) {
   return std::bit_cast<int32_t>(negative ? 0u - value : value);
 }
 }  // namespace
+ProfileDescriptionFormat ProfileDescriptionFormat::Decode(
+    std::span<const uint8_t> bytes) {
+  if (bytes.size() < 3 || bytes.size() > 32 * 1024 * 1024)
+    throw FormatError("invalid global description environment extent");
+  PayloadReader reader(bytes.subspan(3));
+  const auto words = [&](uint32_t count) {
+    reader.CheckCount(count, 4);
+    for (uint32_t i = 0; i < count; ++i) reader.U32();
+  };
+  const auto records = [&](uint32_t stride) {
+    const auto count = reader.U32();
+    reader.CheckCount(count, size_t(stride) * 4);
+    words(count * stride);
+  };
+  for (int i = 0; i < 4; ++i) reader.String();
+  words(2);
+  for (int i = 0; i < 9; ++i) reader.String();
+  words(3 + 27);
+  records(6);
+  words(8);
+  records(6);
+  words(4);
+  records(1);
+  const auto count = reader.U32();
+  reader.CheckCount(count, 4);
+  for (uint32_t i = 0; i < count; ++i) reader.String();
+  reader.String();
+  words(2);
+  reader.String();
+  reader.String();
+  ProfileDescriptionFormat result;
+  result.Separator = reader.String();
+  result.PrefixBytes = bytes.size() - reader.Remaining();
+  return result;
+}
+std::array<std::u16string, 3> FormatProfileItemDescription(
+    std::u16string_view text, std::u16string_view separator, uint32_t columns) {
+  text = text.substr(0, text.find(u'\0'));
+  separator = separator.substr(0, separator.find(u'\0'));
+  if (separator.empty())
+    throw FormatError("empty profile description separator");
+  if (text.size() > 2 * 1024 * 1024)
+    throw FormatError("profile description exceeds input budget");
+  std::array<std::u16string, 3> result;
+  size_t row = 0, at = 0;
+  const auto append = [&](std::u16string_view part) {
+    if (row == result.size())
+      throw FormatError("profile description exceeds three owner lines");
+    result[row++] = part;
+  };
+  while (true) {
+    const auto end = text.find(separator, at);
+    auto part = text.substr(at, end == text.npos ? end : end - at);
+    if (part.size() > columns) {
+      append(part.substr(0, columns));
+      part.remove_prefix(columns);
+      if (part.size() > columns) {
+        append(part.substr(0, columns));
+        part.remove_prefix(columns);
+      }
+    }
+    append(part);
+    if (end == text.npos) break;
+    at = end + separator.size();
+  }
+  return result;
+}
 std::vector<ProfileItemDefinition> DecodeProfileItemTable(
     std::span<const uint8_t> bytes) {
   WideTokens tokens(bytes);
@@ -171,6 +239,36 @@ ProfileItemContents BuildProfileItemContents(
     const uint8_t tint = phase <= 5 ? 128 : 0;
     slot.Label.Color = {tint, tint, tint, 255};
   }
+  return result;
+}
+ProfileDescriptionDraws BuildProfileDescription(
+    const ProfileEnvironment& environment, int32_t phase,
+    const ProfileCharacter& character, uint32_t selector,
+    std::span<const ProfileItemDefinition> ownerRows, int32_t baseFontSize,
+    std::u16string_view separator) {
+  if (character.Events.size() != 10 || selector >= 10 ||
+      environment.DescriptionPositions.size() < 3)
+    throw FormatError(
+        "profile description requires a valid scene/selector and three "
+        "positions");
+  const auto index = character.Events[(selector + 3) % 10].Values[0];
+  if (index < 0 || size_t(index) >= ownerRows.size())
+    throw FormatError("profile description owner row unavailable");
+  const auto lines =
+      FormatProfileItemDescription(ownerRows[size_t(index)].Description,
+                                   separator, environment.DescriptionColumns);
+  const float scaled = float(baseFontSize) * environment.DescriptionScale;
+  const uint32_t size = std::isnan(scaled) || scaled <= 0 ? 0
+                        : scaled >= 4294967296.0f         ? UINT32_MAX
+                                                          : uint32_t(scaled);
+  ProfileDescriptionDraws result;
+  result.OwnerRow = index;
+  const uint8_t tint = phase <= 5 ? 128 : 0;
+  for (size_t i = 0; i < 3; ++i)
+    result.Lines[i] = {lines[i],
+                       environment.DescriptionPositions[i],
+                       size,
+                       {tint, tint, tint, 255}};
   return result;
 }
 }  // namespace Impacto::Saekano
