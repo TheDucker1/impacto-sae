@@ -83,6 +83,7 @@ class GameResources final : public ScriptSource {
   std::optional<GpdaArchive> profileScenes_;
   std::optional<GpdaArchive> profileVoices_;
   std::optional<GpdaArchive> profilePortraits_, profileCharacterUi_, profileUi_;
+  std::optional<GpdaArchive> mainUi_;
   std::map<ImageSection, GpdaArchive> images_;
 };
 

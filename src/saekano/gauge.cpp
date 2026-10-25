@@ -1,6 +1,7 @@
 #include "gauge.h"
 
 #include "commands.h"
+#include "uisprite.h"
 
 #include <algorithm>
 #include <bit>
@@ -55,6 +56,14 @@ class EnvironmentReader {
     for (auto& word : sprite.Words) word = reader.I32();
     Skip(34);
     return sprite;
+  }
+  UiSpriteDefinition VisualSprite() {
+    const auto raw = Sprite();
+    const auto color = uint32_t(raw.Words[7]);
+    return {raw.Resource, raw.Words[0], raw.Words[1], raw.Words[2],
+            raw.Words[3], raw.Words[4], raw.Words[5], raw.Words[6],
+            {uint8_t(color >> 16), uint8_t(color >> 8), uint8_t(color),
+             uint8_t(color >> 24)}};
   }
   void Table(size_t width) {
     const auto count = Count(width);
@@ -251,11 +260,20 @@ bool UpdateBattleGauge(SemanticState& state, BattleGaugeAnimation& animation,
 }
 
 namespace {
-ApproachGaugeEnvironment ReadApproachGauge(EnvironmentReader& reader) {
+ApproachGaugeEnvironment ReadApproachGauge(
+    EnvironmentReader& reader, ModeResultVisualEnvironment* visuals = nullptr) {
   ApproachGaugeEnvironment result;
   reader.Skip(3 + 3 * 4);
   for (size_t i = 0; i < 6; ++i) {
     const auto sprite = reader.Sprite();
+    if (i == 0 && visuals) {
+      const auto color = uint32_t(sprite.Words[7]);
+      visuals->Banner = {sprite.Resource, sprite.Words[0], sprite.Words[1],
+                         sprite.Words[2], sprite.Words[3], sprite.Words[4],
+                         sprite.Words[5], sprite.Words[6],
+                         {uint8_t(color >> 16), uint8_t(color >> 8),
+                          uint8_t(color), uint8_t(color >> 24)}};
+    }
     if (i == 3)
       result.ParticleRegion = {sprite.Words[1], sprite.Words[2],
                                sprite.Words[5], sprite.Words[6]};
@@ -272,7 +290,23 @@ ApproachGaugeEnvironment ReadApproachGauge(EnvironmentReader& reader) {
   reader.Table(8);
   reader.Skip(4);
   for (size_t i = 0; i < 4; ++i) reader.Table(8);
-  reader.Skip(4 * 4 + 2 * 16 + 4 * 4 + 4 * 34 + 4 * 4 + 6 * 34);
+  reader.Skip(4 * 4 + 2 * 16 + 4 * 4);
+  if (visuals) {
+    visuals->ProgressFill = reader.VisualSprite();  // bc18
+    visuals->Frame = reader.VisualSprite();  // bc3c
+    visuals->MaskedContent = reader.VisualSprite();  // bc60
+    visuals->Mask = reader.VisualSprite();  // bc84
+    visuals->TextPosition = {reader.Word(), reader.Word()};  // bca8
+    reader.Skip(2 * 4);
+    visuals->EventIcon = reader.VisualSprite();  // bcb8
+    visuals->Outcomes[1] = reader.VisualSprite();  // bcdc
+    reader.Skip(34);  // bd00, unused by this draw pass.
+    visuals->Outcomes[2] = reader.VisualSprite();  // bd24
+    visuals->Outcomes[0] = reader.VisualSprite();  // bd48
+    reader.Skip(34);  // bd6c
+  } else {
+    reader.Skip(4 * 34 + 4 * 4 + 6 * 34);
+  }
   result.Duration = reader.Word();
   result.ParticleMinimumDuration = reader.Word();
   result.ParticleMaximumDuration = reader.Word();
@@ -314,6 +348,22 @@ ModeResultEnvironment ModeResultEnvironment::DecodeApproach(
         result.VerticalSlide, result.VerticalOpacity, result.SecondaryProgress,
         result.TextOpacity})
     if (duration < 0) throw FormatError("negative mode result duration");
+  return result;
+}
+ModeResultVisualEnvironment ModeResultVisualEnvironment::DecodeApproach(
+    std::span<const uint8_t> bytes) {
+  EnvironmentReader reader(bytes);
+  ModeResultVisualEnvironment result;
+  ReadApproachGauge(reader, &result);
+  reader.Skip((6 + 9) * 4 + 2 * 8 + 4);  // Timings, hint positions, bdec.
+  result.OverlayAlpha = reader.Word();  // bdf0
+  const auto colors = reader.Count(4);
+  for (size_t i = 0; i < colors; ++i) {
+    const auto color = uint32_t(reader.Word());
+    result.CharacterColors.push_back({uint8_t(color >> 16), uint8_t(color >> 8),
+                                      uint8_t(color), uint8_t(color >> 24)});
+  }
+  result.PrefixBytes = reader.Position();
   return result;
 }
 ApproachGaugeCommand ApproachGaugeCommand::Decode(

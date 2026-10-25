@@ -50,6 +50,23 @@ struct UiRenderCommand {
   std::array<uint8_t, 4> Color{};
   UiSpriteBlit Sprite;
 };
+struct ModeResultVisualEnvironment {
+  UiSpriteDefinition Banner, ProgressFill, Frame, MaskedContent, Mask, EventIcon;
+  std::array<UiSpriteDefinition, 3> Outcomes;
+  std::array<int32_t, 2> TextPosition{};
+  int32_t OverlayAlpha = 0;
+  std::vector<std::array<uint8_t, 4>> CharacterColors;
+  size_t PrefixBytes = 0;
+  static ModeResultVisualEnvironment DecodeApproach(
+      std::span<const uint8_t> bytes);
+};
+struct ProfileResultState;
+// Native50b1a..510be: dim/reflection/banner, masked cut-in, event image and
+// completion fill. Text, cursor and final outcome draw follow this pass.
+std::vector<UiRenderCommand> BuildProfileResultLayers(
+    const ModeResultVisualEnvironment& environment,
+    const UiSpriteDefinition& reflection, const ProfileResultState& result,
+    int32_t canvasWidth, int32_t canvasHeight);
 struct ProfileItemFrameEnvironment {
   UiSpriteDefinition Sprite;
   std::vector<std::array<int32_t, 2>> Positions;

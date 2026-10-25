@@ -211,7 +211,8 @@ ProfileEnvironment ProfileEnvironment::Decode(std::span<const uint8_t> bytes) {
     cursor.Skip(4);
   }
   cursor.String();
-  cursor.Skip(4 + 36);
+  cursor.Skip(4);
+  result.ResultReflection = cursor.Sprite();  // ebb0
   for (size_t group = 0; group < 3; ++group) {
     const auto strings = cursor.Count(4);
     for (uint32_t i = 0; i < strings; ++i)

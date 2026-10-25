@@ -215,4 +215,96 @@ std::vector<UiSpriteBlit> BuildProfileBackdrop(
   }
   return result;
 }
+std::vector<UiRenderCommand> BuildProfileResultLayers(
+    const ModeResultVisualEnvironment& environment,
+    const UiSpriteDefinition& reflection, const ProfileResultState& result,
+    int32_t canvasWidth, int32_t canvasHeight) {
+  std::vector<UiRenderCommand> commands;
+  if (!result.Visible) return commands;
+  if (canvasWidth <= 0 || canvasHeight <= 0)
+    throw FormatError("invalid profile result mask canvas extent");
+  if (result.CharacterId < 0 ||
+      size_t(result.CharacterId) >= environment.CharacterColors.size() ||
+      result.Event.Values[1] < 0)
+    throw FormatError("profile result character color/event image unavailable");
+  const auto add = [](int32_t a, int32_t b) {
+    return std::bit_cast<int32_t>(uint32_t(a) + uint32_t(b));
+  };
+  const auto percentage = [](int32_t a, int32_t b) {
+    return std::bit_cast<int32_t>(uint32_t(a) * uint32_t(b)) / 100;
+  };
+  const auto state = [&](UiRenderKind kind, int32_t mode) {
+    UiRenderCommand command;
+    command.Kind = kind;
+    command.Mode = mode;
+    commands.push_back(command);
+  };
+  const auto rectangle = [&](std::array<int32_t, 4> bounds,
+                             std::array<uint8_t, 4> color) {
+    UiRenderCommand command;
+    command.Kind = UiRenderKind::Rectangle;
+    command.Rectangle = bounds;
+    command.Color = color;
+    commands.push_back(command);
+  };
+  const auto sprite = [&](ProfileTextureKey key, UiSpriteDefinition definition,
+                          float scaleY = 1) {
+    UiRenderCommand command;
+    command.Kind = UiRenderKind::Sprite;
+    command.Sprite = ResolveUiSprite(key, definition, 1, scaleY);
+    commands.push_back(command);
+  };
+  const auto main = [](uint32_t entry) {
+    return ProfileTextureKey{ProfileTextureSection::MainUi, -1, entry};
+  };
+  const auto fade = uint8_t(percentage(result.Primary.Current, 255));
+  rectangle(
+      {0, 0, 960, 544},
+      {0, 0, 0,
+       uint8_t(percentage(environment.OverlayAlpha, result.Primary.Current))});
+  auto definition = reflection;
+  definition.Color[3] = fade;
+  sprite(main(22), definition, -1);
+  definition = environment.Banner;
+  definition.Color[3] = fade;
+  sprite(main(22), definition);
+  auto mask = environment.Mask;
+  mask.X = add(mask.X, result.HorizontalOffset.Current);
+  mask.Color = environment.CharacterColors[size_t(result.CharacterId)];
+  mask.Color[3] = uint8_t(result.HorizontalAlpha.Current);
+  sprite(main(10), mask);
+  state(UiRenderKind::Stencil, 1);
+  state(UiRenderKind::DepthTest, 0);
+  state(UiRenderKind::AlphaTest, 6);
+  rectangle({0, 0, canvasWidth, canvasHeight}, {0, 0, 0, 1});
+  state(UiRenderKind::Stencil, 2);
+  mask.Color = {255, 255, 255, 255};
+  sprite(main(10), mask);
+  state(UiRenderKind::Stencil, 3);
+  state(UiRenderKind::AlphaTest, 3);
+  state(UiRenderKind::DepthTest, 5);
+  definition = environment.MaskedContent;
+  definition.X = add(definition.X, result.HorizontalOffset.Current);
+  definition.Color[3] = uint8_t(result.HorizontalAlpha.Current);
+  sprite(main(13), definition);
+  state(UiRenderKind::AlphaTest, 3);
+  state(UiRenderKind::DepthTest, 5);
+  state(UiRenderKind::Stencil, 0);
+  definition = environment.Frame;
+  definition.X = add(definition.X, result.HorizontalOffset.Current);
+  definition.Color[3] = uint8_t(result.HorizontalAlpha.Current);
+  sprite(main(11), definition);
+  definition = environment.EventIcon;
+  definition.X = add(definition.X, result.VerticalOffset.Current);
+  definition.Color[3] = uint8_t(result.VerticalAlpha.Current);
+  sprite({ProfileTextureSection::Character, result.CharacterId,
+          uint32_t(result.Event.Values[1])},
+         definition);
+  definition = environment.ProgressFill;
+  definition.Width =
+      percentage(definition.Width, result.EntryCompletion.Current);
+  definition.Color[3] = uint8_t(result.HorizontalAlpha.Current);
+  sprite(main(12), definition);
+  return commands;
+}
 }  // namespace Impacto::Saekano

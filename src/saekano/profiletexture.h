@@ -4,7 +4,7 @@
 #include <compare>
 
 namespace Impacto::Saekano {
-// Native root3 child sections, plus the separate SharedUi engine namespace;
+// Native root3 child sections, plus separate SharedUi/MainUi namespaces;
 // character indexes address section2's archive
 // packs, not the current scene's UI ordinal. Names are metadata, never keys.
 enum class ProfileTextureSection : uint32_t {
@@ -12,7 +12,9 @@ enum class ProfileTextureSection : uint32_t {
   Character = 2,
   Interface = 3,
   // Engine namespace for first.dat/root1; distinct from resource.dat/root3.
-  SharedUi = 0x100
+  SharedUi = 0x100,
+  // resource.dat/root1, held by ScenarioGameWrapper+bc for result drawing.
+  MainUi = 0x101
 };
 struct ProfileTextureKey {
   ProfileTextureSection Section;

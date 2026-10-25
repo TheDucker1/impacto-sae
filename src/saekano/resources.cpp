@@ -66,6 +66,7 @@ GameResources::GameResources(Bytes resourceDat)
 
 GameResources::GameResources(const GpdaArchive& root)
     : scripts_(ResourceSection(root, 4)), live2d_(ResourceSection(root, 0)) {
+  if (root.Entries().size() > 1) mainUi_.emplace(ResourceSection(root, 1));
   if (root.Entries().size() > 6)
     characterPoses_.emplace(ResourceSection(root, 6));
   if (root.Entries().size() > 3) {
@@ -139,6 +140,8 @@ ProfileMenuAsset GameResources::LoadProfileTexture(ProfileTextureKey key) const 
     return load(*profilePortraits_);
   if (key.Section == ProfileTextureSection::Interface && profileUi_)
     return load(*profileUi_);
+  if (key.Section == ProfileTextureSection::MainUi && mainUi_)
+    return load(*mainUi_);
   throw FormatError("profile texture section is unavailable");
 }
 ProfileVoiceAssets GameResources::LoadProfileVoice(size_t characterId,
