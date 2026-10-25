@@ -40,6 +40,18 @@ struct DialogFrameDraws {
   UiRenderCommand Overlay;
   std::vector<UiSpriteBlit> Tiles;
 };
+struct DialogContentLayout {
+  int32_t Width = 0, ContentHeight = 0, BodyHeight = 0;
+  int32_t OpenDuration = 0, CloseDuration = 0;
+  std::array<int32_t, 2> PromptPosition{};
+  int32_t ButtonBaseline = 0;
+};
+// Text's measured uint16 height is supplied by its layout service. This does
+// not infer the prompt's glyph metrics or replace the native line formatter.
+DialogContentLayout BuildDialogContentLayout(
+    const DialogEnvironment& environment, std::array<int32_t, 2> center,
+    uint16_t textHeight, size_t buttons, int32_t baseFontSize,
+    int32_t openDuration = -1, int32_t closeDuration = -1);
 // Native7cfc..81fc prefix. Rounded body height comes from the actual
 // text/button layout; it is not guessed here. Text, buttons and focus follow
 // this prefix.

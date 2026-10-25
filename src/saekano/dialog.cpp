@@ -3,6 +3,8 @@
 #include "profile.h"
 #include <algorithm>
 #include <bit>
+#include <cmath>
+#include <limits>
 
 namespace Impacto::Saekano {
 DialogEnvironment DialogEnvironment::Decode(std::span<const uint8_t> bytes) {
@@ -67,6 +69,59 @@ std::u16string DecodeProfileConfirmationPrompt(std::span<const uint8_t> bytes) {
   // ec80 sprite36, eca4 vector8, ecac/ecb0 words, ecb4 UTF16 string.
   for (size_t i = 0; i < 13; ++i) reader.U32();
   return reader.String();
+}
+DialogContentLayout BuildDialogContentLayout(
+    const DialogEnvironment& environment, std::array<int32_t, 2> center,
+    uint16_t textHeight, size_t buttons, int32_t baseFontSize,
+    int32_t openDuration, int32_t closeDuration) {
+  if (environment.FrameParts.empty() || environment.FrameParts[0][5] <= 0 ||
+      buttons > 3)
+    throw FormatError("invalid dialog content layout capacity");
+  const auto add = [](int32_t a, int32_t b) {
+    return std::bit_cast<int32_t>(uint32_t(a) + uint32_t(b));
+  };
+  const auto sub = [](int32_t a, int32_t b) {
+    return std::bit_cast<int32_t>(uint32_t(a) - uint32_t(b));
+  };
+  const auto integer = [](float value) {
+    if (std::isnan(value)) return int32_t(0);
+    if (value >= 2147483648.0f) return INT32_MAX;
+    if (value <= -2147483648.0f) return INT32_MIN;
+    return int32_t(value);
+  };
+  DialogContentLayout result;
+  result.Width = environment.Settings[3];
+  result.OpenDuration =
+      openDuration == -1 ? environment.Settings[8] : openDuration;
+  result.CloseDuration =
+      closeDuration == -1 ? environment.Settings[9] : closeDuration;
+  const auto buttonHeight =
+      buttons ? add(integer(float(baseFontSize) * environment.TextScales[0]),
+                    environment.Settings[5])
+              : 0;
+  result.ContentHeight = add(
+      add(textHeight, add(environment.Settings[0], environment.Settings[0])),
+      buttonHeight);
+  if (result.Width < 0 || result.ContentHeight < 0 || result.OpenDuration < 0 ||
+      result.CloseDuration < 0)
+    throw FormatError("negative dialog layout extent or duration");
+  const auto tileHeight = uint32_t(environment.FrameParts[0][5]);
+  const uint32_t rounded =
+      (uint32_t(result.ContentHeight) + tileHeight - 1) / tileHeight;
+  const uint64_t body = uint64_t(rounded) * tileHeight;
+  if (body > INT32_MAX)
+    throw FormatError("dialog body extent exceeds signed range");
+  result.BodyHeight = int32_t(body);
+  const auto top = add(sub(center[1], result.BodyHeight / 2),
+                       (result.BodyHeight - result.ContentHeight) / 2);
+  const auto contentTop = add(top, environment.Settings[0]);
+  result.PromptPosition = {
+      add(sub(center[0], result.Width / 2), environment.Settings[1]),
+      add(contentTop, environment.Settings[2])};
+  if (buttons)
+    result.ButtonBaseline =
+        add(add(contentTop, textHeight), environment.Settings[5]);
+  return result;
 }
 DialogFrameDraws BuildDialogFrame(const DialogEnvironment& environment,
                                   std::array<int32_t, 2> center, int32_t width,
