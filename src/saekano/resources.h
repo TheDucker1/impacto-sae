@@ -18,6 +18,16 @@ struct ResourceAsset {
   Bytes Name;  // Native counted bytes, including trailing spaces.
   Bytes Data;
 };
+// Native startup8002d4a0 loads first.dat child1 into owner+c's texture vector.
+class SharedUiAssets {
+ public:
+  explicit SharedUiAssets(Bytes firstDat);
+  size_t Count() const { return archive_.Entries().size(); }
+  ResourceAsset Load(size_t entry) const;
+
+ private:
+  GpdaArchive archive_;
+};
 struct CharacterPoseAssets {
   Bytes Name;
   // Native pose record+18..44: main, eye and lip rectangles, four words each.

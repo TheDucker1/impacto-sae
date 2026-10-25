@@ -87,6 +87,13 @@ GameResources::GameResources(const GpdaArchive& root)
       images_.emplace(section, ResourceSection(root, size_t(section)));
 }
 
+SharedUiAssets::SharedUiAssets(Bytes firstDat)
+    : archive_(ResourceSection(GpdaArchive(std::move(firstDat)), 1)) {}
+ResourceAsset SharedUiAssets::Load(size_t entry) const {
+  if (entry >= Count())
+    throw FormatError("shared UI entry outside original archive");
+  return {archive_.Entries()[entry].Name, CompressedEntry(archive_, entry, 1)};
+}
 size_t GameResources::ProfileSceneCount() const {
   return profileScenes_ ? profileScenes_->Entries().size() : 0;
 }

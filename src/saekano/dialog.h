@@ -1,5 +1,6 @@
 #pragma once
 #include "formats.h"
+#include "uisprite.h"
 #include <array>
 #include <string>
 
@@ -34,4 +35,16 @@ struct DialogEnvironment {
 // this prompt. Reading a shorter fixture never fabricates a confirmation
 // string.
 std::u16string DecodeProfileConfirmationPrompt(std::span<const uint8_t> bytes);
+struct DialogFrameDraws {
+  std::array<int32_t, 2> Origin{}, Extent{};
+  UiRenderCommand Overlay;
+  std::vector<UiSpriteBlit> Tiles;
+};
+// Native7cfc..81fc prefix. Rounded body height comes from the actual
+// text/button layout; it is not guessed here. Text, buttons and focus follow
+// this prefix.
+DialogFrameDraws BuildDialogFrame(const DialogEnvironment& environment,
+                                  std::array<int32_t, 2> center, int32_t width,
+                                  int32_t bodyHeight, int32_t progress,
+                                  std::array<uint8_t, 4> overlayColor);
 }  // namespace Impacto::Saekano
