@@ -15,6 +15,7 @@ struct ProfileEnvironment {
           SecondaryProgress = 0, StatChange = 0;
   ProfileMenuChromeEnvironment Chrome;
   ProfileItemFrameEnvironment ItemFrames;
+  ProfileItemContentEnvironment ItemContents;
   size_t PrefixBytes = 0;
   std::array<std::vector<std::u16string>, 3> ResultLabels;
   std::u16string ResultFormat;

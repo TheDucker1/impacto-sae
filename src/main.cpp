@@ -256,6 +256,17 @@ int main(int argc, char* argv[]) {
            "Usage: --saekano-audio USRDIR TRACK [--capture DIRECTORY]\n");
     return 1;
   }
+  if (argc >= 2 && std::string_view(argv[1]) == "--saekano-profile-items") {
+    if(argc==4 || (argc==6 && std::string_view(argv[4])=="--capture")) {
+      uint32_t scene=0;const std::string_view text(argv[3]);
+      const auto parsed=std::from_chars(text.data(),text.data()+text.size(),scene);
+      if(parsed.ec==std::errc{} && parsed.ptr==text.data()+text.size())
+        return Saekano::RunProfileItemsViewer(argv[2],scene,argc==6?argv[5]:"");
+    }
+    ImpLog(LogLevel::Error, LogChannel::General,
+      "Usage: --saekano-profile-items USRDIR SCENE [--capture DIRECTORY]\n");
+    return 1;
+  }
   if (argc >= 2 && std::string_view(argv[1]) == "--saekano-font") {
     if (argc == 3) return Saekano::RunFontSample(argv[2]);
     if (argc == 5 && std::string_view(argv[3]) == "--capture")

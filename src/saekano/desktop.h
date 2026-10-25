@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <optional>
 
 namespace Impacto::Saekano {
 int RunFontSample(const std::filesystem::path& usrdir,
@@ -16,5 +17,8 @@ int RunProfileBackdropViewer(
     const std::filesystem::path& resourceDat,
     const std::filesystem::path& environmentDat,
     const std::filesystem::path& captureDirectory = {},
-    bool menuChrome = false, bool itemFrames = false);
+    bool menuChrome = false, bool itemFrames = false,
+    std::optional<size_t> itemScene = {});
+int RunProfileItemsViewer(const std::filesystem::path& usrdir, size_t scene,
+                           const std::filesystem::path& captureDirectory = {});
 }  // namespace Impacto::Saekano

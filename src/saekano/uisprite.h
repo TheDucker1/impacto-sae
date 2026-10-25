@@ -54,6 +54,18 @@ struct ProfileItemFrameEnvironment {
   UiSpriteDefinition Sprite;
   std::vector<std::array<int32_t, 2>> Positions;
 };
+struct ProfileItemContentEnvironment {
+  UiSpriteDefinition Selector;
+  std::vector<UiSpriteDefinition> Categories;
+  std::array<int32_t, 2> LabelOffset{};
+  float LabelScale = 0;
+};
+struct UiTextBlit {
+  std::u16string Text;
+  std::array<int32_t, 2> Position{};
+  uint32_t Size = 0;
+  std::array<uint8_t, 4> Color{};
+};
 // Native50372..50472, with the factory's initial eight widget positions.
 // Subsequent carousel movement must supply its updated widget geometry.
 std::vector<UiRenderCommand> BuildProfileItemFramePass(

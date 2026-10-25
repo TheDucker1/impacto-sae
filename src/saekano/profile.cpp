@@ -170,9 +170,13 @@ ProfileEnvironment ProfileEnvironment::Decode(std::span<const uint8_t> bytes) {
   const auto itemPositions = cursor.Count(8);
   for (uint32_t i = 0; i < itemPositions; ++i)
     result.ItemFrames.Positions.push_back(cursor.Vector());  // ea60
-  cursor.Skip(36);
-  cursor.Counted(36);
-  cursor.Skip(8 + 4 * 4);
+  result.ItemContents.Selector = cursor.Sprite();  // ea70
+  const auto categories = cursor.Count(36);
+  for (uint32_t i = 0; i < categories; ++i)
+    result.ItemContents.Categories.push_back(cursor.Sprite());  // ea94
+  result.ItemContents.LabelOffset = cursor.Vector();  // eaa4
+  result.ItemContents.LabelScale = std::bit_cast<float>(cursor.Word());  // eaac
+  cursor.Skip(3 * 4);
   result.Carousel = cursor.Signed();
   cursor.Counted(8);
   cursor.Skip(2 * 4);

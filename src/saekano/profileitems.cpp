@@ -1,4 +1,6 @@
 #include "profileitems.h"
+#include "profile.h"
+#include <cmath>
 
 #include <bit>
 #include <limits>
@@ -108,6 +110,66 @@ std::vector<ProfileItemCharacterTable> LoadProfileItemCatalog(Bytes firstDat) {
       throw FormatError("profile item table is compressed");
     result.push_back(
         {tables.Entries()[i].Name, DecodeProfileItemTable(tables.Data(i))});
+  }
+  return result;
+}
+ProfileItemContents BuildProfileItemContents(
+    const ProfileEnvironment& environment, int32_t phase,
+    const ProfileCharacter& character, uint32_t selector,
+    std::span<const ProfileItemDefinition> ownerRows, int32_t baseFontSize,
+    std::span<const std::array<int32_t, 2>> contentOffsets) {
+  if (character.Events.size() != 10 || selector >= 10)
+    throw FormatError(
+        "profile item contents require ten events and a valid selector");
+  if (environment.ItemFrames.Positions.size() < 8 ||
+      (!contentOffsets.empty() && contentOffsets.size() != 8))
+    throw FormatError(
+        "profile item contents require eight slot positions/offsets");
+  if (ownerRows.size() > 30)
+    throw FormatError("profile owner item rows exceed capacity");
+  const auto add = [](int32_t a, int32_t b) {
+    return std::bit_cast<int32_t>(uint32_t(a) + uint32_t(b));
+  };
+  const auto& content = environment.ItemContents;
+  auto selectorSprite = content.Selector;
+  selectorSprite.X =
+      add(selectorSprite.X, environment.ItemFrames.Positions[3][0]);
+  selectorSprite.Y =
+      add(selectorSprite.Y, environment.ItemFrames.Positions[3][1]);
+  selectorSprite.Color[3] = phase <= 5 ? 128 : 255;
+  ProfileItemContents result;
+  result.Selector = ResolveUiSprite({ProfileTextureSection::Interface, -1, 19},
+                                    selectorSprite);
+  const float scaled = float(baseFontSize) * content.LabelScale;
+  const uint32_t fontSize = std::isnan(scaled) || scaled <= 0 ? 0
+                            : scaled >= 4294967296.0f         ? UINT32_MAX
+                                                      : uint32_t(scaled);
+  for (size_t i = 0; i < 8; ++i) {
+    const auto rowIndex = character.Events[(selector + i) % 10].Values[0];
+    if (rowIndex < 0 || size_t(rowIndex) >= ownerRows.size())
+      throw FormatError(
+          "profile event references an unavailable owner item row");
+    const auto& row = ownerRows[size_t(rowIndex)];
+    if (row.Category < 0 || size_t(row.Category) >= content.Categories.size())
+      throw FormatError("profile owner category outside authored sprite table");
+    auto position = environment.ItemFrames.Positions[i];
+    if (!contentOffsets.empty())
+      for (size_t axis = 0; axis < 2; ++axis)
+        position[axis] = add(position[axis], contentOffsets[i][axis]);
+    auto sprite = content.Categories[size_t(row.Category)];
+    sprite.X = add(sprite.X, position[0]);
+    sprite.Y = add(sprite.Y, position[1]);
+    auto& slot = result.Slots[i];
+    slot.OwnerRow = rowIndex;
+    slot.Category = row.Category;
+    slot.Icon =
+        ResolveUiSprite({ProfileTextureSection::Interface, -1, 16}, sprite);
+    slot.Label.Text = row.Name;
+    slot.Label.Position = {add(position[0], content.LabelOffset[0]),
+                           add(position[1], content.LabelOffset[1])};
+    slot.Label.Size = fontSize;
+    const uint8_t tint = phase <= 5 ? 128 : 0;
+    slot.Label.Color = {tint, tint, tint, 255};
   }
   return result;
 }

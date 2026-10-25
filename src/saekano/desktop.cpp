@@ -247,6 +247,22 @@ void WriteUiCommand(std::ostream& out, const UiRenderCommand& command) {
   }
   out << '}';
 }
+void WriteItemLabel(std::ostream& out, const ProfileItemSlotDraw& slot) {
+  out << "{\"row\":" << slot.OwnerRow << ",\"category\":" << slot.Category
+      << ",\"text\":[";
+  for (size_t i = 0; i < slot.Label.Text.size(); ++i) {
+    if (i) out << ',';
+    out << uint16_t(slot.Label.Text[i]);
+  }
+  out << "],\"position\":[" << slot.Label.Position[0] << ','
+      << slot.Label.Position[1] << "],\"size\":" << slot.Label.Size
+      << ",\"color\":[";
+  for (size_t i = 0; i < 4; ++i) {
+    if (i) out << ',';
+    out << unsigned(slot.Label.Color[i]);
+  }
+  out << "]}";
+}
 struct UiBlitRenderer {
   GLuint Program = 0, Vertex = 0, Fragment = 0, Vao = 0, Buffer = 0;
   GLint Tint = -1, Solid = -1, AlphaMode = -1;
@@ -485,6 +501,7 @@ struct FontTextures {
                   std::ostream* report = nullptr) {
     if (size > 1024) throw FormatError("PC text size outside display budget");
     for (const auto character : text) {
+      if (character == 0) break;  // Native DrawString consumes a UTF16 C string.
       UiSpriteBlit blit;
       blit.Color = color;
       const auto cached = ResolveGsfGlyph(font.Cached(), character, x, y, size);
@@ -825,9 +842,11 @@ int RunModelScenes(const std::filesystem::path& resourceDat,
 int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
                              const std::filesystem::path& environmentDat,
                              const std::filesystem::path& captureDirectory,
-                             bool menuChrome, bool itemFrames) {
+                             bool menuChrome, bool itemFrames,
+                             std::optional<size_t> itemScene) {
   bool captureCreated = false;
   try {
+    if (itemScene) itemFrames = true;
     if (itemFrames) menuChrome = true;
     const bool capture = !captureDirectory.empty();
     if (capture) {
@@ -860,10 +879,28 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
     std::optional<ProfileEnvironment> chromeEnvironment;
     if (menuChrome)
       chromeEnvironment = ProfileEnvironment::Decode(read(environmentDat));
+    ProfileScene authoredScene;
+    std::vector<ProfileItemCharacterTable> catalog;
+    std::unique_ptr<PcFontFace> font;
+    std::optional<GameUtilityFont> utility;
+    if (itemScene) {
+      const auto usrdir = resourceDat.parent_path();
+      authoredScene = resources.LoadProfileScene(*itemScene);
+      catalog = LoadProfileItemCatalog(read(usrdir / "first.dat"));
+      font = std::make_unique<PcFontFace>(
+          read(usrdir / "DFHSR4.TTC"),
+          GsfFont::Decode(read(usrdir / "Font.gsf")));
+      utility =
+          GameUtilityFont::Decode(read(usrdir / "env/env_game_utility.dat"));
+      if (authoredScene.empty() || authoredScene.size() > catalog.size())
+        throw FormatError(
+            "profile item scene has no matching authored catalog");
+    }
     ViewerWindow window(capture, itemFrames);
     SdlCheck(SDL_SetWindowTitle(window.Window, "Saekano"), "window title");
     SdlCheck(SDL_SetWindowSize(window.Window, 960, 544), "window size");
     UiBlitRenderer renderer;
+    FontTextures fontTextures;
     for (const auto id : {2u, 22u, 23u}) {
       const ProfileTextureKey key{ProfileTextureSection::Interface, -1, id};
       renderer.Upload(key,
@@ -881,6 +918,13 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
       renderer.Upload(key,
                       DecodeSceneImage(resources.LoadProfileTexture(key).Data));
     }
+    if (itemScene) {
+      for (const auto id : {16u, 19u}) {
+        const ProfileTextureKey key{ProfileTextureSection::Interface, -1, id};
+        renderer.Upload(
+            key, DecodeSceneImage(resources.LoadProfileTexture(key).Data));
+      }
+    }
     ProfileWaveAnimation wave;
     wave.Begin(environment.WavePeriod, 0);
     std::array<uint64_t, 3> times{0, 1147, 8001};
@@ -890,7 +934,8 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
       // do not initialize a new game or provide its persistent owner state.
       ProfileOwnerState previewOwner;
       previewOwner.Known = true;
-      BeginProfileSelection(selection, previewOwner, ProfileScene(1));
+      BeginProfileSelection(selection, previewOwner,
+                            itemScene ? authoredScene : ProfileScene(1));
       if (capture) {
         selection.Phase = 6;
         times = {0, uint64_t(chromeEnvironment->Carousel) / 2,
@@ -916,6 +961,10 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
             !event.key.repeat) {
           if (event.key.key == SDLK_UP) input.EventDirection = true;
           if (event.key.key == SDLK_DOWN) input.EventDirection = false;
+          if (itemScene && event.key.key == SDLK_LEFT)
+            input.CharacterDirection = true;
+          if (itemScene && event.key.key == SDLK_RIGHT)
+            input.CharacterDirection = false;
         }
       }
       if (quit) break;
@@ -945,6 +994,33 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
             BuildProfileItemFramePass(chromeEnvironment->ItemFrames, phase, 960,
                                       544, selection.FrameOffsets);
       renderer.Draw(blits, width, height, commands);
+      std::optional<ProfileItemContents> itemContents;
+      if (itemScene) {
+        std::array<std::array<int32_t, 2>, 8> offsets;
+        for (size_t i = 0; i < 8; ++i)
+          offsets[i] = {selection.CarouselX[i].Current,
+                        selection.CarouselY[i].Current};
+        const auto ordinal = selection.Ordinal;
+        itemContents = BuildProfileItemContents(
+            *chromeEnvironment, phase, authoredScene.at(ordinal),
+            selection.Selectors.at(ordinal), catalog.at(ordinal).Rows,
+            utility->Size, offsets);
+        renderer.DrawQuad(itemContents->Selector,
+                          renderer.Textures.at(itemContents->Selector.Texture),
+                          false);
+        for (const auto& slot : itemContents->Slots) {
+          renderer.DrawQuad(slot.Icon, renderer.Textures.at(slot.Icon.Texture),
+                            false);
+          fontTextures.DrawString(
+              renderer, *font, slot.Label.Text, slot.Label.Position[0],
+              slot.Label.Position[1], slot.Label.Size, slot.Label.Color);
+        }
+        // Native506b6..506de restores alpha/depth enables and stencil mode0.
+        glUniform1i(renderer.AlphaMode, 0);
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_STENCIL_TEST);
+        GlCheck("profile item content pass");
+      }
       if (capture) {
         const auto filename = std::to_string(selected) + ".bmp";
         Capture(captureDirectory / filename, width, height);
@@ -992,6 +1068,26 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
           }
           report << ']';
         }
+        if (itemContents) {
+          report << ",\"scene\":" << *itemScene
+                 << ",\"ordinal\":" << selection.Ordinal
+                 << ",\"owner_rows\":\"authored_catalog_snapshot\",\"content_"
+                    "offsets\":[";
+          for (size_t i = 0; i < 8; ++i) {
+            if (i) report << ',';
+            report << '[' << selection.CarouselX[i].Current << ','
+                   << selection.CarouselY[i].Current << ']';
+          }
+          report << "],\"item_content_draws\":[";
+          WriteUiBlit(report, itemContents->Selector);
+          for (const auto& slot : itemContents->Slots) {
+            report << ',';
+            WriteUiBlit(report, slot.Icon);
+            report << ',';
+            WriteItemLabel(report, slot);
+          }
+          report << ']';
+        }
         report << "}\n";
         if (++selected == times.size()) quit = true;
       }
@@ -1012,5 +1108,11 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
                  error.what());
     return 1;
   }
+}
+int RunProfileItemsViewer(const std::filesystem::path& usrdir, size_t scene,
+                          const std::filesystem::path& captureDirectory) {
+  return RunProfileBackdropViewer(usrdir / "resource.dat",
+                                  usrdir / "env/env_otaku_mode.dat",
+                                  captureDirectory, true, true, scene);
 }
 }  // namespace Impacto::Saekano
