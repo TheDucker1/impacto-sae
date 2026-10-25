@@ -2,6 +2,7 @@
 #include "formats.h"
 #include "uisprite.h"
 #include "font.h"
+#include "gauge.h"
 #include <array>
 #include <string>
 
@@ -47,6 +48,27 @@ struct DialogContentLayout {
   std::array<int32_t, 2> PromptPosition{};
   int32_t ButtonBaseline = 0;
 };
+struct DialogInput {
+  bool Left = false, Right = false, Accept = false, Cancel = false;
+  // Actual widget activation events, after the frontend hit-test service.
+  std::array<bool, 3> Activated{};
+};
+struct DialogState {
+  bool Visible = false, FocusEnabled = true, CancelEnabled = false,
+       Canceled = false, CloseOnConfirm = false;
+  int32_t Phase = 0, Selected = 0, Result = -1;
+  std::optional<int32_t> PendingPhase;
+  size_t ButtonCount = 0;
+  int32_t OpenDuration = 0, CloseDuration = 0;
+  ScriptLinearTween Opacity;
+  std::vector<int32_t> UiSounds;
+};
+// Fresh modal setup plus native Open. Durations come from decoded layout.
+void BeginDialog(DialogState& state, const DialogContentLayout& layout,
+                 size_t buttons, int32_t initialSelection, bool cancelEnabled,
+                 bool closeOnConfirm, uint64_t now);
+void UpdateDialog(DialogState& state, const DialogInput& input, uint64_t now);
+void CloseDialog(DialogState& state);
 // Text's measured uint16 height is supplied by its layout service. This does
 // not infer the prompt's glyph metrics or replace the native line formatter.
 DialogContentLayout BuildDialogContentLayout(
