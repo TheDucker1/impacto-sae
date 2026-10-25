@@ -1,8 +1,10 @@
 #include "profile.h"
 #include "commands.h"
 #include "seekmap.h"
+#include "profilearrow.h"
 
 #include <bit>
+#include <cmath>
 #include <algorithm>
 #include <limits>
 
@@ -231,6 +233,21 @@ ProfileEnvironment ProfileEnvironment::Decode(std::span<const uint8_t> bytes) {
        {result.IntroFade, result.WavePeriod, result.Carousel, result.ResultProgress,
         result.SecondaryProgress, result.StatChange})
     if (duration < 0) throw FormatError("negative profile transition duration");
+  return result;
+}
+ProfileCursorEnvironment ProfileCursorEnvironment::Decode(
+    std::span<const uint8_t> bytes) {
+  const auto profile = ProfileEnvironment::Decode(bytes);
+  EnvironmentCursor cursor(bytes);
+  cursor.Skip(profile.PrefixBytes + 13 * 4);
+  cursor.String();
+  cursor.Skip(2 * 16 + 2 * 36);
+  ProfileCursorEnvironment result;
+  result.Duration = cursor.Signed();
+  result.Travel = std::bit_cast<float>(cursor.Word());
+  result.PrefixBytes = cursor.Position();
+  if (result.Duration < 0 || !std::isfinite(result.Travel))
+    throw FormatError("invalid profile cursor motion configuration");
   return result;
 }
 ProfileInitialStats ProfileInitialStats::Decode(

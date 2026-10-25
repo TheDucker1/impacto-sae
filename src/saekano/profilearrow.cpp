@@ -78,6 +78,13 @@ void ProfileArrowMotion::Update(uint64_t now) {
     Elapsed = 0;
   }
 }
+void ProfileCursorMotion::Update(const ProfileCursorEnvironment& environment,
+                                 bool ready, uint64_t now) {
+  if (!ready) return;
+  if (!Channel.Started)
+    Channel.Begin(environment.Travel, environment.Duration, now);
+  Channel.Update(now);
+}
 std::vector<UiSpriteBlit> BuildProfileArrows(
     const ProfileArrowEnvironment& environment,
     const ProfileSelectionState& selection, const ProfileArrowMotion& motion) {
