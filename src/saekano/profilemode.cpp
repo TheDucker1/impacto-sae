@@ -1,6 +1,23 @@
 #include "profilemode.h"
+#include <algorithm>
 
 namespace Impacto::Saekano {
+void InitializeFreshProfileEntry(
+    SemanticState& state, const ProfileInitialStats& stats,
+    std::span<const ProfileItemCharacterTable> catalog) {
+  if (state.ProfileOwner.Known || state.ProfileOwner.ResultCategories ||
+      state.ProfileOwner.CachedOrdinal != 0 ||
+      std::any_of(state.ProfileOwner.Stats.begin(), state.ProfileOwner.Stats.end(),
+                  [](int32_t value) { return value != 0; }) ||
+      state.TextSpeed || state.LastBackgroundId)
+    throw FormatError("fresh profile entry would overwrite existing owner state");
+  // Build before publishing, so malformed authored data leaves state untouched.
+  auto owner = MakeFreshProfileOwner(stats, catalog);
+  state.ProfileOwner = std::move(owner);
+  state.TextSpeed = 2;          // Owner217f6 -> settings7350, S6022c byte0.
+  state.LastBackgroundId = -1;  // Owner216c4, S5e830.
+}
+
 ProfileMode::ProfileMode(SemanticState& state, ProfileServices& services,
                          const ProfileEnvironment& environment,
                          const ModeResultEnvironment& shared, uint64_t now)

@@ -4,8 +4,16 @@
 #include "commands.h"
 #include "seekmap.h"
 #include "profilewave.h"
+#include "profileitems.h"
 
 namespace Impacto::Saekano {
+// Explicit fresh-owner operation for profile entry only. Other SemanticState
+// fields keep their caller-provided values; this is not complete boot setup.
+// Rejects existing profile/settings/background state before making changes.
+void InitializeFreshProfileEntry(
+    SemanticState& state, const ProfileInitialStats& stats,
+    std::span<const ProfileItemCharacterTable> catalog);
+
 // Resource/audio/text gates are serviced by the frontend. Headless decodes
 // real assets and consumes PCM on its clock; PC can use the existing audio
 // host.
