@@ -4,6 +4,16 @@
 #include "uisprite.h"
 
 namespace Impacto::Saekano {
+class GameRandom;
+// Native sprite actor0c/40/44. Advances once per eligible actor update.
+// Initial wait uses a local clock-seeded generator; later waits use the
+// caller's shared game generator. No captured random state is fabricated.
+struct CharacterBlink {
+  bool Known = false;
+  int32_t Wait = 0, WaitTarget = 0, Phase = 4, Hold = 2;
+  void Initialize(uint32_t clockSeed);
+  void Update(GameRandom& random, bool visible, int32_t opacity);
+};
 struct CharacterPoseSlot {
   int32_t Pose = -1;
   bool Ready = false;

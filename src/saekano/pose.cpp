@@ -9,6 +9,29 @@
 #include <set>
 
 namespace Impacto::Saekano {
+void CharacterBlink::Initialize(uint32_t clockSeed) {
+  GameRandom initial;
+  initial.Seed(clockSeed);
+  Wait = 0;
+  WaitTarget = initial.Range(240, 480);
+  Phase = 4;
+  Hold = 2;
+  Known = true;
+}
+void CharacterBlink::Update(GameRandom& random, bool visible, int32_t opacity) {
+  if (!Known) throw UnsupportedCommand("sprite blink state is missing");
+  if (!visible || opacity == 0) return;
+  if (Wait < WaitTarget) ++Wait;
+  if (Wait != WaitTarget) return;
+  if (--Hold >= 0) return;
+  if (--Phase < 0) {
+    Wait = 0;
+    WaitTarget = random.Range(240, 480);
+    Phase = random.Range(0, 3) == 0 ? 8 : 4;
+  }
+  constexpr std::array<int32_t, 9> Holds{4, 3, 2, 2, 4, 3, 2, 2, 4};
+  Hold = Holds[size_t(Phase)];
+}
 namespace {
 void RequireCache(const CharacterPoseCache& cache) {
   if (!cache.Known)

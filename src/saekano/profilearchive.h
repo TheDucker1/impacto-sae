@@ -30,6 +30,11 @@ class ArchiveProfileServices final : public ProfileServices {
   const VoiceTextReveal& ResultText() const { return resultText_; }
   const VoiceTextReveal& ResponseText() const { return responseText_; }
   const ProfileMouthPlayback& Mouth() const { return mouth_; }
+  void InitializeActorBlink(uint32_t clockSeed, GameRandom& sharedRandom) {
+    blink_.Initialize(clockSeed);
+    blinkRandom_ = &sharedRandom;
+  }
+  const CharacterBlink& Blink() const { return blink_; }
   std::optional<uint64_t> VoiceFrames() const {
     return voice_->FramesConsumed();
   }
@@ -59,6 +64,8 @@ class ArchiveProfileServices final : public ProfileServices {
   ProfileVoiceOutput* voice_;
   VoiceTextReveal resultText_, responseText_;
   ProfileMouthPlayback mouth_;
+  CharacterBlink blink_;
+  GameRandom* blinkRandom_ = nullptr;
   uint8_t textSpeed_ = 0;
   bool menuReady_ = false, responseReady_ = false;
 };

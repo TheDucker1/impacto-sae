@@ -1038,6 +1038,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
          flowDone = false;
     std::ofstream flowPcm;
     size_t flowUiSoundRequests = 0;
+    uint32_t flowBlinkSeed = 0;
     if (owningFlow) {
       const auto root = resourceDat.parent_path();
       flowOwner = std::make_unique<SemanticState>();
@@ -1070,6 +1071,11 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
           TextTimingEnvironment::Decode(read(root / "env/env_config.dat"),
                                         true),
           flowVoice.get());
+      // Standalone fresh viewer: record its host clock seed explicitly.
+      // This does not reconstruct an arbitrary native game's RNG state.
+      flowBlinkSeed = captureFlow ? 0 : uint32_t(SDL_GetTicks());
+      flowOwner->Random.Seed(flowBlinkSeed);
+      flowServices->InitializeActorBlink(flowBlinkSeed, flowOwner->Random);
       flowShared = ModeResultEnvironment::DecodeApproach(
           read(root / "env/env_approach.dat"));
       flowMode = std::make_unique<ProfileMode>(
@@ -1084,7 +1090,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
       }
       if (captureFlow) {
         times.clear();
-        for (uint64_t t = 0; t <= 40000; t += 100) times.push_back(t);
+        for (uint64_t t = 0; t <= 40000; t += 16) times.push_back(t);
         flowPcm.open(captureDirectory / "voice-output.pcm", std::ios::binary);
         if (!flowPcm) throw FormatError("cannot create profile PCM output");
       }
@@ -1152,8 +1158,9 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
             input.Accept = now % 500 == 0;
           if (flowMode->CurrentStage() == ProfileMode::Stage::Response &&
               flowMode->Phase() == 17)
-            input.Accept =
-                flowServices->ResponseText().Revealed && flowVoice->Stopped();
+            input.Accept = flowServices->ResponseText().Revealed &&
+                           flowVoice->Stopped() &&
+                           flowOwner->Random.Draws() >= 2;
         }
       }
       if (itemFrames) {
@@ -1393,6 +1400,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
           }
           CurrentCharacterPoseDraw actorState;
           actorState.Face = response.Event.Presentation[1];
+          actorState.EyePhase = flowServices->Blink().Phase;
           actorState.Position = {700, 0};
           actorState.MouthFrame = flowServices->Mouth().Frame;
           flowActorDraws = BuildCurrentCharacterPose(*actor, actorState);
@@ -1440,7 +1448,8 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
           std::to_string(dialog.Opacity.Current / 50) + ":" +
           std::to_string(responseLaidOut) + ":" +
           std::to_string(owningFlow && flowServices->ResponseText().Revealed) +
-          ":" + std::to_string(owningFlow && flowVoice->Stopped());
+          ":" + std::to_string(owningFlow && flowVoice->Stopped()) + ":" +
+          std::to_string(owningFlow ? flowServices->Blink().Phase : 0);
       const bool saveFlowFrame =
           signature != previousFlowSignature ||
           ((phase == 12 || phase == 17) && now - lastFlowSaved >= 2000);
@@ -1477,7 +1486,10 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
                  << std::bit_cast<uint32_t>(flowCursor.Channel.Current)
                  << ",\"mouth_frame\":" << flowServices->Mouth().Frame
                  << ",\"ui_sound_requests\":" << flowUiSoundRequests
-                 << ",\"ui_sound_playback\":false,\"automatic_blink\":false,"
+                 << ",\"eye_phase\":" << flowServices->Blink().Phase
+                 << ",\"blink_seed\":" << flowBlinkSeed
+                 << ",\"blink_random_draws\":" << flowOwner->Random.Draws()
+                 << ",\"ui_sound_playback\":false,\"automatic_blink\":true,"
                     "\"stats\":[";
           for (size_t i = 0; i < 12; ++i) {
             if (i) report << ',';

@@ -103,6 +103,7 @@ void ArchiveProfileServices::Act(ProfileResponseAction action,
       mouth_.Begin(responseAssets_->Mouth, now);
       break;
     case ProfileResponseAction::UpdatePresentation:
+      if (blinkRandom_) blink_.Update(*blinkRandom_, true, 255);
       mouth_.Update(now);
       break;
     case ProfileResponseAction::RevealText:
