@@ -106,6 +106,16 @@ SceneImageState RestoreSceneImages(const NativeImageSavePrefix& saved,
   PollSceneImages(result, images);
   return result;
 }
+SceneImageState FreshSceneImages(SceneImageDriver& images) {
+  NativeImageSavePrefix fresh;
+  for (uint32_t category = 0; category < 3; ++category) {
+    const auto count = images.AssetCount(ImageCategorySection(category));
+    if (count > 1000000)
+      throw FormatError("fresh image resource pool exceeds budget");
+    fresh.TextureReferences[category].resize(count);
+  }
+  return RestoreSceneImages(fresh, images);
+}
 FillRectCommand FillRectCommand::Decode(std::span<const uint8_t> payload) {
   PayloadReader reader(payload);
   FillRectCommand result;

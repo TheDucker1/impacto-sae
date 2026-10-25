@@ -19,9 +19,18 @@ bool VmBackend::UpdatePresentation(size_t, bool, UpdateRoute, uint64_t) {
   throw UnsupportedCommand("presentation backend does not implement this command");
 }
 
-VirtualMachine::VirtualMachine(ScriptSource& scripts, VmBackend& backend, SemanticState initial,
+VirtualMachine::VirtualMachine(ScriptSource& scripts, VmBackend& backend,
+                               SemanticState initial,
                                MessageRuntimeContext messageContext)
-    : scripts_(scripts), backend_(backend), state_(std::move(initial)),
+    : VirtualMachine(scripts, backend, std::move(initial), messageContext,
+                     false) {}
+VirtualMachine::VirtualMachine(ScriptSource& scripts, VmBackend& backend,
+                               SemanticState initial,
+                               MessageRuntimeContext messageContext,
+                               bool replaceManager)
+    : scripts_(scripts),
+      backend_(backend),
+      state_(std::move(initial)),
       messageContext_(messageContext) {
   for (auto cursor : state_.LaneCommandIndex)
     if (cursor != -1) throw UnsupportedCommand("restoring active lane queues requires queue state");
@@ -29,7 +38,25 @@ VirtualMachine::VirtualMachine(ScriptSource& scripts, VmBackend& backend, Semant
     throw UnsupportedCommand("restoring queued command state is not implemented");
   if (state_.PendingCommandIndex != -1 || state_.PendingFileId != -2)
     throw FormatError("initial state must be before command start");
-  Load(false);
+  Load(replaceManager);
+}
+std::unique_ptr<VirtualMachine> VirtualMachine::FromCompletedProfile(
+    ScriptSource& scripts, VmBackend& backend, SemanticState owner,
+    const ProfileMode& completed, MessageRuntimeContext messageContext) {
+  if (completed.CurrentStage() != ProfileMode::Stage::Complete ||
+      completed.TargetScript() < 0)
+    throw UnsupportedCommand("profile has no completed script destination");
+  owner.ScriptFileId = completed.TargetScript();
+  owner.CurrentCommandIndex = 0;
+  // Suspended manager fields belong to the destroyed manager, never its owner.
+  owner.PendingCommandIndex = -1;
+  owner.PendingFileId = -2;
+  owner.LaneCommandIndex.fill(-1);
+  owner.FirstAsyncCommandIndex = -1;
+  auto vm = std::unique_ptr<VirtualMachine>(new VirtualMachine(
+      scripts, backend, std::move(owner), messageContext, true));
+  vm->boundary_ = VmBoundary::ProfileDestinationLoaded;
+  return vm;
 }
 
 void VirtualMachine::Load(bool preserveOwnerState) {
@@ -149,13 +176,10 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     state_.RuleWipe = {};
     // Fresh constructor801a0940..0954 clears all six quake outputs.
     for (auto& pair : state_.Quake) pair = std::array<int32_t,2>{};
-    if (state_.SceneImages.Known) {
-      NativeImageSavePrefix empty;
-      for (size_t group = 0; group < 3; ++group)
-        empty.TextureReferences[group].resize(state_.SceneImages.Slots.TextureReferences[group].size());
-      auto* driver = backend_.Images();
-      if (!driver) throw UnsupportedCommand("scene image resource pool is unavailable");
-      state_.SceneImages = RestoreSceneImages(empty, *driver);
+    if (auto* driver = backend_.Images()) {
+      state_.SceneImages = FreshSceneImages(*driver);
+    } else if (state_.SceneImages.Known) {
+      throw UnsupportedCommand("scene image resource pool is unavailable");
     } else {
       state_.SceneImages.FillRectsKnown.fill(false);
     }

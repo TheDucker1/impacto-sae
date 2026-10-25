@@ -18,6 +18,9 @@ ImageSection ImageCategorySection(uint32_t category);
 // references without a slot remain nonresident, as in80071f78/8019ca00.
 SceneImageState RestoreSceneImages(const NativeImageSavePrefix& saved,
                                    SceneImageDriver& images);
+// Fresh constructor/reset plus owner binding: inactive slots, zero counters,
+// extents from the actual BG/CG/free resource pools. Never apply to restores.
+SceneImageState FreshSceneImages(SceneImageDriver& images);
 void PollSceneImages(SceneImageState& state, SceneImageDriver& images);
 struct FillRectCommand {
   uint32_t Slot = 0, Color = 0;

@@ -70,6 +70,13 @@ class VirtualMachine {
  public:
   VirtualMachine(ScriptSource& scripts, VmBackend& backend, SemanticState initial,
                   MessageRuntimeContext messageContext = {});
+  // Outer-loop frontend handoff after a standalone ProfileMode completes.
+  // Uses the same fresh-manager reset as the opcode3ed owning path. Destination
+  // is derived from the completed mode; callers retain their audio/backend
+  // host.
+  static std::unique_ptr<VirtualMachine> FromCompletedProfile(
+      ScriptSource& scripts, VmBackend& backend, SemanticState owner,
+      const ProfileMode& completed, MessageRuntimeContext messageContext = {});
   const SemanticState& State() const { return state_; }
   const DispatchState& Dispatcher() const { return dispatcher_; }
   VmBoundary Boundary() const { return boundary_; }
@@ -86,6 +93,9 @@ class VirtualMachine {
   std::vector<GameEvent> TakeEvents();
 
  private:
+  VirtualMachine(ScriptSource& scripts, VmBackend& backend,
+                 SemanticState initial, MessageRuntimeContext messageContext,
+                 bool replaceManager);
   struct RuntimeCommand {
     bool Started = false;
     bool LaneStarted = false;
