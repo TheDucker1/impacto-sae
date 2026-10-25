@@ -123,6 +123,122 @@ DialogContentLayout BuildDialogContentLayout(
         add(add(contentTop, textHeight), environment.Settings[5]);
   return result;
 }
+std::vector<DialogButtonDraws> BuildDialogButtons(
+    const DialogEnvironment& environment, std::array<int32_t, 2> center,
+    const DialogContentLayout& layout,
+    std::span<const DialogButtonLabels> labels, int32_t selected,
+    bool focusEnabled, int32_t progress, int32_t baseFontSize,
+    const GsfFont& font, uint32_t nominalSize) {
+  if (labels.size() > 3 || progress < 0 || progress > 100 || baseFontSize < 0 ||
+      !std::isfinite(environment.TextScales[0]) ||
+      environment.TextScales[0] < 0)
+    throw FormatError("invalid dialog button inputs");
+  if (labels.empty()) return {};
+  const auto& positions = environment.ButtonPositions[labels.size() - 1];
+  if (positions.size() < labels.size())
+    throw FormatError("missing dialog button positions");
+  const auto add = [](int32_t a, int32_t b) {
+    return std::bit_cast<int32_t>(uint32_t(a) + uint32_t(b));
+  };
+  const auto sub = [](int32_t a, int32_t b) {
+    return std::bit_cast<int32_t>(uint32_t(a) - uint32_t(b));
+  };
+  const auto roundedSize = [](int32_t n) {
+    const float value = float(n);
+    if (value >= 2147483648.0f) return INT32_MAX;
+    return int32_t(value);
+  };
+  const auto alpha = uint8_t(progress * 255 / 100);
+  const float scaled = float(baseFontSize) * environment.TextScales[0];
+  const uint32_t size = scaled >= 4294967296.0f ? UINT32_MAX : uint32_t(scaled);
+  const auto originX = sub(center[0], layout.Width / 2);
+  const auto fw = roundedSize(environment.Focus[4]),
+             fh = roundedSize(environment.Focus[5]);
+  std::vector<DialogButtonDraws> result;
+  for (size_t i = 0; i < labels.size(); ++i) {
+    DialogButtonDraws button;
+    const auto x = add(originX, positions[i][0]);
+    const auto y = add(layout.ButtonBaseline, positions[i][1]);
+    const auto background = [&](uint32_t entry) {
+      button.Background.push_back({{ProfileTextureSection::SharedUi, -1, entry},
+                                   {sub(x, fw / 2), sub(y, fh / 2), fw, fh},
+                                   {environment.Focus[2], environment.Focus[3],
+                                    environment.Focus[4], environment.Focus[5]},
+                                   {255, 255, 255, alpha}});
+    };
+    if (focusEnabled && selected == int32_t(i)) {
+      background(3);
+      background(5);
+    } else
+      background(4);
+    const auto width =
+        MeasurePvfText(font, labels[i].Secondary, size, nominalSize);
+    button.Label.Text = labels[i].Secondary;
+    button.Label.Position = {sub(x, std::bit_cast<int32_t>(width >> 1)),
+                             sub(y, std::bit_cast<int32_t>(size >> 1))};
+    button.Label.Size = size;
+    button.Label.Color = environment.Colors[1];
+    button.Label.Color[3] = alpha;
+    result.push_back(std::move(button));
+  }
+  return result;
+}
+std::vector<UiSpriteBlit> BuildDialogDecoration(
+    const DialogEnvironment& environment, const DialogFrameDraws& frame,
+    int32_t progress) {
+  const auto& pattern = environment.Rectangles[0];
+  if (progress < 0 || progress > 100 || frame.Extent[0] < 0 ||
+      frame.Extent[1] < 0 || pattern[4] <= 0 || pattern[5] <= 0)
+    throw FormatError("invalid dialog decoration extent");
+  const auto columns = frame.Extent[0] / pattern[4];
+  const auto rows = frame.Extent[1] / pattern[5];
+  if ((uint64_t(columns) + 1) * (uint64_t(rows) + 1) > 100000)
+    throw FormatError("dialog decoration tile budget exceeded");
+  const auto add = [](int32_t a, int32_t b) {
+    return std::bit_cast<int32_t>(uint32_t(a) + uint32_t(b));
+  };
+  const auto sub = [](int32_t a, int32_t b) {
+    return std::bit_cast<int32_t>(uint32_t(a) - uint32_t(b));
+  };
+  const auto rounded = [](int32_t n) {
+    const float v = float(n);
+    return v >= 2147483648.0f ? INT32_MAX : int32_t(v);
+  };
+  const auto alpha = uint8_t(progress * 255 / 100);
+  std::vector<UiSpriteBlit> result;
+  const auto blit = [&](uint32_t entry, std::array<int32_t, 4> destination,
+                        std::array<int32_t, 4> source) {
+    result.push_back({{ProfileTextureSection::SharedUi, -1, entry},
+                      destination,
+                      source,
+                      {255, 255, 255, alpha}});
+  };
+  auto x = add(frame.Origin[0], environment.Vectors[0][0]);
+  const auto y = add(frame.Origin[1], environment.Vectors[0][1]);
+  for (int32_t row = 0; row <= rows; ++row) {
+    const auto h = row == rows ? sub(frame.Extent[1] % pattern[5],
+                                     environment.Vectors[1][1])
+                               : pattern[5];
+    for (int32_t column = 0; column < columns; ++column) {
+      blit(9, {x, y, rounded(pattern[4]), rounded(h)},
+           {pattern[2], pattern[3], pattern[4], h});
+      x = add(x, pattern[4]);
+    }
+    const auto w = sub(frame.Extent[0] % pattern[4], environment.Vectors[1][0]);
+    blit(9, {x, y, rounded(w), rounded(h)}, {pattern[2], pattern[3], w, h});
+  }
+  const auto& strip = environment.Rectangles[1];
+  blit(0,
+       {add(frame.Origin[0], strip[0]), add(frame.Origin[1], strip[1]),
+        sub(frame.Extent[0], environment.Offset[0]), environment.Offset[1]},
+       {strip[2], strip[3], strip[4], strip[5]});
+  const auto& ornament = environment.Decoration;
+  blit(1,
+       {add(frame.Origin[0], ornament[0]), add(frame.Origin[1], ornament[1]),
+        rounded(ornament[4]), rounded(ornament[5])},
+       {ornament[2], ornament[3], ornament[4], ornament[5]});
+  return result;
+}
 DialogFrameDraws BuildDialogFrame(const DialogEnvironment& environment,
                                   std::array<int32_t, 2> center, int32_t width,
                                   int32_t bodyHeight, int32_t progress,

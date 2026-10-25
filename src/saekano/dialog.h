@@ -1,6 +1,7 @@
 #pragma once
 #include "formats.h"
 #include "uisprite.h"
+#include "font.h"
 #include <array>
 #include <string>
 
@@ -52,6 +53,21 @@ DialogContentLayout BuildDialogContentLayout(
     const DialogEnvironment& environment, std::array<int32_t, 2> center,
     uint16_t textHeight, size_t buttons, int32_t baseFontSize,
     int32_t openDuration = -1, int32_t closeDuration = -1);
+struct DialogButtonDraws {
+  std::vector<UiSpriteBlit> Background;
+  UiTextBlit Label;
+};
+// Native8536..8988. Background layers precede each centered secondary label.
+std::vector<DialogButtonDraws> BuildDialogButtons(
+    const DialogEnvironment& environment, std::array<int32_t, 2> center,
+    const DialogContentLayout& layout,
+    std::span<const DialogButtonLabels> labels, int32_t selected,
+    bool focusEnabled, int32_t progress, int32_t baseFontSize,
+    const GsfFont& font, uint32_t nominalSize);
+// Native81fc..8456: patterned fill, separator strip and corner ornament.
+std::vector<UiSpriteBlit> BuildDialogDecoration(
+    const DialogEnvironment& environment, const DialogFrameDraws& frame,
+    int32_t progress);
 // Native7cfc..81fc prefix. Rounded body height comes from the actual
 // text/button layout; it is not guessed here. Text, buttons and focus follow
 // this prefix.
