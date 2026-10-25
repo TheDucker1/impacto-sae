@@ -48,8 +48,11 @@ ImagePixels DecodeSceneImage(std::span<const uint8_t> bytes) {
                    !std::has_single_bit(result.Height)))
     throw FormatError("unsupported non-power-of-two swizzled GXT");
   const uint64_t count = uint64_t(result.Width) * result.Height;
+  const uint64_t rowStride = !swizzled && pixelsSize != count
+      ? (uint64_t(result.Width) + 7) & ~uint64_t(7) : result.Width;
   if (result.Width == 0 || result.Height == 0 || count > 64 * 1024 * 1024 ||
-      dataBegin < 64 || pixelsBegin != dataBegin || count != pixelsSize ||
+      dataBegin < 64 || pixelsBegin != dataBegin ||
+      rowStride * result.Height != pixelsSize ||
       uint64_t(pixelsSize) + 1024 != dataSize ||
       uint64_t(dataBegin) + dataSize != bytes.size())
     throw FormatError("invalid scene GXT data extent");
@@ -57,8 +60,11 @@ ImagePixels DecodeSceneImage(std::span<const uint8_t> bytes) {
   const bool hasAlpha = U32(bytes, 52) == 0x95001000;
   result.Rgba.resize(size_t(count) * 4);
   for (size_t i = 0; i < count; ++i) {
-    const auto color =
-        TexLoad::PaletteColor(palette, bytes[pixelsBegin + i], hasAlpha);
+    const auto color = TexLoad::PaletteColor(
+        palette,
+        bytes[size_t(pixelsBegin) + (i / result.Width) * rowStride +
+              i % result.Width],
+        hasAlpha);
     size_t destination = i;
     if (swizzled) {
       int x = int(i % result.Width), y = int(i / result.Width);
