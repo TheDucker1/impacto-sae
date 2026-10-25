@@ -9,6 +9,8 @@
 #include "profile.h"
 #include "profileitems.h"
 #include "fontface.h"
+#include "dialog.h"
+#include "textreveal.h"
 #include "../io/memorystream.h"
 #include "../texture/texture.h"
 
@@ -845,7 +847,8 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
                              const std::filesystem::path& environmentDat,
                              const std::filesystem::path& captureDirectory,
                              bool menuChrome, bool itemFrames,
-                             std::optional<size_t> itemScene, bool captureNavigation) {
+                             std::optional<size_t> itemScene,
+                             bool captureNavigation, bool captureDialog) {
   bool captureCreated = false;
   try {
     if (itemScene) itemFrames = true;
@@ -886,6 +889,11 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
     std::unique_ptr<PcFontFace> font;
     std::optional<GameUtilityFont> utility;
     std::optional<ProfileDescriptionFormat> descriptionFormat;
+    std::optional<DialogEnvironment> dialogEnvironment;
+    PlainTextLayout promptLayout;
+    DialogContentLayout dialogLayout;
+    DialogState dialog;
+    bool dialogBound = false;
     if (itemScene) {
       const auto usrdir = resourceDat.parent_path();
       authoredScene = resources.LoadProfileScene(*itemScene);
@@ -895,7 +903,27 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
           GsfFont::Decode(read(usrdir / "Font.gsf")));
       utility =
           GameUtilityFont::Decode(read(usrdir / "env/env_game_utility.dat"));
-      descriptionFormat = ProfileDescriptionFormat::Decode(read(usrdir / "env/env_global.dat"));
+      descriptionFormat =
+          ProfileDescriptionFormat::Decode(read(usrdir / "env/env_global.dat"));
+      dialogEnvironment =
+          DialogEnvironment::Decode(read(usrdir / "env/env_dialog.dat"));
+      const auto format = TextFormatEnvironment::Decode(
+          read(usrdir / "env/env_string_format.dat"), true);
+      const auto metrics = TextLayoutMetrics::Decode(
+          read(usrdir / "env/env_global.dat"),
+          read(usrdir / "env/env_message_window.dat"));
+      VoiceTextReveal prompt;
+      prompt.PrepareUtf16(DecodeProfileConfirmationPrompt(read(environmentDat)),
+                          format, 0);
+      promptLayout = LayoutPlainText(
+          prompt.Text, format, font->Cached(), metrics,
+          dialogEnvironment->Settings[6], dialogEnvironment->TextScales[1],
+          uint32_t(utility->Size), font->NominalSize());
+      if (dialogEnvironment->ButtonGroups.size() <= 1)
+        throw FormatError("missing profile confirmation buttons");
+      dialogLayout = BuildDialogContentLayout(
+          *dialogEnvironment, {480, 272}, promptLayout.Height,
+          dialogEnvironment->ButtonGroups[1].size(), utility->Size);
       if (authoredScene.empty() || authoredScene.size() > catalog.size())
         throw FormatError(
             "profile item scene has no matching authored catalog");
@@ -923,6 +951,12 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
                       DecodeSceneImage(resources.LoadProfileTexture(key).Data));
     }
     if (itemScene) {
+      const SharedUiAssets shared(
+          read(resourceDat.parent_path() / "first.dat"));
+      for (const auto entry : {0u, 1u, 3u, 4u, 5u, 9u}) {
+        const ProfileTextureKey key{ProfileTextureSection::SharedUi, -1, entry};
+        renderer.Upload(key, DecodeSceneImage(shared.Load(entry).Data));
+      }
       for (const auto id : {4u, 5u, 6u, 7u, 8u, 9u, 10u, 16u, 19u, 20u}) {
         const ProfileTextureKey key{ProfileTextureSection::Interface, -1, id};
         renderer.Upload(
@@ -970,6 +1004,8 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
           selection.Phase = 5;
           times = {0, 500, 501, 502, 503};
         }
+        if (captureDialog)
+          times = {0, 1, 76, 151, 152, 153, 154, 303, 304, 305, 306};
       }
     }
     size_t selected = 0;
@@ -983,19 +1019,28 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
     while (!quit) {
       SDL_Event event;
       ProfileSelectionInput input;
+      DialogInput modalInput;
       while (SDL_PollEvent(&event)) {
         if (event.type == SDL_EVENT_QUIT ||
             (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE))
           quit = true;
         if (itemFrames && event.type == SDL_EVENT_KEY_DOWN &&
             !event.key.repeat) {
+          if (itemScene && selection.ConfirmationOpen) {
+            if (event.key.key == SDLK_LEFT) modalInput.Left = true;
+            if (event.key.key == SDLK_RIGHT) modalInput.Right = true;
+            if (event.key.key == SDLK_RETURN) modalInput.Accept = true;
+            if (event.key.key == SDLK_BACKSPACE) modalInput.Cancel = true;
+            continue;
+          }
           if (event.key.key == SDLK_UP) input.EventDirection = true;
           if (event.key.key == SDLK_DOWN) input.EventDirection = false;
           if (itemScene && event.key.key == SDLK_LEFT)
             input.CharacterDirection = true;
           if (itemScene && event.key.key == SDLK_RIGHT)
             input.CharacterDirection = false;
-          if (itemScene && event.key.key == SDLK_RETURN && selection.Phase == 5)
+          if (itemScene && event.key.key == SDLK_RETURN &&
+              (selection.Phase == 5 || selection.Phase == 6))
             input.Accept = true;
           if (itemScene && event.key.key == SDLK_BACKSPACE &&
               selection.Phase == 6)
@@ -1009,9 +1054,25 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
           if (selected == 0) input.CharacterDirection = true;
           if (selected == 2) input.Accept = true;
           if (selected == 3) input.Cancel = true;
+        } else if (captureDialog) {
+          if (selected == 0) input.Accept = true;
+          if (selected == 4) modalInput.Left = true;
+          if (selected == 5) modalInput.Accept = true;
         } else if (capture && selected == 0)
           input.EventDirection = true;
+        if (itemScene && selection.ConfirmationOpen && dialogBound) {
+          UpdateDialog(dialog, modalInput, now);
+          if (!dialog.Visible) input.Confirmation = dialog.Result == 1;
+        }
         UpdateProfileSelection(selection, *chromeEnvironment, input, now);
+        if (itemScene && selection.ConfirmationOpen && !dialogBound) {
+          BeginDialog(dialog, dialogLayout,
+                      dialogEnvironment->ButtonGroups[1].size(), 1, false, true,
+                      now);
+          dialogBound = true;
+          UpdateDialog(dialog, modalInput, now);
+        }
+        if (!selection.ConfirmationOpen) dialogBound = false;
       }
       wave.Update(now);
       if (itemScene) arrowMotion.Update(now);
@@ -1024,7 +1085,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
           itemFrames
               ? selection.Phase
               : (capture ? std::array<int32_t, 3>{5, 6, 12}[selected] : 5);
-      const int32_t slide = capture && selected == 2 ? 137 : 0;
+      const int32_t slide = capture && !captureDialog && selected == 2 ? 137 : 0;
       if (menuChrome) {
         const auto chrome =
             BuildProfileMenuChrome(chromeEnvironment->Chrome, phase, slide);
@@ -1042,6 +1103,10 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
       std::optional<std::array<UiRenderCommand, 2>> portraitDraws;
       std::optional<ProfileHudDraws> hudDraws;
       std::vector<UiSpriteBlit> navigationDraws;
+      std::optional<DialogFrameDraws> dialogFrame;
+      std::vector<UiSpriteBlit> dialogDecoration;
+      std::vector<UiTextBlit> dialogPrompt;
+      std::vector<DialogButtonDraws> dialogButtons;
       if (itemScene) {
         std::array<std::array<int32_t, 2>, 8> offsets;
         for (size_t i = 0; i < 8; ++i)
@@ -1099,6 +1164,42 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
         for (const auto& blit : navigationDraws)
           renderer.DrawQuad(blit, renderer.Textures.at(blit.Texture), false);
         GlCheck("profile item content pass");
+        if (dialog.Visible) {
+          const auto progress = dialog.Opacity.Current;
+          dialogFrame = BuildDialogFrame(
+              *dialogEnvironment, {480, 272}, dialogLayout.Width,
+              dialogLayout.BodyHeight, progress, {0, 0, 0, 90});
+          UiSpriteBlit overlay;
+          overlay.Destination = dialogFrame->Overlay.Rectangle;
+          overlay.Color = dialogFrame->Overlay.Color;
+          renderer.DrawQuad(overlay, {0, 1, 1}, true);
+          for (const auto& b : dialogFrame->Tiles)
+            renderer.DrawQuad(b, renderer.Textures.at(b.Texture), false);
+          dialogDecoration =
+              BuildDialogDecoration(*dialogEnvironment, *dialogFrame, progress);
+          for (const auto& b : dialogDecoration)
+            renderer.DrawQuad(b, renderer.Textures.at(b.Texture), false);
+          dialogPrompt = BuildPlainTextDraws(
+              promptLayout, dialogLayout.PromptPosition,
+              uint32_t(utility->Size), dialogEnvironment->Colors[0],
+              uint8_t(progress * 255 / 100));
+          for (const auto& t : dialogPrompt)
+            fontTextures.DrawString(renderer, *font, t.Text, t.Position[0],
+                                    t.Position[1], t.Size, t.Color);
+          dialogButtons = BuildDialogButtons(
+              *dialogEnvironment, {480, 272}, dialogLayout,
+              dialogEnvironment->ButtonGroups[1], dialog.Selected,
+              dialog.FocusEnabled, progress, utility->Size, font->Cached(),
+              font->NominalSize());
+          for (const auto& button : dialogButtons) {
+            for (const auto& b : button.Background)
+              renderer.DrawQuad(b, renderer.Textures.at(b.Texture), false);
+            const auto& t = button.Label;
+            fontTextures.DrawString(renderer, *font, t.Text, t.Position[0],
+                                    t.Position[1], t.Size, t.Color);
+          }
+          GlCheck("profile confirmation pass");
+        }
       }
       if (capture) {
         const auto filename = std::to_string(selected) + ".bmp";
@@ -1227,6 +1328,41 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
           }
           report << ']';
         }
+        if(itemScene) {
+          report << ",\"dialog\":{\"visible\":"
+                 << (dialog.Visible ? "true" : "false")
+                 << ",\"phase\":" << dialog.Phase
+                 << ",\"pending\":" << dialog.PendingPhase.value_or(-1)
+                 << ",\"selected\":" << dialog.Selected
+                 << ",\"result\":" << dialog.Result
+                 << ",\"focus\":" << (dialog.FocusEnabled ? "true" : "false")
+                 << ",\"canceled\":" << (dialog.Canceled ? "true" : "false")
+                 << ",\"opacity\":" << dialog.Opacity.Current
+                 << "},\"dialog_draws\":[";
+          bool first = true;
+          const auto sprite = [&](const UiSpriteBlit& b) {
+            if (!first) report << ',';
+            first = false;
+            WriteUiBlit(report, b);
+          };
+          const auto text = [&](const UiTextBlit& t) {
+            if (!first) report << ',';
+            first = false;
+            WriteDescription(report, -1, t);
+          };
+          if (dialogFrame) {
+            WriteUiCommand(report, dialogFrame->Overlay);
+            first = false;
+            for (const auto& b : dialogFrame->Tiles) sprite(b);
+            for (const auto& b : dialogDecoration) sprite(b);
+            for (const auto& t : dialogPrompt) text(t);
+            for (const auto& button : dialogButtons) {
+              for (const auto& b : button.Background) sprite(b);
+              text(button.Label);
+            }
+          }
+          report << ']';
+        }
         report << "}\n";
         if (++selected == times.size()) quit = true;
       }
@@ -1250,9 +1386,9 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
 }
 int RunProfileItemsViewer(const std::filesystem::path& usrdir, size_t scene,
                           const std::filesystem::path& captureDirectory,
-                          bool captureNavigation) {
+                          bool captureNavigation, bool captureDialog) {
   return RunProfileBackdropViewer(
       usrdir / "resource.dat", usrdir / "env/env_otaku_mode.dat",
-      captureDirectory, true, true, scene, captureNavigation);
+      captureDirectory, true, true, scene, captureNavigation, captureDialog);
 }
 }  // namespace Impacto::Saekano

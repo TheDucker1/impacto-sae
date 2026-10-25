@@ -66,6 +66,7 @@ PlainTextLayout LayoutPlainText(std::u16string_view text,
   if (text.find_first_of(format.Tokens[2]) != std::u16string::npos)
     throw UnsupportedCommand("styled text requires layout ranges");
   PlainTextLayout result;
+  result.Scale = scale;
   result.LineCount = 0;
   uint32_t x = 0, y = 0;
   uint32_t line = 0;
@@ -116,6 +117,56 @@ PlainTextLayout LayoutPlainText(std::u16string_view text,
   }
   if (start < text.size()) emit(text.size());
   if (!result.LineCount) result.LineCount = 1;
+  // Original14ffa measures the emitted character itself. Its quote-width
+  // substitution belongs only to the line-break traversal above.
+  for (const auto& row : result.Lines) {
+    uint32_t glyphX = row.X;
+    for (size_t i = 0; i < row.Text.size(); ++i) {
+      const auto character = row.Text[i];
+      const auto measured = MeasurePvfText(
+          font, std::u16string_view(&character, 1), utilitySize, nominalSize);
+      const auto rawAdvance = std::bit_cast<int16_t>(uint16_t(measured));
+      result.Glyphs.push_back({character,
+                               {std::bit_cast<int16_t>(uint16_t(glyphX)),
+                                std::bit_cast<int16_t>(uint16_t(row.Y))},
+                               rawAdvance,
+                               uint16_t(row.Begin + i),
+                               uint16_t(row.Line)});
+      const float scaled = float(rawAdvance) * scale;
+      const int32_t step = scaled >= 2147483648.0f    ? INT32_MAX
+                           : scaled <= -2147483648.0f ? INT32_MIN
+                                                      : int32_t(scaled);
+      glyphX += uint32_t(step);
+    }
+  }
+  return result;
+}
+std::vector<UiTextBlit> BuildPlainTextDraws(const PlainTextLayout& layout,
+                                            std::array<int32_t, 2> origin,
+                                            uint32_t utilitySize,
+                                            std::array<uint8_t, 4> color,
+                                            uint8_t opacity, bool shadow) {
+  if (utilitySize > uint32_t(INT32_MAX) || !std::isfinite(layout.Scale) ||
+      layout.Scale <= 0)
+    throw FormatError("invalid plain text drawing scale");
+  const float scaled = float(utilitySize) * layout.Scale;
+  const uint32_t size = scaled >= 4294967296.0f ? UINT32_MAX : uint32_t(scaled);
+  const auto add = [](int32_t a, int32_t b) {
+    return std::bit_cast<int32_t>(uint32_t(a) + uint32_t(b));
+  };
+  std::vector<UiTextBlit> result;
+  for (const auto& glyph : layout.Glyphs) {
+    const std::array<int32_t, 2> at{add(origin[0], glyph.Position[0]),
+                                    add(origin[1], glyph.Position[1])};
+    const auto text = std::u16string(1, glyph.Character);
+    // Native emits both calls even when alpha is zero.
+    result.push_back({text,
+                      {add(at[0], 1), add(at[1], 1)},
+                      size,
+                      {0, 0, 0, uint8_t(shadow ? opacity : 0)}});
+    color[3] = opacity;
+    result.push_back({text, at, size, color});
+  }
   return result;
 }
 void VoiceTextReveal::Prepare(std::string_view cp932,

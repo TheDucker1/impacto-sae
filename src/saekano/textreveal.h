@@ -3,6 +3,7 @@
 #include "gauge.h"
 #include "texttiming.h"
 #include "font.h"
+#include "uisprite.h"
 
 #include <string>
 
@@ -21,7 +22,15 @@ struct PlainTextLine {
   uint32_t X = 0, Y = 0, Begin = 0, Line = 0;
 };
 struct PlainTextLayout {
+  struct Glyph {
+    char16_t Character = 0;
+    std::array<int16_t, 2> Position{};
+    int16_t Advance = 0;
+    uint16_t Index = 0, Line = 0;
+  };
   std::vector<PlainTextLine> Lines;
+  std::vector<Glyph> Glyphs;
+  float Scale = 1;
   uint16_t LineCount = 1, Height = 0;
 };
 // Prepared/normalized UTF16, no inline style ranges; explicit positive scale.
@@ -32,6 +41,13 @@ PlainTextLayout LayoutPlainText(std::u16string_view prepared,
                                 const TextLayoutMetrics& metrics, int32_t width,
                                 float scale, uint32_t utilitySize,
                                 uint32_t nominalSize);
+// Fully revealed, plain mode3 glyph path used by the confirmation prompt.
+std::vector<UiTextBlit> BuildPlainTextDraws(const PlainTextLayout& layout,
+                                            std::array<int32_t, 2> origin,
+                                            uint32_t utilitySize,
+                                            std::array<uint8_t, 4> color,
+                                            uint8_t opacity,
+                                            bool shadow = true);
 struct TextGlyphReveal {
   bool Enabled = false;
   ScriptLinearTween Alpha;

@@ -259,7 +259,8 @@ int main(int argc, char* argv[]) {
   if (argc >= 2 && std::string_view(argv[1]) == "--saekano-profile-items") {
     if (argc == 4 ||
         (argc == 6 && (std::string_view(argv[4]) == "--capture" ||
-                       std::string_view(argv[4]) == "--capture-navigation"))) {
+                       std::string_view(argv[4]) == "--capture-navigation" ||
+                       std::string_view(argv[4]) == "--capture-dialog"))) {
       uint32_t scene = 0;
       const std::string_view text(argv[3]);
       const auto parsed =
@@ -267,11 +268,12 @@ int main(int argc, char* argv[]) {
       if (parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size())
         return Saekano::RunProfileItemsViewer(
             argv[2], scene, argc == 6 ? argv[5] : "",
-            argc == 6 && std::string_view(argv[4]) == "--capture-navigation");
+            argc == 6 && std::string_view(argv[4]) == "--capture-navigation",
+            argc == 6 && std::string_view(argv[4]) == "--capture-dialog");
     }
     ImpLog(LogLevel::Error, LogChannel::General,
            "Usage: --saekano-profile-items USRDIR SCENE [--capture DIRECTORY | "
-           "--capture-navigation DIRECTORY]\n");
+           "--capture-navigation DIRECTORY | --capture-dialog DIRECTORY]\n");
     return 1;
   }
   if (argc >= 2 && std::string_view(argv[1]) == "--saekano-font") {
