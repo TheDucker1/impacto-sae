@@ -336,6 +336,22 @@ std::vector<UiRenderCommand> BuildProfileResultLayers(
   sprite(main(12), definition);
   return commands;
 }
+ProfileResponseUiDraws BuildProfileResponseUi(
+    const ProfileResponseVisualEnvironment& environment, bool textRevealed,
+    float cursorOffset) {
+  ProfileResponseUiDraws result;
+  result.Window = ResolveUiSprite({ProfileTextureSection::Interface, -1, 1},
+                                  environment.Window);
+  if (textRevealed) {
+    for (auto sprite : environment.Cursors) {
+      sprite.Y = std::bit_cast<int32_t>(uint32_t(sprite.Y) +
+                                        uint32_t(Convert(cursorOffset)));
+      result.Cursors.push_back(
+          ResolveUiSprite({ProfileTextureSection::Interface, -1, 0}, sprite));
+    }
+  }
+  return result;
+}
 std::vector<UiSpriteBlit> BuildProfileResultOverlays(
     const ModeResultVisualEnvironment& environment,
     const MessageCursorEnvironment& cursors, const ProfileResultState& result,

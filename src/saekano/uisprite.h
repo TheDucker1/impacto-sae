@@ -76,6 +76,24 @@ struct MessageCursorEnvironment {
   size_t PrefixBytes = 0;
   static MessageCursorEnvironment Decode(std::span<const uint8_t> message);
 };
+struct ProfileResponseVisualEnvironment {
+  UiSpriteDefinition Window;
+  std::array<int32_t, 2> TextPosition{};
+  int32_t TextWidth = 0;
+  float TextScale = 0;
+  std::array<UiSpriteDefinition, 2> Cursors;
+  size_t PrefixBytes = 0;
+  static ProfileResponseVisualEnvironment Decode(std::span<const uint8_t> profile);
+};
+struct ProfileResponseUiDraws {
+  UiSpriteBlit Window;
+  std::vector<UiSpriteBlit> Cursors;
+};
+// Native51504..517f4, after background/actor. Caller draws response glyphs
+// between Window and Cursors and supplies the actual response reveal state.
+ProfileResponseUiDraws BuildProfileResponseUi(
+    const ProfileResponseVisualEnvironment& environment, bool textRevealed,
+    float cursorOffset);
 // Native510e0..5148a, after text: revealed/finished gate, two cursor hints
 // using the current float-channel sample, then the category outcome icon.
 std::vector<UiSpriteBlit> BuildProfileResultOverlays(

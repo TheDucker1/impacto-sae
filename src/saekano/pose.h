@@ -1,6 +1,7 @@
 #pragma once
 
 #include "image.h"
+#include "uisprite.h"
 
 namespace Impacto::Saekano {
 struct CharacterPoseSlot {
@@ -25,6 +26,16 @@ struct PreparedCharacterPose {
   std::array<int32_t, 12> Geometry{};
   std::array<ImagePixels, 15> Textures;
 };
+struct CurrentCharacterPoseDraw {
+  bool Visible = true;
+  int32_t Face = 0, EyePhase = 0, MouthFrame = 2, ScalePercent = 100;
+  std::array<int32_t, 2> Position{};
+  std::array<uint8_t, 4> Color{255,255,255,255};  // Raw renderer RGBA.
+};
+// Native63aa6's current-pose body/eye/mouth pass, with no prior pose/face
+// crossfade or auxiliary effects. Frame state comes from the live controllers.
+std::vector<UiSpriteBlit> BuildCurrentCharacterPose(
+    const PreparedCharacterPose& pose, const CurrentCharacterPoseDraw& state);
 class CharacterPoseDriver {
  public:
   virtual ~CharacterPoseDriver() = default;

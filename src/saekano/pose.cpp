@@ -4,6 +4,8 @@
 #include "resources.h"
 
 #include <algorithm>
+#include <bit>
+#include <cmath>
 #include <set>
 
 namespace Impacto::Saekano {
@@ -23,6 +25,65 @@ CharacterPoseCache FreshCharacterPoseCache() {
   cache.Known = true;
   for (auto& slot : cache.Slots) slot.Geometry = std::array<int32_t, 12>{};
   return cache;
+}
+std::vector<UiSpriteBlit> BuildCurrentCharacterPose(
+    const PreparedCharacterPose& pose, const CurrentCharacterPoseDraw& state) {
+  if (!state.Visible || !state.Color[3]) return {};
+  const auto& g = pose.Geometry;
+  if (pose.Pose < 0 || state.Face < 0 || state.Face >= 14 ||
+      state.EyePhase < 0 || state.EyePhase > 8 || state.MouthFrame < 0 ||
+      state.MouthFrame > 2 || g[2] < 0 || g[3] < 0 || g[6] < 0 || g[7] < 2 ||
+      g[10] < 0 || g[11] < 2)
+    throw FormatError("invalid current character pose draw inputs");
+  const auto add = [](int32_t a, int32_t b) {
+    return std::bit_cast<int32_t>(uint32_t(a) + uint32_t(b));
+  };
+  const auto sub = [](int32_t a, int32_t b) {
+    return std::bit_cast<int32_t>(uint32_t(a) - uint32_t(b));
+  };
+  const auto mul = [](int32_t a, int32_t b) {
+    return std::bit_cast<int32_t>(uint32_t(a) * uint32_t(b));
+  };
+  const auto integer = [](float value) {
+    if (std::isnan(value)) return int32_t(0);
+    if (value >= 2147483648.0f) return INT32_MAX;
+    if (value <= -2147483648.0f) return INT32_MIN;
+    return int32_t(value);
+  };
+  const float scale = float(state.ScalePercent) / 100.0f,
+              inverse = 1.0f - scale;
+  const auto key = [&](uint32_t entry) {
+    return ProfileTextureKey{ProfileTextureSection::CharacterPose, pose.Pose,
+                             entry};
+  };
+  const float width = float(g[2]) * scale, height = float(g[3]) * scale;
+  const auto bodyWidth = integer(scale > 0 ? width : -width),
+             bodyHeight = integer(scale > 0 ? height : -height);
+  std::vector<UiSpriteBlit> draws;
+  draws.push_back(
+      {key(0),
+       {sub(state.Position[0], bodyWidth / 2), state.Position[1], bodyWidth,
+        bodyHeight},
+       {0, 0, scale > 0 ? g[2] : sub(0, g[2]), scale > 0 ? g[3] : sub(0, g[3])},
+       state.Color});
+  const std::array<int32_t, 9> blinkRows{0, 1, 2, 1, 0, 1, 2, 1, 0};
+  const auto eyeSource = add(mul(g[7], blinkRows[size_t(state.EyePhase)]), 1);
+  const auto mouthSource =
+      add(add(mul(g[7], 3), mul(g[11], 2 - state.MouthFrame)), 1);
+  for (size_t part = 0; part < 2; ++part) {
+    const auto at = 4 + part * 4;
+    const auto x = add(sub(add(state.Position[0], g[at]), g[2] / 2),
+                       integer(float(sub(g[2] / 2, g[at])) * inverse));
+    const auto y = add(add(state.Position[1], g[at + 1]),
+                       integer(float(sub(0, g[at + 1])) * inverse));
+    const auto h = sub(g[at + 3], 2);
+    draws.push_back(
+        {key(uint32_t(state.Face + 1)),
+         {x, y, integer(float(g[at + 2]) * scale), integer(float(h) * scale)},
+         {0, part == 0 ? eyeSource : mouthSource, g[at + 2], h},
+         state.Color});
+  }
+  return draws;
 }
 std::optional<size_t> TouchCharacterPose(CharacterPoseCache& cache,
                                          int32_t pose) {

@@ -235,6 +235,25 @@ ProfileEnvironment ProfileEnvironment::Decode(std::span<const uint8_t> bytes) {
     if (duration < 0) throw FormatError("negative profile transition duration");
   return result;
 }
+ProfileResponseVisualEnvironment ProfileResponseVisualEnvironment::Decode(
+    std::span<const uint8_t> bytes) {
+  const auto profile = ProfileEnvironment::Decode(bytes);
+  EnvironmentCursor cursor(bytes);
+  cursor.Skip(profile.PrefixBytes);
+  ProfileResponseVisualEnvironment result;
+  result.Window = cursor.Sprite();                         // ec80
+  result.TextPosition = cursor.Vector();                   // eca4
+  result.TextWidth = cursor.Signed();                      // ecac
+  result.TextScale = std::bit_cast<float>(cursor.Word());  // ecb0
+  cursor.String();  // Confirmation prompt, not response text.
+  cursor.Skip(2 * 16);
+  for (auto& sprite : result.Cursors) sprite = cursor.Sprite();  // ed0c/ed30
+  result.PrefixBytes = cursor.Position();
+  if (result.TextWidth <= 0 || !std::isfinite(result.TextScale) ||
+      result.TextScale <= 0)
+    throw FormatError("invalid profile response text layout");
+  return result;
+}
 ProfileCursorEnvironment ProfileCursorEnvironment::Decode(
     std::span<const uint8_t> bytes) {
   const auto profile = ProfileEnvironment::Decode(bytes);
