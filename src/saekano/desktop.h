@@ -13,15 +13,16 @@ int RunModelViewer(const std::filesystem::path& resourceDat,
 int RunModelScenes(const std::filesystem::path& resourceDat,
                    const std::filesystem::path& environmentDat,
                    const std::filesystem::path& captureDirectory = {});
-int RunProfileBackdropViewer(
-    const std::filesystem::path& resourceDat,
-    const std::filesystem::path& environmentDat,
-    const std::filesystem::path& captureDirectory = {},
-    bool menuChrome = false, bool itemFrames = false,
-    std::optional<size_t> itemScene = {}, bool captureNavigation = false,
-    bool captureDialog = false);
+int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
+                             const std::filesystem::path& environmentDat,
+                             const std::filesystem::path& captureDirectory = {},
+                             bool menuChrome = false, bool itemFrames = false,
+                             std::optional<size_t> itemScene = {},
+                             bool captureNavigation = false,
+                             bool captureDialog = false,
+                             bool captureFlow = false);
 int RunProfileItemsViewer(const std::filesystem::path& usrdir, size_t scene,
-                           const std::filesystem::path& captureDirectory = {},
-                           bool captureNavigation = false,
-                           bool captureDialog = false);
+                          const std::filesystem::path& captureDirectory = {},
+                          bool captureNavigation = false,
+                          bool captureDialog = false, bool captureFlow = false);
 }  // namespace Impacto::Saekano

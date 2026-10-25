@@ -11,6 +11,9 @@
 #include "fontface.h"
 #include "dialog.h"
 #include "textreveal.h"
+#include "profilearchive.h"
+#include "profilemode.h"
+#include "musicplayback.h"
 #include "../io/memorystream.h"
 #include "../texture/texture.h"
 
@@ -395,6 +398,9 @@ void main(){
     glUniform1i(AlphaMode, 0);
     for (const auto& blit : blits)
       DrawQuad(blit, Textures.at(blit.Texture), false);
+    Execute(commands);
+  }
+  void Execute(std::span<const UiRenderCommand> commands) {
     if (!commands.empty()) {
       GLint bits = 0;
       glGetIntegerv(GL_STENCIL_BITS, &bits);
@@ -848,12 +854,14 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
                              const std::filesystem::path& captureDirectory,
                              bool menuChrome, bool itemFrames,
                              std::optional<size_t> itemScene,
-                             bool captureNavigation, bool captureDialog) {
+                             bool captureNavigation, bool captureDialog,
+                             bool captureFlow) {
   bool captureCreated = false;
   try {
     if (itemScene) itemFrames = true;
     if (itemFrames) menuChrome = true;
     const bool capture = !captureDirectory.empty();
+    const bool owningFlow = itemScene && (!capture || captureFlow);
     if (capture) {
       const auto output = std::filesystem::weakly_canonical(captureDirectory);
       for (const auto& input : {resourceDat, environmentDat}) {
@@ -989,7 +997,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
     std::vector<uint64_t> times{0, 1147, 8001};
     ProfileSelectionState selection;
     ProfileOwnerState previewOwner;
-    const std::array<int32_t,3> previewStatChanges{};
+    std::array<int32_t, 3> previewStatChanges{};
     if (itemFrames) {
       if (itemScene)
         previewOwner = MakeFreshProfileOwner(
@@ -1011,6 +1019,76 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
           times = {0, 1, 76, 151, 152, 153, 154, 303, 304, 305, 306};
       }
     }
+    std::unique_ptr<SemanticState> flowOwner;
+    std::unique_ptr<ArchiveBgmResources> flowMusic;
+    std::unique_ptr<MusicPlayback> flowPlayback;
+    std::unique_ptr<PlaybackProfileVoice> flowVoice;
+    std::unique_ptr<ArchiveProfileServices> flowServices;
+    std::unique_ptr<ProfileMode> flowMode;
+    TextFormatEnvironment flowFormat;
+    TextLayoutMetrics flowMetrics;
+    ModeResultVisualEnvironment flowResultVisual;
+    ModeResultEnvironment flowShared;
+    ProfileResponseVisualEnvironment flowResponseVisual;
+    ProfileCursorEnvironment flowCursorEnvironment;
+    MessageCursorEnvironment flowMessageCursor;
+    ProfileCursorMotion flowCursor;
+    PlainTextLayout flowResultLayout, flowResponseLayout;
+    bool resultLaidOut = false, responseLaidOut = false, actorUploaded = false,
+         flowDone = false;
+    std::ofstream flowPcm;
+    size_t flowUiSoundRequests = 0;
+    if (owningFlow) {
+      const auto root = resourceDat.parent_path();
+      flowOwner = std::make_unique<SemanticState>();
+      InitializeFreshProfileEntry(
+          *flowOwner, ProfileInitialStats::Decode(read(environmentDat)),
+          catalog);
+      flowOwner->OtakuMode = int32_t(*itemScene);
+      flowFormat = TextFormatEnvironment::Decode(
+          read(root / "env/env_string_format.dat"), true);
+      flowMetrics =
+          TextLayoutMetrics::Decode(read(root / "env/env_global.dat"),
+                                    read(root / "env/env_message_window.dat"));
+      flowResultVisual = ModeResultVisualEnvironment::DecodeApproach(
+          read(root / "env/env_approach.dat"));
+      flowResponseVisual =
+          ProfileResponseVisualEnvironment::Decode(read(environmentDat));
+      flowCursorEnvironment =
+          ProfileCursorEnvironment::Decode(read(environmentDat));
+      flowMessageCursor = MessageCursorEnvironment::Decode(
+          read(root / "env/env_message_window.dat"));
+      flowMusic = std::make_unique<ArchiveBgmResources>(root);
+      flowPlayback = std::make_unique<MusicPlayback>(*flowMusic, capture);
+      // Fresh settings7350 writes S60236=10; fresh channel coefficient is1.
+      flowVoice =
+          std::make_unique<PlaybackProfileVoice>(*flowPlayback, 10, 1.0f);
+      flowServices = std::make_unique<ArchiveProfileServices>(
+          resources,
+          ScriptNameIndex::FromFirstArchive(read(root / "first.dat")),
+          flowFormat,
+          TextTimingEnvironment::Decode(read(root / "env/env_config.dat"),
+                                        true),
+          flowVoice.get());
+      flowShared = ModeResultEnvironment::DecodeApproach(
+          read(root / "env/env_approach.dat"));
+      flowMode = std::make_unique<ProfileMode>(
+          *flowOwner, *flowServices, *chromeEnvironment, flowShared, 0);
+      for (const auto& texture : flowServices->MenuTextures())
+        if (!renderer.Textures.contains(texture.Key))
+          renderer.Upload(texture.Key, texture.Pixels);
+      for (const auto id : {2u, 10u, 11u, 12u, 13u, 14u, 15u, 16u, 22u}) {
+        const ProfileTextureKey key{ProfileTextureSection::MainUi, -1, id};
+        renderer.Upload(
+            key, DecodeSceneImage(resources.LoadProfileTexture(key).Data));
+      }
+      if (captureFlow) {
+        times.clear();
+        for (uint64_t t = 0; t <= 40000; t += 100) times.push_back(t);
+        flowPcm.open(captureDirectory / "voice-output.pcm", std::ios::binary);
+        if (!flowPcm) throw FormatError("cannot create profile PCM output");
+      }
+    }
     size_t selected = 0;
     std::ofstream report;
     if (capture) {
@@ -1018,6 +1096,8 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
       if (!report) throw FormatError("cannot create profile frame report");
     }
     const auto epoch = SDL_GetTicks();
+    uint64_t previousFlowNow = 0, lastFlowSaved = 0;
+    std::string previousFlowSignature;
     bool quit = false;
     while (!quit) {
       SDL_Event event;
@@ -1043,7 +1123,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
           if (itemScene && event.key.key == SDLK_RIGHT)
             input.CharacterDirection = false;
           if (itemScene && event.key.key == SDLK_RETURN &&
-              (selection.Phase == 5 || selection.Phase == 6))
+              (owningFlow || selection.Phase == 5 || selection.Phase == 6))
             input.Accept = true;
           if (itemScene && event.key.key == SDLK_BACKSPACE &&
               selection.Phase == 6)
@@ -1052,6 +1132,30 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
       }
       if (quit) break;
       const uint64_t now = capture ? times[selected] : SDL_GetTicks() - epoch;
+      if (owningFlow) {
+        const auto delta = now - previousFlowNow;
+        flowPlayback->Update(float(delta) / 1000.0f);
+        if (captureFlow && delta) {
+          std::vector<int16_t> pcm(size_t(delta) * 48 * 2);
+          flowPlayback->Render(pcm);
+          flowPcm.write(reinterpret_cast<const char*>(pcm.data()),
+                        pcm.size() * sizeof(int16_t));
+        }
+        previousFlowNow = now;
+        if (captureFlow) {
+          if (flowMode->CurrentStage() == ProfileMode::Stage::Selection &&
+              (selection.Phase == 5 || selection.Phase == 6))
+            input.Accept = true;
+          if (dialog.Visible && dialog.Phase == 3) modalInput.Accept = true;
+          if (flowMode->CurrentStage() == ProfileMode::Stage::Result &&
+              flowMode->Phase() == 12)
+            input.Accept = now % 500 == 0;
+          if (flowMode->CurrentStage() == ProfileMode::Stage::Response &&
+              flowMode->Phase() == 17)
+            input.Accept =
+                flowServices->ResponseText().Revealed && flowVoice->Stopped();
+        }
+      }
       if (itemFrames) {
         if (captureNavigation) {
           if (selected == 0) input.CharacterDirection = true;
@@ -1061,13 +1165,35 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
           if (selected == 0) input.Accept = true;
           if (selected == 4) modalInput.Left = true;
           if (selected == 5) modalInput.Accept = true;
-        } else if (capture && selected == 0)
+        } else if (capture && !captureFlow && selected == 0)
           input.EventDirection = true;
         if (itemScene && selection.ConfirmationOpen && dialogBound) {
           UpdateDialog(dialog, modalInput, now);
           if (!dialog.Visible) input.Confirmation = dialog.Result == 1;
         }
-        UpdateProfileSelection(selection, *chromeEnvironment, input, now);
+        if (owningFlow) {
+          flowDone = flowMode->Update(*flowOwner, input, now);
+          selection = flowMode->Selection();
+          previewOwner = flowOwner->ProfileOwner;
+          previewStatChanges = {};
+          if (flowMode->CurrentStage() == ProfileMode::Stage::Result &&
+              flowMode->Result().Stats.Started)
+            for (size_t i = 0; i < 3; ++i)
+              previewStatChanges[i] =
+                  flowMode->Result().Stats.Changes[i].Current;
+          const bool cursorReady =
+              flowMode->CurrentStage() == ProfileMode::Stage::Result
+                  ? flowMode->Result().CursorTickRequested
+                  : flowMode->Response().CursorTickRequested;
+          flowCursor.Update(flowCursorEnvironment, cursorReady, now);
+          for (const auto& request : flowOwner->PendingEvents) {
+            if (request.Kind == GameEventKind::StopBgm)
+              flowPlayback->Submit(request);
+            if (request.Kind == GameEventKind::Sound) ++flowUiSoundRequests;
+          }
+          flowOwner->PendingEvents.clear();
+        } else
+          UpdateProfileSelection(selection, *chromeEnvironment, input, now);
         if (itemScene && selection.ConfirmationOpen && !dialogBound) {
           BeginDialog(dialog, dialogLayout,
                       dialogEnvironment->ButtonGroups[1].size(), 1, false, true,
@@ -1077,25 +1203,37 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
         }
         if (!selection.ConfirmationOpen) dialogBound = false;
       }
-      wave.Update(now);
-      if (itemScene) arrowMotion.Update(now);
-      if (itemScene) navigationMotion.Update(now);
+      if (owningFlow) {
+        wave = flowMode->Wave();
+        arrowMotion = flowMode->Arrows();
+        navigationMotion = flowMode->Navigation();
+      } else {
+        wave.Update(now);
+        if (itemScene) arrowMotion.Update(now);
+        if (itemScene) navigationMotion.Update(now);
+      }
       int width = 0, height = 0;
       SdlCheck(SDL_GetWindowSizeInPixels(window.Window, &width, &height),
                "frame size");
       auto blits = BuildProfileBackdrop(environment, wave.Current);
       const int32_t phase =
-          itemFrames
+          owningFlow ? flowMode->Phase()
+          : itemFrames
               ? selection.Phase
               : (capture ? std::array<int32_t, 3>{5, 6, 12}[selected] : 5);
-      const int32_t slide = capture && !captureDialog && selected == 2 ? 137 : 0;
-      if (menuChrome) {
+      const int32_t slide = owningFlow
+                                ? flowMode->Result().SecondaryProgress.Current
+                            : capture && !captureDialog && selected == 2 ? 137
+                                                                         : 0;
+      const bool responseVisible = owningFlow && flowMode->Response().Visible;
+      if (responseVisible) blits.clear();
+      if (menuChrome && !responseVisible) {
         const auto chrome =
             BuildProfileMenuChrome(chromeEnvironment->Chrome, phase, slide);
         blits.insert(blits.end(), chrome.begin(), chrome.end());
       }
       std::vector<UiRenderCommand> commands;
-      if (itemFrames)
+      if (itemFrames && !responseVisible)
         commands =
             BuildProfileItemFramePass(chromeEnvironment->ItemFrames, phase, 960,
                                       544, selection.FrameOffsets);
@@ -1110,7 +1248,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
       std::vector<UiSpriteBlit> dialogDecoration;
       std::vector<UiTextBlit> dialogPrompt;
       std::vector<DialogButtonDraws> dialogButtons;
-      if (itemScene) {
+      if (itemScene && !responseVisible) {
         std::array<std::array<int32_t, 2>, 8> offsets;
         for (size_t i = 0; i < 8; ++i)
           offsets[i] = {selection.CarouselX[i].Current,
@@ -1204,7 +1342,111 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
           GlCheck("profile confirmation pass");
         }
       }
-      if (capture) {
+      std::vector<UiRenderCommand> flowResultCommands;
+      std::vector<UiSpriteBlit> flowActorDraws, flowOverlayDraws;
+      std::vector<UiTextBlit> flowTextDraws;
+      std::optional<ProfileResponseUiDraws> flowResponseDraws;
+      int32_t flowFade = 0;
+      if (owningFlow) {
+        const auto drawSprite = [&](const UiSpriteBlit& b) {
+          renderer.DrawQuad(b, renderer.Textures.at(b.Texture), false);
+        };
+        const auto drawText = [&](const VoiceTextReveal& text,
+                                  PlainTextLayout& layout, bool& laidOut,
+                                  int32_t textWidth, float scale,
+                                  std::array<int32_t, 2> origin) {
+          if (!text.Prepared) return;
+          if (!laidOut) {
+            layout = LayoutPlainText(
+                text.Text, flowFormat, font->Cached(), flowMetrics, textWidth,
+                scale, uint32_t(utility->Size), font->NominalSize());
+            laidOut = true;
+          }
+          flowTextDraws = BuildRevealingTextDraws(
+              layout, text, flowFormat, origin, uint32_t(utility->Size),
+              {0, 0, 0, 255}, 255);
+          for (const auto& t : flowTextDraws)
+            fontTextures.DrawString(renderer, *font, t.Text, t.Position[0],
+                                    t.Position[1], t.Size, t.Color);
+        };
+        if (responseVisible) {
+          const auto& response = flowMode->Response();
+          if (const auto* bg = flowServices->BackgroundPixels()) {
+            const ProfileTextureKey key{
+                ProfileTextureSection::ResponseBackground, response.Background,
+                0};
+            if (!renderer.Textures.contains(key)) renderer.Upload(key, *bg);
+            drawSprite({key,
+                        {0, 0, 960, 544},
+                        {0, 0, 960, 544},
+                        {255, 255, 255, 255}});
+          }
+          const auto* actor = flowServices->ActorPixels();
+          if (!actor)
+            throw FormatError("visible profile actor has no prepared pose");
+          if (!actorUploaded) {
+            for (size_t i = 0; i < actor->Textures.size(); ++i)
+              renderer.Upload({ProfileTextureSection::CharacterPose,
+                               actor->Pose, uint32_t(i)},
+                              actor->Textures[i]);
+            actorUploaded = true;
+          }
+          CurrentCharacterPoseDraw actorState;
+          actorState.Face = response.Event.Presentation[1];
+          actorState.Position = {700, 0};
+          actorState.MouthFrame = flowServices->Mouth().Frame;
+          flowActorDraws = BuildCurrentCharacterPose(*actor, actorState);
+          for (const auto& b : flowActorDraws) drawSprite(b);
+          flowResponseDraws = BuildProfileResponseUi(
+              flowResponseVisual, flowServices->ResponseText().Revealed,
+              flowCursor.Channel.Current);
+          drawSprite(flowResponseDraws->Window);
+          drawText(flowServices->ResponseText(), flowResponseLayout,
+                   responseLaidOut, flowResponseVisual.TextWidth,
+                   flowResponseVisual.TextScale,
+                   flowResponseVisual.TextPosition);
+          for (const auto& b : flowResponseDraws->Cursors) drawSprite(b);
+        } else if (flowMode->Result().Visible) {
+          flowResultCommands = BuildProfileResultLayers(
+              flowResultVisual, chromeEnvironment->ResultReflection,
+              flowMode->Result(), 960, 544);
+          renderer.Execute(flowResultCommands);
+          glUniform1i(renderer.AlphaMode, 0);
+          glDisable(GL_DEPTH_TEST);
+          glDisable(GL_STENCIL_TEST);
+          drawText(flowServices->ResultText(), flowResultLayout, resultLaidOut,
+                   flowResultVisual.TextWidth, flowResultVisual.TextScale,
+                   flowResultVisual.TextPosition);
+          flowOverlayDraws = BuildProfileResultOverlays(
+              flowResultVisual, flowMessageCursor, flowMode->Result(),
+              flowServices->ResultText().Revealed, flowCursor.Channel.Current);
+          for (const auto& b : flowOverlayDraws) drawSprite(b);
+        }
+        flowFade = flowMode->CurrentStage() == ProfileMode::Stage::Selection
+                       ? selection.Fade.Current
+                   : flowMode->CurrentStage() == ProfileMode::Stage::Result
+                       ? flowMode->Result().Fade.Current
+                       : flowMode->Response().Fade.Current;
+        if (flowFade) {
+          UiSpriteBlit fade;
+          fade.Destination = {0, 0, 960, 544};
+          fade.Color = {255, 255, 255, uint8_t(flowFade)};
+          renderer.DrawQuad(fade, {0, 1, 1}, true);
+        }
+        GlCheck("owning profile result/response composition");
+      }
+      const auto signature =
+          std::to_string(phase) + ":" + std::to_string(dialog.Phase) + ":" +
+          std::to_string(dialog.Opacity.Current / 50) + ":" +
+          std::to_string(responseLaidOut) + ":" +
+          std::to_string(owningFlow && flowServices->ResponseText().Revealed) +
+          ":" + std::to_string(owningFlow && flowVoice->Stopped());
+      const bool saveFlowFrame =
+          signature != previousFlowSignature ||
+          ((phase == 12 || phase == 17) && now - lastFlowSaved >= 2000);
+      if (capture && (!captureFlow || saveFlowFrame)) {
+        previousFlowSignature = signature;
+        lastFlowSaved = now;
         const auto filename = std::to_string(selected) + ".bmp";
         Capture(captureDirectory / filename, width, height);
         report << "{\"frame\":" << selected << ",\"file\":\"" << filename
@@ -1217,9 +1459,74 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
           WriteUiBlit(report, blits[i]);
         }
         report << ']';
+        if (owningFlow) {
+          const auto boolText = [](bool value) {
+            return value ? "true" : "false";
+          };
+          report << ",\"flow\":{\"stage\":" << int(flowMode->CurrentStage())
+                 << ",\"phase\":" << phase
+                 << ",\"complete\":" << boolText(flowDone)
+                 << ",\"target_script\":" << flowMode->TargetScript()
+                 << ",\"result_revealed\":"
+                 << boolText(flowServices->ResultText().Revealed)
+                 << ",\"response_revealed\":"
+                 << boolText(flowServices->ResponseText().Revealed)
+                 << ",\"voice_stopped\":" << boolText(flowVoice->Stopped())
+                 << ",\"voice_gain\":" << flowVoice->Gain()
+                 << ",\"white_fade\":" << flowFade << ",\"cursor_bits\":"
+                 << std::bit_cast<uint32_t>(flowCursor.Channel.Current)
+                 << ",\"mouth_frame\":" << flowServices->Mouth().Frame
+                 << ",\"ui_sound_requests\":" << flowUiSoundRequests
+                 << ",\"ui_sound_playback\":false,\"automatic_blink\":false,"
+                    "\"stats\":[";
+          for (size_t i = 0; i < 12; ++i) {
+            if (i) report << ',';
+            report << flowOwner->ProfileOwner.Stats[i];
+          }
+          report << "],\"result_samples\":[";
+          const auto& r = flowMode->Result();
+          const std::array<int32_t, 9> samples{
+              r.Primary.Current,          r.HorizontalOffset.Current,
+              r.HorizontalAlpha.Current,  r.VerticalOffset.Current,
+              r.VerticalAlpha.Current,    r.EntryCompletion.Current,
+              r.TextAlpha.Current,        r.ResultProgress.Current,
+              r.SecondaryProgress.Current};
+          for (size_t i = 0; i < samples.size(); ++i) {
+            if (i) report << ',';
+            report << samples[i];
+          }
+          const auto sprites = [&](std::string_view name, const auto& values) {
+            report << "],\"" << name << "\":[";
+            for (size_t i = 0; i < values.size(); ++i) {
+              if (i) report << ',';
+              WriteUiBlit(report, values[i]);
+            }
+          };
+          report << "],\"result_commands\":[";
+          for (size_t i = 0; i < flowResultCommands.size(); ++i) {
+            if (i) report << ',';
+            WriteUiCommand(report, flowResultCommands[i]);
+          }
+          sprites("actor_draws", flowActorDraws);
+          sprites("outcome_draws", flowOverlayDraws);
+          report << "],\"text_draws\":[";
+          for (size_t i = 0; i < flowTextDraws.size(); ++i) {
+            if (i) report << ',';
+            WriteDescription(report, -1, flowTextDraws[i]);
+          }
+          report << "],\"response_ui\":[";
+          if (flowResponseDraws) {
+            WriteUiBlit(report, flowResponseDraws->Window);
+            for (const auto& b : flowResponseDraws->Cursors) {
+              report << ',';
+              WriteUiBlit(report, b);
+            }
+          }
+          report << "]}";
+        }
         if (menuChrome)
           report << ",\"phase\":" << phase << ",\"result_slide\":" << slide;
-        if (itemFrames) {
+        if (itemFrames && !captureFlow) {
           report << ",\"selector\":" << selection.Selectors[selection.Ordinal]
                  << ",\"pending\":" << selection.PendingPhase.value_or(-1)
                  << ",\"frame_offsets\":[";
@@ -1367,14 +1674,22 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
           report << ']';
         }
         report << "}\n";
-        if (++selected == times.size()) quit = true;
       }
+      if (capture && ++selected == times.size()) quit = true;
+      if (flowDone) quit = true;
       SdlCheck(SDL_GL_SwapWindow(window.Window), "frame swap");
+      if (captureFlow) SDL_Delay(1);
       if (!capture) SDL_Delay(16);
     }
     if (capture) {
       report.close();
       if (!report) throw FormatError("cannot save profile frame report");
+    }
+    if (captureFlow) {
+      flowPcm.close();
+      if (!flowPcm) throw FormatError("cannot save profile PCM output");
+      if (!flowDone)
+        throw FormatError("owning profile capture did not finish within40s");
     }
     return 0;
   } catch (const std::exception& error) {
@@ -1389,9 +1704,11 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
 }
 int RunProfileItemsViewer(const std::filesystem::path& usrdir, size_t scene,
                           const std::filesystem::path& captureDirectory,
-                          bool captureNavigation, bool captureDialog) {
+                          bool captureNavigation, bool captureDialog,
+                          bool captureFlow) {
   return RunProfileBackdropViewer(
       usrdir / "resource.dat", usrdir / "env/env_otaku_mode.dat",
-      captureDirectory, true, true, scene, captureNavigation, captureDialog);
+      captureDirectory, true, true, scene, captureNavigation, captureDialog,
+      captureFlow);
 }
 }  // namespace Impacto::Saekano

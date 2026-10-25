@@ -126,6 +126,7 @@ struct ProfileResultState {
   bool Started = false, Visible = false, ResponseMode = false;
   bool SlidesActive = false, CompletionActive = false, TextAlphaActive = false;
   bool TextStarted = false, RevealRequested = false;
+  bool CursorTickRequested = false;
   int32_t Phase = 10;
   std::optional<int32_t> PendingPhase;
   int32_t CharacterId = 0;
@@ -167,6 +168,7 @@ struct ProfileResponseInput {
 };
 struct ProfileResponseState {
   bool Started = false, Visible = false, Completed = false;
+  bool CursorTickRequested = false;
   int32_t Phase = 15;
   std::optional<int32_t> PendingPhase;
   int32_t CharacterId = 0, Background = -1, TargetScript = -2;

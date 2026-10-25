@@ -622,6 +622,7 @@ bool UpdateProfileResult(SemanticState& state, ProfileResultState& result,
   CheckOwner(state.ProfileOwner);
   result.UiSounds.clear();
   result.RevealRequested = false;
+  result.CursorTickRequested = false;
   if (result.PendingPhase) {
     result.Phase = *result.PendingPhase;
     result.PendingPhase.reset();
@@ -701,6 +702,7 @@ bool UpdateProfileResult(SemanticState& state, ProfileResultState& result,
         result.TextAlphaActive = true;
       }
       result.TextAlpha.Tick(now);
+      result.CursorTickRequested = result.TextAlpha.Finished();
       if (result.TextAlpha.Finished() && input.Accept) {
         result.UiSounds.push_back(3);
         RequestProfileCategoryTrophy(state, result.Event);
@@ -764,6 +766,7 @@ bool UpdateProfileResponse(SemanticState& state, ProfileResponseState& response,
   if (!response.Started)
     throw UnsupportedCommand("profile response has not been initialized");
   response.Actions.clear();
+  response.CursorTickRequested = false;
   response.UiSounds.clear();
   if (response.Completed) return true;
   if (response.PendingPhase) {
@@ -795,6 +798,7 @@ bool UpdateProfileResponse(SemanticState& state, ProfileResponseState& response,
   }
   if (response.Phase == 17) {
     response.Actions.push_back(ProfileResponseAction::UpdatePresentation);
+    response.CursorTickRequested = input.TextRevealed;
     if (!input.TextRevealed) {
       if (input.Accept)
         response.Actions.push_back(ProfileResponseAction::RevealText);

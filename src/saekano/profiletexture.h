@@ -16,7 +16,9 @@ enum class ProfileTextureSection : uint32_t {
   // resource.dat/root1, held by ScenarioGameWrapper+bc for result drawing.
   MainUi = 0x101,
   // Prepared resource.dat/root6 pose textures; Character stores pose ID.
-  CharacterPose = 0x102
+  CharacterPose = 0x102,
+  ResponseBackground =
+      0x103  // Prepared scene background; Character is image ID.
 };
 struct ProfileTextureKey {
   ProfileTextureSection Section;
