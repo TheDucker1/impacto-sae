@@ -18,7 +18,8 @@ int RunProfileBackdropViewer(
     const std::filesystem::path& environmentDat,
     const std::filesystem::path& captureDirectory = {},
     bool menuChrome = false, bool itemFrames = false,
-    std::optional<size_t> itemScene = {});
+    std::optional<size_t> itemScene = {}, bool captureNavigation = false);
 int RunProfileItemsViewer(const std::filesystem::path& usrdir, size_t scene,
-                           const std::filesystem::path& captureDirectory = {});
+                           const std::filesystem::path& captureDirectory = {},
+                           bool captureNavigation = false);
 }  // namespace Impacto::Saekano

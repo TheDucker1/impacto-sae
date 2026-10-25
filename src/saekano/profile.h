@@ -24,6 +24,7 @@ struct ProfileEnvironment {
   ProfileArrowEnvironment Arrows;
   ProfilePortraitEnvironment Portrait;
   ProfileHudEnvironment Hud;
+  ProfileNavigationEnvironment Navigation;
   size_t PrefixBytes = 0;
   std::array<std::vector<std::u16string>, 3> ResultLabels;
   std::u16string ResultFormat;

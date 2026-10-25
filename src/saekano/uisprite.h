@@ -63,6 +63,11 @@ struct ProfileItemContentEnvironment {
 struct ProfileArrowEnvironment {
   std::array<UiSpriteDefinition, 2> Upper, Lower;
 };
+struct ProfileNavigationEnvironment {
+  std::array<UiSpriteDefinition, 2> Sprites;
+  float Travel = 0;
+  int32_t Duration = 0;
+};
 struct ProfilePortraitEnvironment {
   UiSpriteDefinition Sprite;
   std::array<int32_t, 4> Area{};

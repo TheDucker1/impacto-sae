@@ -36,6 +36,7 @@ class ProfileMode {
   const ProfileResponseState& Response() const { return response_; }
   const ProfileWaveAnimation& Wave() const { return wave_; }
   const ProfileArrowMotion& Arrows() const { return arrows_; }
+  const ProfileArrowMotion& Navigation() const { return navigation_; }
 
  private:
   ProfileServices& services_;
@@ -47,6 +48,7 @@ class ProfileMode {
   ProfileResponseState response_;
   ProfileWaveAnimation wave_;
   ProfileArrowMotion arrows_;
+  ProfileArrowMotion navigation_;
   bool UpdatePhases(SemanticState& state, const ProfileSelectionInput& input,
                     uint64_t now);
 };

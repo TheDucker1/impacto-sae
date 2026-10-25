@@ -5,8 +5,9 @@
 #include "uisprite.h"
 
 namespace Impacto::Saekano {
-// Native profile3d0: stock ease curve, endpoint reversal and previous-sample
-// publication to the two widgets. This is not clock-modulo oscillation.
+// Native profile398/3d0: stock ease curve, endpoint reversal and
+// previous-sample publication to the two widgets. This is not clock-modulo
+// oscillation.
 struct ProfileArrowMotion {
   bool Started = false;
   float Current = 0, From = 0, To = 0;
@@ -21,4 +22,7 @@ struct ProfileSelectionState;
 std::vector<UiSpriteBlit> BuildProfileArrows(
     const ProfileArrowEnvironment& environment,
     const ProfileSelectionState& selection, const ProfileArrowMotion& motion);
+std::vector<UiSpriteBlit> BuildProfileNavigation(
+    const ProfileNavigationEnvironment& environment, int32_t phase,
+    const ProfileArrowMotion& motion);
 }  // namespace Impacto::Saekano

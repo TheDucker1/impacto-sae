@@ -97,4 +97,21 @@ std::vector<UiSpriteBlit> BuildProfileArrows(
   }
   return result;
 }
+std::vector<UiSpriteBlit> BuildProfileNavigation(
+    const ProfileNavigationEnvironment& environment, int32_t phase,
+    const ProfileArrowMotion& motion) {
+  if (phase > 5) return {};
+  if (!motion.Started)
+    throw FormatError("profile navigation factory has not completed");
+  std::vector<UiSpriteBlit> result;
+  for (size_t i = 0; i < 2; ++i) {
+    auto sprite = environment.Sprites[i];
+    sprite.X = std::bit_cast<int32_t>(uint32_t(sprite.X) +
+                                      uint32_t(motion.Offsets[i]));
+    sprite.Color = {255, 255, 255, 255};
+    result.push_back(ResolveUiSprite({ProfileTextureSection::Interface, -1, 4},
+                                     sprite, i == 0 ? 1.0f : -1.0f, 1));
+  }
+  return result;
+}
 }  // namespace Impacto::Saekano

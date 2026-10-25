@@ -175,7 +175,9 @@ ProfileEnvironment ProfileEnvironment::Decode(std::span<const uint8_t> bytes) {
   result.Portrait.Sprite = cursor.Sprite();  // e8dc
   for (auto& value : result.Portrait.Area) value = cursor.Signed();  // e900
   result.Hud.CharacterName = cursor.Sprite();  // e910
-  cursor.Skip(2 * 36 + 2 * 4);
+  for (auto& sprite : result.Navigation.Sprites) sprite = cursor.Sprite();
+  result.Navigation.Travel = std::bit_cast<float>(cursor.Word());  // e97c
+  result.Navigation.Duration = cursor.Signed();  // e980
   result.ArrowTravel = std::bit_cast<float>(cursor.Word());  // e984
   result.ArrowDuration = cursor.Signed();  // e988
   for (auto& sprite : result.Arrows.Upper) sprite = cursor.Sprite();

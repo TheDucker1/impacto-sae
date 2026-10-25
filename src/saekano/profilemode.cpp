@@ -37,6 +37,7 @@ bool ProfileMode::Update(SemanticState& state,
   if (!done) {
     wave_.Update(now);
     if (arrows_.Started) arrows_.Update(now);
+    if (navigation_.Started) navigation_.Update(now);
   }
   return done;
 }
@@ -46,6 +47,8 @@ bool ProfileMode::UpdatePhases(SemanticState& state,
   if (stage_ == Stage::Loading) {
     if (!services_.MenuReady()) return false;
     arrows_.Begin(environment_.ArrowTravel, environment_.ArrowDuration, now);
+    navigation_.Begin(environment_.Navigation.Travel,
+                      environment_.Navigation.Duration, now);
     BeginProfileSelection(selection_, state.ProfileOwner, services_.Scene());
     stage_ = Stage::Selection;
   }

@@ -845,7 +845,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
                              const std::filesystem::path& environmentDat,
                              const std::filesystem::path& captureDirectory,
                              bool menuChrome, bool itemFrames,
-                             std::optional<size_t> itemScene) {
+                             std::optional<size_t> itemScene, bool captureNavigation) {
   bool captureCreated = false;
   try {
     if (itemScene) itemFrames = true;
@@ -923,7 +923,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
                       DecodeSceneImage(resources.LoadProfileTexture(key).Data));
     }
     if (itemScene) {
-      for (const auto id : {5u, 6u, 7u, 8u, 9u, 10u, 16u, 19u, 20u}) {
+      for (const auto id : {4u, 5u, 6u, 7u, 8u, 9u, 10u, 16u, 19u, 20u}) {
         const ProfileTextureKey key{ProfileTextureSection::Interface, -1, id};
         renderer.Upload(
             key, DecodeSceneImage(resources.LoadProfileTexture(key).Data));
@@ -948,7 +948,11 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
     if (itemScene)
       arrowMotion.Begin(chromeEnvironment->ArrowTravel,
                         chromeEnvironment->ArrowDuration, 0);
-    std::array<uint64_t, 3> times{0, 1147, 8001};
+    ProfileArrowMotion navigationMotion;
+    if (itemScene)
+      navigationMotion.Begin(chromeEnvironment->Navigation.Travel,
+                             chromeEnvironment->Navigation.Duration, 0);
+    std::vector<uint64_t> times{0, 1147, 8001};
     ProfileSelectionState selection;
     ProfileOwnerState previewOwner;
     const std::array<int32_t,3> previewStatChanges{};
@@ -962,6 +966,10 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
         selection.Phase = 6;
         times = {0, uint64_t(chromeEnvironment->Carousel) / 2,
                  uint64_t(chromeEnvironment->Carousel)};
+        if (captureNavigation) {
+          selection.Phase = 5;
+          times = {0, 500, 501, 502, 503};
+        }
       }
     }
     size_t selected = 0;
@@ -987,16 +995,27 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
             input.CharacterDirection = true;
           if (itemScene && event.key.key == SDLK_RIGHT)
             input.CharacterDirection = false;
+          if (itemScene && event.key.key == SDLK_RETURN && selection.Phase == 5)
+            input.Accept = true;
+          if (itemScene && event.key.key == SDLK_BACKSPACE &&
+              selection.Phase == 6)
+            input.Cancel = true;
         }
       }
       if (quit) break;
       const uint64_t now = capture ? times[selected] : SDL_GetTicks() - epoch;
       if (itemFrames) {
-        if (capture && selected == 0) input.EventDirection = true;
+        if (captureNavigation) {
+          if (selected == 0) input.CharacterDirection = true;
+          if (selected == 2) input.Accept = true;
+          if (selected == 3) input.Cancel = true;
+        } else if (capture && selected == 0)
+          input.EventDirection = true;
         UpdateProfileSelection(selection, *chromeEnvironment, input, now);
       }
       wave.Update(now);
       if (itemScene) arrowMotion.Update(now);
+      if (itemScene) navigationMotion.Update(now);
       int width = 0, height = 0;
       SdlCheck(SDL_GetWindowSizeInPixels(window.Window, &width, &height),
                "frame size");
@@ -1022,6 +1041,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
       std::vector<UiSpriteBlit> arrowDraws;
       std::optional<std::array<UiRenderCommand, 2>> portraitDraws;
       std::optional<ProfileHudDraws> hudDraws;
+      std::vector<UiSpriteBlit> navigationDraws;
       if (itemScene) {
         std::array<std::array<int32_t, 2>, 8> offsets;
         for (size_t i = 0; i < 8; ++i)
@@ -1074,6 +1094,10 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
         renderer.DrawQuad(portraitArea, {0, 1, 1}, true);
         for (const auto& blit : hudDraws->AfterPortrait)
           renderer.DrawQuad(blit,renderer.Textures.at(blit.Texture),false);
+        navigationDraws = BuildProfileNavigation(chromeEnvironment->Navigation,
+                                                 phase, navigationMotion);
+        for (const auto& blit : navigationDraws)
+          renderer.DrawQuad(blit, renderer.Textures.at(blit.Texture), false);
         GlCheck("profile item content pass");
       }
       if (capture) {
@@ -1187,6 +1211,22 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
           }
           report << ']';
         }
+        if (itemScene) {
+          report << ",\"navigation_motion\":{\"bits\":["
+                 << std::bit_cast<uint32_t>(navigationMotion.Current) << ','
+                 << std::bit_cast<uint32_t>(navigationMotion.From) << ','
+                 << std::bit_cast<uint32_t>(navigationMotion.To)
+                 << "],\"duration\":" << navigationMotion.Duration
+                 << ",\"epoch\":" << navigationMotion.Epoch
+                 << ",\"elapsed\":" << navigationMotion.Elapsed
+                 << ",\"offsets\":[" << navigationMotion.Offsets[0] << ','
+                 << navigationMotion.Offsets[1] << "]},\"navigation_draws\":[";
+          for (size_t i = 0; i < navigationDraws.size(); ++i) {
+            if (i) report << ',';
+            WriteUiBlit(report, navigationDraws[i]);
+          }
+          report << ']';
+        }
         report << "}\n";
         if (++selected == times.size()) quit = true;
       }
@@ -1209,9 +1249,10 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
   }
 }
 int RunProfileItemsViewer(const std::filesystem::path& usrdir, size_t scene,
-                          const std::filesystem::path& captureDirectory) {
-  return RunProfileBackdropViewer(usrdir / "resource.dat",
-                                  usrdir / "env/env_otaku_mode.dat",
-                                  captureDirectory, true, true, scene);
+                          const std::filesystem::path& captureDirectory,
+                          bool captureNavigation) {
+  return RunProfileBackdropViewer(
+      usrdir / "resource.dat", usrdir / "env/env_otaku_mode.dat",
+      captureDirectory, true, true, scene, captureNavigation);
 }
 }  // namespace Impacto::Saekano
