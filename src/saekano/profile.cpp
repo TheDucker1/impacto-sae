@@ -157,17 +157,25 @@ ProfileEnvironment ProfileEnvironment::Decode(std::span<const uint8_t> bytes) {
   cursor.Skip(3 * 36);
   result.WavePeriod = cursor.Signed();
   result.Chrome.Frame = cursor.Sprite();  // e734
-  cursor.Skip(36);  // e758
+  result.Hud.BeforePortrait = cursor.Sprite();  // e758
   result.Chrome.Header = cursor.Sprite();  // e77c
   result.Chrome.Stretch = cursor.Sprite();  // e7a0
   result.Chrome.StretchSize = cursor.Vector();  // e7c4
   result.Chrome.EarlyOverlay = cursor.Sprite();  // e7cc
   result.Chrome.LateOverlay = cursor.Sprite();  // e7f0
-  cursor.Skip(4 + 5 * 36);
-  cursor.Counted(4);  // Packed colors.
+  cursor.Skip(4);
+  for (auto& sprite : result.Hud.AfterPortrait) sprite = cursor.Sprite();
+  result.Hud.StatBar = cursor.Sprite();  // e8a8
+  const auto statColors = cursor.Count(4);
+  for (uint32_t i = 0; i < statColors; ++i) {
+    const auto color = cursor.Word();
+    result.Hud.StatColors.push_back({uint8_t(color >> 16), uint8_t(color >> 8),
+                                     uint8_t(color), uint8_t(color >> 24)});
+  }
   result.Portrait.Sprite = cursor.Sprite();  // e8dc
   for (auto& value : result.Portrait.Area) value = cursor.Signed();  // e900
-  cursor.Skip(3 * 36 + 2 * 4);
+  result.Hud.CharacterName = cursor.Sprite();  // e910
+  cursor.Skip(2 * 36 + 2 * 4);
   result.ArrowTravel = std::bit_cast<float>(cursor.Word());  // e984
   result.ArrowDuration = cursor.Signed();  // e988
   for (auto& sprite : result.Arrows.Upper) sprite = cursor.Sprite();

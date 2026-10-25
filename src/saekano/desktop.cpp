@@ -923,7 +923,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
                       DecodeSceneImage(resources.LoadProfileTexture(key).Data));
     }
     if (itemScene) {
-      for (const auto id : {10u, 16u, 19u}) {
+      for (const auto id : {5u, 6u, 7u, 8u, 9u, 10u, 16u, 19u, 20u}) {
         const ProfileTextureKey key{ProfileTextureSection::Interface, -1, id};
         renderer.Upload(
             key, DecodeSceneImage(resources.LoadProfileTexture(key).Data));
@@ -935,6 +935,11 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
         if (!renderer.Textures.contains(key))
           renderer.Upload(
               key, DecodeSceneImage(resources.LoadProfileTexture(key).Data));
+        const ProfileTextureKey nameKey{ProfileTextureSection::Interface, -1,
+                                        12u + uint32_t(character.Id)};
+        if (!renderer.Textures.contains(nameKey))
+          renderer.Upload(nameKey,
+              DecodeSceneImage(resources.LoadProfileTexture(nameKey).Data));
       }
     }
     ProfileWaveAnimation wave;
@@ -945,10 +950,11 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
                         chromeEnvironment->ArrowDuration, 0);
     std::array<uint64_t, 3> times{0, 1147, 8001};
     ProfileSelectionState selection;
+    ProfileOwnerState previewOwner;
+    const std::array<int32_t,3> previewStatChanges{};
     if (itemFrames) {
       // Explicit single-character diagnostic boundary. These preview inputs
       // do not initialize a new game or provide its persistent owner state.
-      ProfileOwnerState previewOwner;
       previewOwner.Known = true;
       BeginProfileSelection(selection, previewOwner,
                             itemScene ? authoredScene : ProfileScene(1));
@@ -1015,6 +1021,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
       std::optional<ProfileDescriptionDraws> description;
       std::vector<UiSpriteBlit> arrowDraws;
       std::optional<std::array<UiRenderCommand, 2>> portraitDraws;
+      std::optional<ProfileHudDraws> hudDraws;
       if (itemScene) {
         std::array<std::array<int32_t, 2>, 8> offsets;
         for (size_t i = 0; i < 8; ++i)
@@ -1043,6 +1050,19 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
                                        arrowMotion);
         for (const auto& arrow : arrowDraws)
           renderer.DrawQuad(arrow, renderer.Textures.at(arrow.Texture), false);
+        description = BuildProfileDescription(
+            *chromeEnvironment, phase, authoredScene.at(ordinal),
+            selection.Selectors.at(ordinal), catalog.at(ordinal).Rows,
+            utility->Size, descriptionFormat->Separator);
+        for (const auto& line : description->Lines)
+          fontTextures.DrawString(renderer, *font, line.Text, line.Position[0],
+                                  line.Position[1], line.Size, line.Color);
+        hudDraws = BuildProfileHud(chromeEnvironment->Hud,
+                                   authoredScene.at(ordinal).Id,
+                                   previewOwner.Stats, previewStatChanges);
+        renderer.DrawQuad(
+            hudDraws->BeforePortrait,
+            renderer.Textures.at(hudDraws->BeforePortrait.Texture), false);
         portraitDraws = BuildProfilePortrait(chromeEnvironment->Portrait,
                                              authoredScene, ordinal);
         renderer.DrawQuad(
@@ -1052,11 +1072,8 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
         portraitArea.Destination = (*portraitDraws)[1].Rectangle;
         portraitArea.Color = (*portraitDraws)[1].Color;
         renderer.DrawQuad(portraitArea, {0, 1, 1}, true);
-        description = BuildProfileDescription(*chromeEnvironment, phase,
-            authoredScene.at(ordinal), selection.Selectors.at(ordinal),
-            catalog.at(ordinal).Rows, utility->Size, descriptionFormat->Separator);
-        for (const auto& line : description->Lines)
-          fontTextures.DrawString(renderer,*font,line.Text,line.Position[0],line.Position[1],line.Size,line.Color);
+        for (const auto& blit : hudDraws->AfterPortrait)
+          renderer.DrawQuad(blit,renderer.Textures.at(blit.Texture),false);
         GlCheck("profile item content pass");
       }
       if (capture) {
@@ -1153,6 +1170,21 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
           WriteUiCommand(report, (*portraitDraws)[0]);
           report << ',';
           WriteUiCommand(report, (*portraitDraws)[1]);
+          report << ']';
+        }
+        if (hudDraws) {
+          report << ",\"hud_owner_stats\":[";
+          for (size_t i = 0; i < 12; ++i) {
+            if (i) report << ',';
+            report << previewOwner.Stats[i];
+          }
+          report << "],\"hud_stat_changes\":[0,0,0],\"hud_owner_source\":"
+                    "\"diagnostic_zero_stats\",\"hud_draws\":[";
+          WriteUiBlit(report, hudDraws->BeforePortrait);
+          for (const auto& blit : hudDraws->AfterPortrait) {
+            report << ',';
+            WriteUiBlit(report, blit);
+          }
           report << ']';
         }
         report << "}\n";

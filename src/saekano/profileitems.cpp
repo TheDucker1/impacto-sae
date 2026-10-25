@@ -287,4 +287,39 @@ std::array<UiRenderCommand, 2> BuildProfilePortrait(
   result[1].Color = {0, 0, 0, 0};
   return result;
 }
+ProfileHudDraws BuildProfileHud(const ProfileHudEnvironment& environment,
+                                int32_t characterId,
+                                std::span<const int32_t> ownerStats,
+                                std::span<const int32_t> changes) {
+  if (characterId < 0 || characterId >= 4 || ownerStats.size() != 12 ||
+      changes.size() != 3 || environment.StatColors.size() > 3)
+    throw FormatError("profile HUD stat inputs outside native capacity");
+  const auto key = [](uint32_t id) {
+    return ProfileTextureKey{ProfileTextureSection::Interface, -1, id};
+  };
+  const auto add = [](int32_t a, int32_t b) {
+    return std::bit_cast<int32_t>(uint32_t(a) + uint32_t(b));
+  };
+  ProfileHudDraws result;
+  result.BeforePortrait = ResolveUiSprite(key(9), environment.BeforePortrait);
+  constexpr std::array<uint32_t, 4> entries{20, 7, 8, 5};
+  for (size_t i = 0; i < 4; ++i)
+    result.AfterPortrait.push_back(
+        ResolveUiSprite(key(entries[i]), environment.AfterPortrait[i]));
+  for (size_t i = 0; i < environment.StatColors.size(); ++i) {
+    auto sprite = environment.StatBar;
+    const auto& base = environment.AfterPortrait[i + 1];
+    sprite.X = add(sprite.X, base.X);
+    sprite.Y = add(sprite.Y, base.Y);
+    sprite.Color = environment.StatColors[i];
+    const float ratio =
+        float(add(ownerStats[size_t(characterId) * 3 + i], changes[i])) /
+        100.0f;
+    result.AfterPortrait.push_back(
+        ResolveUiSprite(key(6), sprite, ratio > 1 ? 1 : ratio, 1));
+  }
+  result.AfterPortrait.push_back(ResolveUiSprite(
+      key(12 + uint32_t(characterId)), environment.CharacterName));
+  return result;
+}
 }  // namespace Impacto::Saekano

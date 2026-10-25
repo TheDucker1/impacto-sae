@@ -67,6 +67,12 @@ struct ProfilePortraitEnvironment {
   UiSpriteDefinition Sprite;
   std::array<int32_t, 4> Area{};
 };
+struct ProfileHudEnvironment {
+  UiSpriteDefinition BeforePortrait;
+  std::array<UiSpriteDefinition, 4> AfterPortrait;
+  UiSpriteDefinition StatBar, CharacterName;
+  std::vector<std::array<uint8_t, 4>> StatColors;
+};
 // Native800bf450..5b4: signed starts/destination ends, unsigned source ends.
 std::array<std::array<float, 4>, 4> ResolveUiQuad(
     const UiSpriteBlit& blit, uint32_t textureWidth, uint32_t textureHeight);

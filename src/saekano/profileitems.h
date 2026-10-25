@@ -33,6 +33,16 @@ struct ProfileCharacter;
 std::array<UiRenderCommand, 2> BuildProfilePortrait(
     const ProfilePortraitEnvironment& environment,
     std::span<const ProfileCharacter> scene, size_t ordinal);
+struct ProfileHudDraws {
+  UiSpriteBlit BeforePortrait;
+  std::vector<UiSpriteBlit> AfterPortrait;
+};
+// Native507f2..50acc. Actual owner stats and current animated changes are
+// inputs, indexed by Character.Id. No new-game values are inferred here.
+ProfileHudDraws BuildProfileHud(const ProfileHudEnvironment& environment,
+                                int32_t characterId,
+                                std::span<const int32_t> ownerStats,
+                                std::span<const int32_t> changes);
 struct ProfileItemSlotDraw {
   int32_t OwnerRow = 0, Category = 0;
   UiSpriteBlit Icon;
