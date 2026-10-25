@@ -174,6 +174,9 @@ struct MusicPlayback::Impl {
   std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> Channel;
   std::array<std::unique_ptr<Audio::OpenAL::OpenALAudioChannel>,4> SeChannels;
   std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> ProfileVoice;
+  std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> UiSound;
+  SystemSoundAssets* UiSounds = nullptr;
+  float UiSoundGain = 0;
   std::unique_ptr<HcaPlaybackStream> PreparedProfileVoice;
   bool HasProfileVoice = false;
   float OldMaster = Audio::MasterVolume;
@@ -219,6 +222,8 @@ struct MusicPlayback::Impl {
           Audio::AC_BGM0, Audio::ACG_BGM);
       ProfileVoice = std::make_unique<Audio::OpenAL::OpenALAudioChannel>(
           Audio::AC_VOICE0, Audio::ACG_Voice);
+      UiSound = std::make_unique<Audio::OpenAL::OpenALAudioChannel>(
+          Audio::AC_SE0, Audio::ACG_SE);
       if (Sounds) for (size_t i=0; i<SeChannels.size(); ++i)
         SeChannels[i] = std::make_unique<Audio::OpenAL::OpenALAudioChannel>(
             Audio::AudioChannelId(int(Audio::AC_SSE0) + i), Audio::ACG_SE);
@@ -231,6 +236,7 @@ struct MusicPlayback::Impl {
   void Cleanup() {
     Channel.reset();
     ProfileVoice.reset();
+    UiSound.reset();
     PreparedProfileVoice.reset();
     for (auto& channel : SeChannels) channel.reset();
     alcMakeContextCurrent(nullptr);
@@ -296,6 +302,17 @@ void MusicPlayback::Submit(const GameEvent& event) {
     for (auto& channel : impl_->SeChannels) channel->SetVolume(gain);
     impl_->SeChannels[size_t(request.Channel - 2)]->Play(std::move(stream),
         impl_->Sounds->Info(request.Track).Loop, 0);
+  } else if (event.Kind == GameEventKind::Sound) {
+    if (!impl_->UiSounds)
+      throw UnsupportedCommand("UI sound bank/gain is not bound");
+    if (event.Id < 0) throw FormatError("negative UI sound ID");
+    auto asset = impl_->UiSounds->Load(size_t(event.Id));
+    auto reader = std::make_unique<HcaWaveReader>(std::move(asset.Data));
+    const bool loop = reader->Info().Loop;
+    auto stream = std::make_unique<HcaPlaybackStream>(
+        std::move(reader), event.Id, "first.dat/systemse");
+    impl_->UiSound->SetVolume(impl_->UiSoundGain);
+    impl_->UiSound->Play(std::move(stream), loop, 0);
   } else if (event.Kind == GameEventKind::StopSe) {
     if (!impl_->Sounds || event.Id < 2 || event.Id > 5)
       throw UnsupportedCommand("SE stop outside the four native SE channels");
@@ -311,11 +328,13 @@ void MusicPlayback::Update(float seconds) {
   impl_->Channel->Update(seconds);
   for (auto& channel : impl_->SeChannels) if (channel) channel->Update(seconds);
   impl_->ProfileVoice->Update(seconds);
+  impl_->UiSound->Update(seconds);
   AlCheck("BGM frame");
 }
 bool MusicPlayback::Playing() const {
   if (impl_->Channel->GetState() != Audio::ACS_Stopped) return true;
   if (impl_->ProfileVoice->GetState() != Audio::ACS_Stopped) return true;
+  if (UiSoundPlaying()) return true;
   for (auto& channel : impl_->SeChannels)
     if (channel && channel->GetState() != Audio::ACS_Stopped) return true;
   return false;
@@ -323,6 +342,15 @@ bool MusicPlayback::Playing() const {
 bool MusicPlayback::SoundPlaying(size_t logicalChannel) const {
   const auto& channel = impl_->SeChannels.at(logicalChannel);
   return channel && channel->GetState() != Audio::ACS_Stopped;
+}
+void MusicPlayback::BindUiSounds(SystemSoundAssets& resources, float gain) {
+  if (!std::isfinite(gain) || gain < 0 || gain > 1)
+    throw FormatError("UI sound gain outside supported range");
+  impl_->UiSounds = &resources;
+  impl_->UiSoundGain = gain;
+}
+bool MusicPlayback::UiSoundPlaying() const {
+  return impl_->UiSound->GetState() != Audio::ACS_Stopped;
 }
 void MusicPlayback::PrepareProfileVoice(Bytes encoded, float gain) {
   if (!std::isfinite(gain) || gain < 0 || gain > 1)
@@ -401,6 +429,84 @@ void MusicPlayback::Render(std::span<int16_t> output) {
   }
 }
 
+int RunUiSoundSession(const std::filesystem::path& usrdir,
+                      const std::filesystem::path& captureDirectory) {
+  bool created = false;
+  try {
+    CreateCaptureDirectory(usrdir, captureDirectory);
+    created = true;
+    std::ifstream first(usrdir / "first.dat", std::ios::binary);
+    if (!first) throw FormatError("cannot open original UI sound bank");
+    Bytes bytes{std::istreambuf_iterator<char>(first), {}};
+    if (first.bad()) throw FormatError("cannot read original UI sound bank");
+    SystemSoundAssets sounds(std::move(bytes));
+    ArchiveBgmResources music(usrdir);
+    if (!SDL_Init(SDL_INIT_EVENTS)) throw FormatError(SDL_GetError());
+    struct Cleanup {
+      ~Cleanup() { SDL_Quit(); }
+    } cleanup;
+    MusicPlayback playback(music, true);
+    const float gain = ProfileVoiceGain(8, 1.0f);
+    playback.BindUiSounds(sounds, gain);
+    auto play = [&](int32_t id) {
+      playback.Submit({GameEventKind::Sound, id});
+    };
+    auto render = [&](std::vector<int16_t>& pcm, size_t frames) {
+      const auto old = pcm.size();
+      pcm.resize(old + frames * 2);
+      playback.Render(std::span(pcm).subspan(old));
+    };
+    auto finish = [&](std::vector<int16_t>& pcm) {
+      size_t ticks = 0;
+      while (playback.UiSoundPlaying() && ticks++ < 500) render(pcm, 480);
+      if (playback.UiSoundPlaying())
+        throw FormatError("UI sound did not reach EOF");
+      render(pcm, 2400);
+    };
+    std::array<size_t, 2> counts{};
+    for (size_t i = 0; i < 2; ++i) {
+      const int32_t id = i == 0 ? 3 : 6;
+      play(id);
+      std::vector<int16_t> pcm;
+      finish(pcm);
+      counts[i] = pcm.size() / 2;
+      SaveWav(captureDirectory / ("sound" + std::to_string(id) + ".wav"), pcm);
+    }
+    play(3);
+    std::vector<int16_t> replacement;
+    render(replacement, 4800);
+    bool rejected = false;
+    try {
+      play(-1);
+    } catch (const FormatError&) {
+      rejected = true;
+    }
+    const bool preserved = rejected && playback.UiSoundPlaying();
+    if (!preserved)
+      throw FormatError("invalid UI request changed live channel");
+    play(6);
+    finish(replacement);
+    SaveWav(captureDirectory / "replacement.wav", replacement);
+    std::ofstream out(captureDirectory / "summary.json");
+    out << "{\"channel\":6,\"bank_entries\":" << sounds.Count()
+        << ",\"gain_bits\":" << std::bit_cast<uint32_t>(gain)
+        << ",\"sample_rate\":48000,\"channels\":2,\"frames\":[" << counts[0]
+        << ',' << counts[1]
+        << "],\"replacement_at_frame\":4800,\"replacement_frames\":"
+        << replacement.size() / 2
+        << ",\"invalid_request_preserves_channel\":true,\"stopped\":true}\n";
+    if (!out) throw FormatError("cannot write UI sound summary");
+    return 0;
+  } catch (const std::exception& error) {
+    if (created) {
+      std::ofstream out(captureDirectory / "error.txt");
+      out << error.what() << '\n';
+    }
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Saekano UI sound: %s",
+                 error.what());
+    return 1;
+  }
+}
 int RunMusicSession(const std::filesystem::path& usrdir, uint32_t track,
                     const std::filesystem::path& captureDirectory,
                     std::optional<uint32_t> soundChannel) {

@@ -28,6 +28,16 @@ class SharedUiAssets {
  private:
   GpdaArchive archive_;
 };
+// Native startup2c0b4 installs first.dat child7 as the UI channel6 bank.
+class SystemSoundAssets {
+ public:
+  explicit SystemSoundAssets(Bytes firstDat);
+  size_t Count() const { return archive_.Entries().size(); }
+  ResourceAsset Load(size_t entry) const;
+
+ private:
+  GpdaArchive archive_;
+};
 struct CharacterPoseAssets {
   Bytes Name;
   // Native pose record+18..44: main, eye and lip rectangles, four words each.

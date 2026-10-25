@@ -172,6 +172,9 @@ static void HandleArguments(std::vector<std::string_view> args) {
 };
 
 int main(int argc, char* argv[]) {
+  if (argc == 5 && std::string_view(argv[1]) == "--saekano-ui-sounds" &&
+      std::string_view(argv[3]) == "--capture")
+    return Saekano::RunUiSoundSession(argv[2], argv[4]);
 #ifdef EMSCRIPTEN
   EM_ASM(OnGameLoadStart(););
 #endif

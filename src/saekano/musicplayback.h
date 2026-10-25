@@ -4,6 +4,7 @@
 #include "profilevoiceoutput.h"
 
 namespace Impacto::Saekano {
+class SystemSoundAssets;
 // Saekano's audio host uses Impacto's existing OpenAL channel and the same
 // streaming HCA reader as headless verification. One host owns the AL context.
 class MusicPlayback {
@@ -16,6 +17,10 @@ class MusicPlayback {
   void Render(std::span<int16_t> stereoPcm);  // Offline 48kHz loopback only.
   bool Playing() const;
   bool SoundPlaying(size_t logicalChannel) const;
+  // Native UI channel6 is independent of SE2..5 and profile voice7.
+  // Caller supplies a known effective gain and preserves the asset lifetime.
+  void BindUiSounds(SystemSoundAssets& resources, float gain);
+  bool UiSoundPlaying() const;
   // Native profile channel7, mapped onto an existing Impacto voice channel.
   // Caller supplies known effective gain. Preparation parses/owns HCA bytes;
   // no playback or successful missing-channel stop is fabricated.
@@ -61,6 +66,8 @@ int RunMusicSession(const std::filesystem::path& usrdir, uint32_t track,
 int RunProfileVoiceSession(const std::filesystem::path& usrdir,
                            uint32_t character, uint32_t entry,
                            const std::filesystem::path& captureDirectory = {});
+int RunUiSoundSession(const std::filesystem::path& usrdir,
+                      const std::filesystem::path& captureDirectory);
 int RunProfileServiceSession(
     const std::filesystem::path& usrdir, uint32_t scene, uint32_t ordinal,
     uint8_t volume, const std::filesystem::path& captureDirectory = {});

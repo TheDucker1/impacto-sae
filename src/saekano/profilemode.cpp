@@ -70,8 +70,11 @@ bool ProfileMode::UpdatePhases(SemanticState& state,
     stage_ = Stage::Selection;
   }
   if (stage_ == Stage::Selection) {
-    if (!UpdateProfileSelection(selection_, environment_, input, now))
-      return false;
+    const bool done =
+        UpdateProfileSelection(selection_, environment_, input, now);
+    for (const auto sound : selection_.UiSounds)
+      state.PendingEvents.push_back({GameEventKind::Sound, sound});
+    if (!done) return false;
     BeginProfileResult(result_, services_.Scene(), selection_.Ordinal,
                        selection_.Selectors[selection_.Ordinal]);
     stage_ = Stage::Result;

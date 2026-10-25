@@ -1021,6 +1021,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
     }
     std::unique_ptr<SemanticState> flowOwner;
     std::unique_ptr<ArchiveBgmResources> flowMusic;
+    std::unique_ptr<SystemSoundAssets> flowSystemSounds;
     std::unique_ptr<MusicPlayback> flowPlayback;
     std::unique_ptr<PlaybackProfileVoice> flowVoice;
     std::unique_ptr<ArchiveProfileServices> flowServices;
@@ -1038,6 +1039,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
          flowDone = false;
     std::ofstream flowPcm;
     size_t flowUiSoundRequests = 0;
+    std::vector<std::array<int64_t, 2>> flowSoundHistory;
     uint32_t flowBlinkSeed = 0;
     if (owningFlow) {
       const auto root = resourceDat.parent_path();
@@ -1061,6 +1063,10 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
           read(root / "env/env_message_window.dat"));
       flowMusic = std::make_unique<ArchiveBgmResources>(root);
       flowPlayback = std::make_unique<MusicPlayback>(*flowMusic, capture);
+      flowSystemSounds =
+          std::make_unique<SystemSoundAssets>(read(root / "first.dat"));
+      // Fresh settings7350: option S60235=8; channel coefficient starts at1.
+      flowPlayback->BindUiSounds(*flowSystemSounds, ProfileVoiceGain(8, 1.0f));
       // Fresh settings7350 writes S60236=10; fresh channel coefficient is1.
       flowVoice =
           std::make_unique<PlaybackProfileVoice>(*flowPlayback, 10, 1.0f);
@@ -1105,6 +1111,12 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
     uint64_t previousFlowNow = 0, lastFlowSaved = 0;
     std::string previousFlowSignature;
     bool quit = false;
+    const auto submitUiSound = [&](int32_t id, uint64_t now) {
+      if (!owningFlow) return;
+      flowPlayback->Submit({GameEventKind::Sound, id});
+      ++flowUiSoundRequests;
+      flowSoundHistory.push_back({int64_t(now), id});
+    };
     while (!quit) {
       SDL_Event event;
       ProfileSelectionInput input;
@@ -1176,6 +1188,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
           input.EventDirection = true;
         if (itemScene && selection.ConfirmationOpen && dialogBound) {
           UpdateDialog(dialog, modalInput, now);
+          for (const auto sound : dialog.UiSounds) submitUiSound(sound, now);
           if (!dialog.Visible) input.Confirmation = dialog.Result == 1;
         }
         if (owningFlow) {
@@ -1196,7 +1209,8 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
           for (const auto& request : flowOwner->PendingEvents) {
             if (request.Kind == GameEventKind::StopBgm)
               flowPlayback->Submit(request);
-            if (request.Kind == GameEventKind::Sound) ++flowUiSoundRequests;
+            if (request.Kind == GameEventKind::Sound)
+              submitUiSound(request.Id, now);
           }
           flowOwner->PendingEvents.clear();
         } else
@@ -1207,6 +1221,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
                       now);
           dialogBound = true;
           UpdateDialog(dialog, modalInput, now);
+          for (const auto sound : dialog.UiSounds) submitUiSound(sound, now);
         }
         if (!selection.ConfirmationOpen) dialogBound = false;
       }
@@ -1489,7 +1504,16 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
                  << ",\"eye_phase\":" << flowServices->Blink().Phase
                  << ",\"blink_seed\":" << flowBlinkSeed
                  << ",\"blink_random_draws\":" << flowOwner->Random.Draws()
-                 << ",\"ui_sound_playback\":false,\"automatic_blink\":true,"
+                 << ",\"ui_sound_playback\":true,\"ui_sound_gain\":0.8"
+                 << ",\"ui_sound_active\":"
+                 << boolText(flowPlayback->UiSoundPlaying())
+                 << ",\"ui_sound_history\":[";
+          for (size_t i = 0; i < flowSoundHistory.size(); ++i) {
+            if (i) report << ',';
+            report << '[' << flowSoundHistory[i][0] << ','
+                   << flowSoundHistory[i][1] << ']';
+          }
+          report << "],\"automatic_blink\":true,"
                     "\"stats\":[";
           for (size_t i = 0; i < 12; ++i) {
             if (i) report << ',';

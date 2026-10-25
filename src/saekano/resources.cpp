@@ -90,6 +90,13 @@ GameResources::GameResources(const GpdaArchive& root)
 
 SharedUiAssets::SharedUiAssets(Bytes firstDat)
     : archive_(ResourceSection(GpdaArchive(std::move(firstDat)), 1)) {}
+SystemSoundAssets::SystemSoundAssets(Bytes firstDat)
+    : archive_(ResourceSection(GpdaArchive(std::move(firstDat)), 7)) {}
+ResourceAsset SystemSoundAssets::Load(size_t entry) const {
+  if (entry >= Count())
+    throw FormatError("UI sound ID outside original archive");
+  return {archive_.Entries()[entry].Name, RawEntry(archive_, entry)};
+}
 ResourceAsset SharedUiAssets::Load(size_t entry) const {
   if (entry >= Count())
     throw FormatError("shared UI entry outside original archive");

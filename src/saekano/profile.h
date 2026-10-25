@@ -88,6 +88,7 @@ struct ProfileSelectionInput {
   std::optional<bool> Confirmation;
 };
 struct ProfileSelectionState {
+  std::vector<int32_t> UiSounds;
   bool Started = false, ConfirmationOpen = false;
   int32_t Phase = 3;
   std::optional<int32_t> PendingPhase;

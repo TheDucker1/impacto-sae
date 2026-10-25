@@ -435,6 +435,7 @@ bool UpdateProfileSelection(ProfileSelectionState& selection,
                             const ProfileSelectionInput& input, uint64_t now) {
   if (!selection.Started)
     throw UnsupportedCommand("profile selection resources are not initialized");
+  selection.UiSounds.clear();
   if (selection.PendingPhase) {
     selection.Phase = *selection.PendingPhase;
     selection.PendingPhase.reset();
@@ -461,12 +462,15 @@ bool UpdateProfileSelection(ProfileSelectionState& selection,
   }
   if (selection.Phase == 5) {
     if (input.CharacterDirection) {
+      selection.UiSounds.push_back(2);
       const auto count = selection.CharacterCount;
       selection.Ordinal =
           (selection.Ordinal + (*input.CharacterDirection ? 1 : count - 1)) %
           count;
-    } else if (input.Accept)
+    } else if (input.Accept) {
+      selection.UiSounds.push_back(3);
       selection.PendingPhase = 6;
+    }
   }
   if (selection.Phase == 6) {
     selection.FrameOffsets = {};
@@ -474,6 +478,7 @@ bool UpdateProfileSelection(ProfileSelectionState& selection,
       if (environment.ItemFrames.Positions.size() < 8)
         throw UnsupportedCommand(
             "profile carousel requires eight authored positions");
+      selection.UiSounds.push_back(2);
       for (size_t i = 0; i < 8; ++i) {
         std::array<int32_t, 2> delta{};
         const bool hasNeighbor = *input.EventDirection ? i > 0 : i < 7;
@@ -491,10 +496,13 @@ bool UpdateProfileSelection(ProfileSelectionState& selection,
       }
       selection.PendingPhase = 7;
       selection.ArrowActive[*input.EventDirection ? 0 : 1] = true;
-    } else if (input.Accept)
+    } else if (input.Accept) {
+      selection.UiSounds.push_back(3);
       selection.PendingPhase = 8;
-    else if (input.Cancel && selection.CharacterCount != 1)
+    } else if (input.Cancel && selection.CharacterCount != 1) {
+      selection.UiSounds.push_back(4);
       selection.PendingPhase = 5;
+    }
   }
   if (selection.Phase == 7) {
     bool finished = true;
