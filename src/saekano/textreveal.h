@@ -2,6 +2,7 @@
 
 #include "gauge.h"
 #include "texttiming.h"
+#include "font.h"
 
 #include <string>
 
@@ -15,6 +16,22 @@ struct TextFormatEnvironment {
                                       bool readFontTokens = false);
 };
 std::u16string DecodeCp932(std::string_view text);
+struct PlainTextLine {
+  std::u16string Text;
+  uint32_t X = 0, Y = 0, Begin = 0, Line = 0;
+};
+struct PlainTextLayout {
+  std::vector<PlainTextLine> Lines;
+  uint16_t LineCount = 1, Height = 0;
+};
+// Prepared/normalized UTF16, no inline style ranges; explicit positive scale.
+// Native175d4..17b78 line traversal, kinsoku and utility-font measurements.
+PlainTextLayout LayoutPlainText(std::u16string_view prepared,
+                                const TextFormatEnvironment& format,
+                                const GsfFont& font,
+                                const TextLayoutMetrics& metrics, int32_t width,
+                                float scale, uint32_t utilitySize,
+                                uint32_t nominalSize);
 struct TextGlyphReveal {
   bool Enabled = false;
   ScriptLinearTween Alpha;

@@ -33,6 +33,9 @@ struct GsfFont {
 };
 // Native800b2ba0's PVF advance is fixed half/full width, not the TTF hmtx.
 uint32_t PvfGlyphAdvance(char16_t character, uint32_t pixelSize);
+// Native800b2c96 PVF-mode string measurement (distinct from draw advance).
+uint32_t MeasurePvfText(const GsfFont& font, std::u16string_view text,
+                        uint32_t pixelSize, uint32_t nominalSize);
 struct GsfGlyphDraw {
   uint16_t Atlas = 0;
   std::array<int32_t, 4> Destination{}, Source{};

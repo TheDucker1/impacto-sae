@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <limits>
 
 #ifdef _WIN32
@@ -52,6 +53,70 @@ std::u16string DecodeCp932(std::string_view text) {
   throw UnsupportedCommand(
       "CP932 conversion service is unavailable on this host");
 #endif
+}
+PlainTextLayout LayoutPlainText(std::u16string_view text,
+    const TextFormatEnvironment& format, const GsfFont& font,
+    const TextLayoutMetrics& metrics, int32_t width, float scale,
+    uint32_t utilitySize, uint32_t nominalSize) {
+  if (format.Following.size() < 6 || format.Following[3].empty() ||
+      format.Tokens[4].size() < 2 || width <= 0 || !std::isfinite(scale) ||
+      scale <= 0 || text.size() > 65535)
+    throw FormatError("invalid plain text layout inputs");
+  text = text.substr(0, text.find(u'\0'));
+  if (text.find_first_of(format.Tokens[2]) != std::u16string::npos)
+    throw UnsupportedCommand("styled text requires layout ranges");
+  PlainTextLayout result;
+  result.LineCount = 0;
+  uint32_t x = 0, y = 0;
+  uint32_t line = 0;
+  size_t start = 0;
+  const auto advance = metrics.LineAdvance(scale);
+  if (advance < 0) throw FormatError("negative plain text line advance");
+  auto emit = [&](size_t end) {
+    if (end < start || end > text.size())
+      throw FormatError("invalid plain text line extent");
+    result.Lines.push_back({std::u16string(text.substr(start, end - start)), 0,
+                            y, uint32_t(start), line++});
+    result.LineCount = uint16_t(line);
+    y += uint32_t(advance);
+    result.Height = uint16_t(y);
+  };
+  for (size_t i = 0; i < text.size(); ++i) {
+    const auto character =
+        text[i] == format.Tokens[4][0] ? format.Tokens[4][1] : text[i];
+    const auto measured = MeasurePvfText(
+        font, std::u16string_view(&character, 1), utilitySize, nominalSize);
+    const float scaled = float(measured) * scale;
+    if (scaled >= 2147483648.0f)
+      throw FormatError("plain text glyph width exceeds layout range");
+    const auto glyphWidth = uint32_t(int32_t(scaled));
+    const bool explicitBreak = text[i] == format.Following[3][0];
+    if (explicitBreak) {
+      emit(i);
+      start = i + 1;
+      x = 0;
+    }
+    if (uint64_t(x) + glyphWidth > uint32_t(width)) {
+      size_t split = i;
+      while (split > start + 1 &&
+             format.Following[4].find(text[split]) != std::u16string::npos)
+        --split;
+      const auto before = split == 0 ? 0 : split - 1;
+      size_t end = before;
+      while (end > start + 1 &&
+             format.Following[5].find(text[end]) != std::u16string::npos)
+        --end;
+      if (end != before) split = end + 1;
+      emit(split);
+      start = split;
+      i = split;
+      x = 0;
+    }
+    if (!explicitBreak) x += glyphWidth;
+  }
+  if (start < text.size()) emit(text.size());
+  if (!result.LineCount) result.LineCount = 1;
+  return result;
 }
 void VoiceTextReveal::Prepare(std::string_view cp932,
                               const TextFormatEnvironment& format,

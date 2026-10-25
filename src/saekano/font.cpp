@@ -120,6 +120,34 @@ uint32_t PvfGlyphAdvance(char16_t character, uint32_t pixelSize) {
     return pixelSize >> 1;
   return pixelSize;
 }
+uint32_t MeasurePvfText(const GsfFont& font, std::u16string_view text,
+                        uint32_t pixelSize, uint32_t nominalSize) {
+  if (!nominalSize || nominalSize > uint32_t(INT32_MAX))
+    throw FormatError("invalid PVF nominal measurement size");
+  const float scale = pixelSize ? float(pixelSize) / float(nominalSize) : 1;
+  uint32_t width = 0;
+  for (const auto character : text) {
+    const bool half = (character >= 0x20 && character <= 0x7e) ||
+                      (character >= 0xff61 && character <= 0xffa0);
+    const auto found = font.Glyphs.find(character);
+    const float base = found == font.Glyphs.end()
+                           ? float(nominalSize)
+                           : float(found->second.Width);
+    const float product = base * scale;
+    float next;
+    if (half)
+      next = float(width) + product * .5f;
+    else if (found != font.Glyphs.end()) {
+      const float padded = 1.0f + product;
+      next = padded + float(width);
+    } else
+      next = float(width) + product;
+    width = std::isnan(next) || next <= 0 ? 0
+            : next >= 4294967296.0f       ? UINT32_MAX
+                                          : uint32_t(next);
+  }
+  return width;
+}
 std::optional<GsfGlyphDraw> ResolveGsfGlyph(const GsfFont& font,
                                             char16_t character, int32_t x,
                                             int32_t y, uint32_t pixelSize) {
