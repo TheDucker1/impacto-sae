@@ -387,11 +387,26 @@ bool UpdateProfileSelection(ProfileSelectionState& selection,
       selection.PendingPhase = 6;
   }
   if (selection.Phase == 6) {
+    selection.FrameOffsets = {};
     if (input.EventDirection) {
-      selection.CarouselForward = *input.EventDirection;
-      // All eight native XY pairs share this duration. Their visual offsets
-      // remain the UI consumer's responsibility; selection changes at the end.
-      selection.Carousel.Start(0, 100, environment.Carousel, now);
+      if (environment.ItemFrames.Positions.size() < 8)
+        throw UnsupportedCommand(
+            "profile carousel requires eight authored positions");
+      for (size_t i = 0; i < 8; ++i) {
+        std::array<int32_t, 2> delta{};
+        const bool hasNeighbor = *input.EventDirection ? i > 0 : i < 7;
+        if (hasNeighbor) {
+          const auto& from = environment.ItemFrames.Positions[i];
+          const auto& to =
+              environment.ItemFrames
+                  .Positions[*input.EventDirection ? i - 1 : i + 1];
+          for (size_t axis = 0; axis < 2; ++axis)
+            delta[axis] = std::bit_cast<int32_t>(uint32_t(to[axis]) -
+                                                 uint32_t(from[axis]));
+        }
+        selection.CarouselX[i].Start(0, delta[0], environment.Carousel, now);
+        selection.CarouselY[i].Start(0, delta[1], environment.Carousel, now);
+      }
       selection.PendingPhase = 7;
     } else if (input.Accept)
       selection.PendingPhase = 8;
@@ -399,10 +414,23 @@ bool UpdateProfileSelection(ProfileSelectionState& selection,
       selection.PendingPhase = 5;
   }
   if (selection.Phase == 7) {
-    selection.Carousel.Tick(now);
-    if (selection.Carousel.Finished()) {
-      StepProfileSelector(selection.Selectors[selection.Ordinal],
-                          selection.CarouselForward);
+    bool finished = true;
+    for (size_t i = 0; i < 8; ++i) {
+      selection.CarouselX[i].Tick(now);
+      selection.CarouselY[i].Tick(now);
+      finished = finished && selection.CarouselX[i].Finished();
+      selection.FrameOffsets[i] = {selection.CarouselX[i].Current,
+                                   selection.CarouselY[i].Current};
+    }
+    if (finished) {
+      const auto direction = selection.CarouselY[3].To;
+      if (direction != 0)
+        StepProfileSelector(selection.Selectors[selection.Ordinal],
+                            direction < 0);
+      for (size_t i = 0; i < 8; ++i) {
+        selection.CarouselX[i].Start(0, 0, 0, now);
+        selection.CarouselY[i].Start(0, 0, 0, now);
+      }
       selection.PendingPhase = 6;
     }
   }

@@ -77,8 +77,11 @@ struct ProfileSelectionState {
   int32_t ReturnPhase = 5;
   size_t Ordinal = 0, CharacterCount = 0;
   std::array<uint32_t, 4> Selectors{};
-  ScriptLinearTween Fade, Carousel;
-  bool CarouselForward = false;
+  ScriptLinearTween Fade;
+  std::array<ScriptLinearTween, 8> CarouselX, CarouselY;
+  // Widget offsets retain the final sample for the completion frame, even
+  // after the content tweens have been reset and the selector has changed.
+  std::array<std::array<int32_t, 2>, 8> FrameOffsets{};
 };
 void BeginProfileSelection(ProfileSelectionState& selection,
                            const ProfileOwnerState& owner,

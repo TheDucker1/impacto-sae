@@ -709,7 +709,20 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
     }
     ProfileWaveAnimation wave;
     wave.Begin(environment.WavePeriod, 0);
-    const std::array<uint64_t, 3> times{0, 1147, 8001};
+    std::array<uint64_t, 3> times{0, 1147, 8001};
+    ProfileSelectionState selection;
+    if (itemFrames) {
+      // Explicit single-character diagnostic boundary. These preview inputs
+      // do not initialize a new game or provide its persistent owner state.
+      ProfileOwnerState previewOwner;
+      previewOwner.Known = true;
+      BeginProfileSelection(selection, previewOwner, ProfileScene(1));
+      if (capture) {
+        selection.Phase = 6;
+        times = {0, uint64_t(chromeEnvironment->Carousel) / 2,
+                 uint64_t(chromeEnvironment->Carousel)};
+      }
+    }
     size_t selected = 0;
     std::ofstream report;
     if (capture) {
@@ -720,19 +733,32 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
     bool quit = false;
     while (!quit) {
       SDL_Event event;
-      while (SDL_PollEvent(&event))
+      ProfileSelectionInput input;
+      while (SDL_PollEvent(&event)) {
         if (event.type == SDL_EVENT_QUIT ||
             (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE))
           quit = true;
+        if (itemFrames && event.type == SDL_EVENT_KEY_DOWN &&
+            !event.key.repeat) {
+          if (event.key.key == SDLK_UP) input.EventDirection = true;
+          if (event.key.key == SDLK_DOWN) input.EventDirection = false;
+        }
+      }
       if (quit) break;
       const uint64_t now = capture ? times[selected] : SDL_GetTicks() - epoch;
+      if (itemFrames) {
+        if (capture && selected == 0) input.EventDirection = true;
+        UpdateProfileSelection(selection, *chromeEnvironment, input, now);
+      }
       wave.Update(now);
       int width = 0, height = 0;
       SdlCheck(SDL_GetWindowSizeInPixels(window.Window, &width, &height),
                "frame size");
       auto blits = BuildProfileBackdrop(environment, wave.Current);
       const int32_t phase =
-          capture ? std::array<int32_t, 3>{5, 6, 12}[selected] : 5;
+          itemFrames
+              ? selection.Phase
+              : (capture ? std::array<int32_t, 3>{5, 6, 12}[selected] : 5);
       const int32_t slide = capture && selected == 2 ? 137 : 0;
       if (menuChrome) {
         const auto chrome =
@@ -741,8 +767,9 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
       }
       std::vector<UiRenderCommand> commands;
       if (itemFrames)
-        commands = BuildProfileItemFramePass(chromeEnvironment->ItemFrames,
-                                             phase, 960, 544);
+        commands =
+            BuildProfileItemFramePass(chromeEnvironment->ItemFrames, phase, 960,
+                                      544, selection.FrameOffsets);
       renderer.Draw(blits, width, height, commands);
       if (capture) {
         const auto filename = std::to_string(selected) + ".bmp";
@@ -760,6 +787,15 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
         if (menuChrome)
           report << ",\"phase\":" << phase << ",\"result_slide\":" << slide;
         if (itemFrames) {
+          report << ",\"selector\":" << selection.Selectors[selection.Ordinal]
+                 << ",\"pending\":" << selection.PendingPhase.value_or(-1)
+                 << ",\"frame_offsets\":[";
+          for (size_t i = 0; i < 8; ++i) {
+            if (i) report << ',';
+            report << '[' << selection.FrameOffsets[i][0] << ','
+                   << selection.FrameOffsets[i][1] << ']';
+          }
+          report << "]";
           const auto stencilName = std::to_string(selected) + ".stencil";
           std::vector<uint8_t> stencil(size_t(width) * size_t(height));
           glPixelStorei(GL_PACK_ALIGNMENT, 1);

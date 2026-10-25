@@ -58,7 +58,8 @@ struct ProfileItemFrameEnvironment {
 // Subsequent carousel movement must supply its updated widget geometry.
 std::vector<UiRenderCommand> BuildProfileItemFramePass(
     const ProfileItemFrameEnvironment& environment, int32_t phase,
-    int32_t canvasWidth, int32_t canvasHeight);
+    int32_t canvasWidth, int32_t canvasHeight,
+    std::span<const std::array<int32_t, 2>> frameOffsets = {});
 // Native4ff68..500a8. Caller supplies actual animation state, never an oracle.
 std::vector<UiSpriteBlit> BuildProfileBackdrop(
     const ProfileBackdropEnvironment& environment, int32_t waveOffset);

@@ -117,11 +117,14 @@ std::vector<UiSpriteBlit> BuildProfileMenuChrome(
 }
 std::vector<UiRenderCommand> BuildProfileItemFramePass(
     const ProfileItemFrameEnvironment& environment, int32_t phase,
-    int32_t canvasWidth, int32_t canvasHeight) {
+    int32_t canvasWidth, int32_t canvasHeight,
+    std::span<const std::array<int32_t, 2>> frameOffsets) {
   if (canvasWidth <= 0 || canvasHeight <= 0)
     throw FormatError("invalid profile mask canvas extent");
   if (environment.Positions.size() < 8)
     throw FormatError("profile item frames require eight authored positions");
+  if (!frameOffsets.empty() && frameOffsets.size() != 8)
+    throw FormatError("profile carousel frame offsets require eight rows");
   std::vector<UiRenderCommand> result;
   const auto state = [&](UiRenderKind kind, int32_t mode = 0) {
     UiRenderCommand command;
@@ -152,6 +155,12 @@ std::vector<UiRenderCommand> BuildProfileItemFramePass(
     auto sprite = environment.Sprite;
     sprite.X = environment.Positions[i][0];
     sprite.Y = environment.Positions[i][1];
+    if (!frameOffsets.empty()) {
+      sprite.X = std::bit_cast<int32_t>(uint32_t(sprite.X) +
+                                        uint32_t(frameOffsets[i][0]));
+      sprite.Y = std::bit_cast<int32_t>(uint32_t(sprite.Y) +
+                                        uint32_t(frameOffsets[i][1]));
+    }
     // Factory uses white local color, not the descriptor's tint. Widget draw
     // multiplies by the parent's phase-dependent byte color.
     const uint8_t tint = phase <= 5 ? 200 : 255;
