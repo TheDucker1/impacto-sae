@@ -79,4 +79,12 @@ struct VoiceTextReveal {
   void Update(uint64_t now);
   void Reveal(uint64_t now);
 };
+// Prepared mode0/mode1 glyphs, per-glyph alpha and FONT RGB ranges. Layout and
+// reveal must describe the same normalized text. Ruby/keyword/pause directives
+// and colored explicit-break ranges remain outside this profile subset.
+std::vector<UiTextBlit> BuildRevealingTextDraws(
+    const PlainTextLayout& layout, const VoiceTextReveal& reveal,
+    const TextFormatEnvironment& format, std::array<int32_t, 2> origin,
+    uint32_t utilitySize, std::array<uint8_t, 4> color, uint8_t opacity,
+    bool shadow = true);
 }  // namespace Impacto::Saekano

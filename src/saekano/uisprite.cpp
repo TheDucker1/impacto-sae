@@ -65,6 +65,35 @@ UiSpriteDefinition UiSpriteDefinition::Read(PayloadReader& reader) {
                   uint8_t(color >> 24)};
   return result;
 }
+UiSpriteDefinition UiSpriteDefinition::ReadLegacy(PayloadReader& reader) {
+  UiSpriteDefinition result;
+  result.Parameter = std::bit_cast<int16_t>(reader.U16());
+  result.Alignment = reader.I32();
+  result.X = reader.I32();
+  result.Y = reader.I32();
+  result.SourceX = reader.I32();
+  result.SourceY = reader.I32();
+  result.Width = reader.I32();
+  result.Height = reader.I32();
+  const auto color = reader.U32();
+  result.Color = {uint8_t(color >> 16), uint8_t(color >> 8), uint8_t(color),
+                  uint8_t(color >> 24)};
+  return result;
+}
+MessageCursorEnvironment MessageCursorEnvironment::Decode(
+    std::span<const uint8_t> bytes) {
+  if (bytes.size() < 3) throw FormatError("truncated message cursor flags");
+  PayloadReader reader(bytes.subspan(3));
+  for (size_t i = 0; i < 3; ++i) reader.U32();  // Colors.
+  for (size_t i = 0; i < 2; ++i) UiSpriteDefinition::ReadLegacy(reader);
+  for (size_t i = 0; i < 4; ++i) reader.U32();  // Rectangle.
+  for (size_t i = 0; i < 3; ++i) UiSpriteDefinition::ReadLegacy(reader);
+  MessageCursorEnvironment result;
+  for (auto& sprite : result.Sprites)
+    sprite = UiSpriteDefinition::ReadLegacy(reader);
+  result.PrefixBytes = bytes.size() - reader.Remaining();
+  return result;
+}
 UiSpriteBlit ResolveUiSprite(ProfileTextureKey texture,
                              const UiSpriteDefinition& sprite, float scaleX,
                              float scaleY) {
@@ -306,5 +335,35 @@ std::vector<UiRenderCommand> BuildProfileResultLayers(
   definition.Color[3] = uint8_t(result.HorizontalAlpha.Current);
   sprite(main(12), definition);
   return commands;
+}
+std::vector<UiSpriteBlit> BuildProfileResultOverlays(
+    const ModeResultVisualEnvironment& environment,
+    const MessageCursorEnvironment& cursors, const ProfileResultState& result,
+    bool textRevealed, float cursorOffset) {
+  if (!result.Visible) return {};
+  const auto category = result.Event.Values[1];
+  if (category < 0 || category >= 3)
+    throw FormatError("profile outcome outside authored category table");
+  const auto key = [](uint32_t entry) {
+    return ProfileTextureKey{ProfileTextureSection::MainUi, -1, entry};
+  };
+  std::vector<UiSpriteBlit> draws;
+  // Match this draw gate's unsigned deadline comparison, including wrap.
+  if (textRevealed && result.TextAlpha.Current == result.TextAlpha.To &&
+      result.TextAlpha.Epoch + result.TextAlpha.Duration <=
+          result.TextAlpha.Sample) {
+    for (size_t i = 0; i < 2; ++i) {
+      auto sprite = cursors.Sprites[i];
+      sprite.X = environment.CursorPositions[i][0];
+      sprite.Y =
+          std::bit_cast<int32_t>(uint32_t(environment.CursorPositions[i][1]) +
+                                 uint32_t(Convert(cursorOffset)));
+      draws.push_back(ResolveUiSprite(key(2), sprite));
+    }
+  }
+  auto outcome = environment.Outcomes[size_t(category)];
+  outcome.Color[3] = uint8_t(result.TextAlpha.Current);
+  draws.push_back(ResolveUiSprite(key(uint32_t(14 + category)), outcome));
+  return draws;
 }
 }  // namespace Impacto::Saekano

@@ -9,6 +9,7 @@ struct UiSpriteDefinition {
   int32_t SourceX = 0, SourceY = 0, Width = 0, Height = 0;
   std::array<uint8_t, 4> Color{};
   static UiSpriteDefinition Read(PayloadReader& reader);
+  static UiSpriteDefinition ReadLegacy(PayloadReader& reader);
 };
 struct UiSpriteBlit {
   ProfileTextureKey Texture;
@@ -54,6 +55,9 @@ struct ModeResultVisualEnvironment {
   UiSpriteDefinition Banner, ProgressFill, Frame, MaskedContent, Mask, EventIcon;
   std::array<UiSpriteDefinition, 3> Outcomes;
   std::array<int32_t, 2> TextPosition{};
+  int32_t TextWidth = 0;
+  float TextScale = 0;
+  std::array<std::array<int32_t, 2>, 2> CursorPositions{};
   int32_t OverlayAlpha = 0;
   std::vector<std::array<uint8_t, 4>> CharacterColors;
   size_t PrefixBytes = 0;
@@ -67,6 +71,17 @@ std::vector<UiRenderCommand> BuildProfileResultLayers(
     const ModeResultVisualEnvironment& environment,
     const UiSpriteDefinition& reflection, const ProfileResultState& result,
     int32_t canvasWidth, int32_t canvasHeight);
+struct MessageCursorEnvironment {
+  std::array<UiSpriteDefinition, 2> Sprites;
+  size_t PrefixBytes = 0;
+  static MessageCursorEnvironment Decode(std::span<const uint8_t> message);
+};
+// Native510e0..5148a, after text: revealed/finished gate, two cursor hints
+// using the current float-channel sample, then the category outcome icon.
+std::vector<UiSpriteBlit> BuildProfileResultOverlays(
+    const ModeResultVisualEnvironment& environment,
+    const MessageCursorEnvironment& cursors, const ProfileResultState& result,
+    bool textRevealed, float cursorOffset);
 struct ProfileItemFrameEnvironment {
   UiSpriteDefinition Sprite;
   std::vector<std::array<int32_t, 2>> Positions;

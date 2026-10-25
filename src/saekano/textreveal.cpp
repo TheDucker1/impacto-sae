@@ -319,4 +319,42 @@ void VoiceTextReveal::Reveal(uint64_t now) {
   }
   Revealed = true;
 }
+std::vector<UiTextBlit> BuildRevealingTextDraws(
+    const PlainTextLayout& layout, const VoiceTextReveal& reveal,
+    const TextFormatEnvironment& format, std::array<int32_t, 2> origin,
+    uint32_t utilitySize, std::array<uint8_t, 4> color, uint8_t opacity,
+    bool shadow) {
+  if (!reveal.Prepared || layout.Glyphs.size() != reveal.Glyphs.size() ||
+      format.Following.size() < 27 || format.Following[26].empty())
+    throw FormatError("revealing draw needs matching prepared glyphs/format");
+  for (const auto& range : reveal.Colors)
+    if (range.Begin > range.End || range.End > reveal.Glyphs.size())
+      throw FormatError("revealing text color range exceeds prepared glyphs");
+  auto draws =
+      BuildPlainTextDraws(layout, origin, utilitySize, color, opacity, shadow);
+  for (size_t i = 0; i < layout.Glyphs.size(); ++i) {
+    const auto& glyph = layout.Glyphs[i];
+    if (glyph.Index >= reveal.Text.size() ||
+        reveal.Text[glyph.Index] != glyph.Character)
+      throw FormatError("revealing layout belongs to different prepared text");
+    if (!reveal.Colors.empty() && glyph.Index != i)
+      throw UnsupportedCommand("colored explicit breaks require layout ranges");
+    const auto alpha = uint8_t(
+        std::bit_cast<int32_t>(uint32_t(reveal.Glyphs[i].Alpha.Current) *
+                               uint32_t(opacity)) /
+        255);
+    auto& foreground = draws[i * 2 + 1];
+    if (glyph.Character == format.Following[26][0])
+      foreground.Color = {255, 255, 255, opacity};
+    for (const auto& range : reveal.Colors) {
+      if (range.Begin <= glyph.Index && glyph.Index < range.End) {
+        std::copy(range.Rgb.begin(), range.Rgb.end(), foreground.Color.begin());
+        break;
+      }
+    }
+    foreground.Color[3] = alpha;
+    draws[i * 2].Color[3] = shadow ? alpha : 0;
+  }
+  return draws;
+}
 }  // namespace Impacto::Saekano

@@ -297,7 +297,8 @@ ApproachGaugeEnvironment ReadApproachGauge(
     visuals->MaskedContent = reader.VisualSprite();  // bc60
     visuals->Mask = reader.VisualSprite();  // bc84
     visuals->TextPosition = {reader.Word(), reader.Word()};  // bca8
-    reader.Skip(2 * 4);
+    visuals->TextWidth = reader.Word();  // bcb0
+    visuals->TextScale = std::bit_cast<float>(uint32_t(reader.Word()));  // bcb4
     visuals->EventIcon = reader.VisualSprite();  // bcb8
     visuals->Outcomes[1] = reader.VisualSprite();  // bcdc
     reader.Skip(34);  // bd00, unused by this draw pass.
@@ -355,7 +356,10 @@ ModeResultVisualEnvironment ModeResultVisualEnvironment::DecodeApproach(
   EnvironmentReader reader(bytes);
   ModeResultVisualEnvironment result;
   ReadApproachGauge(reader, &result);
-  reader.Skip((6 + 9) * 4 + 2 * 8 + 4);  // Timings, hint positions, bdec.
+  reader.Skip((6 + 9) * 4);  // Timings.
+  for (auto& position : result.CursorPositions)
+    position={reader.Word(),reader.Word()};  // bddc/bde4.
+  reader.Skip(4);  // bdec.
   result.OverlayAlpha = reader.Word();  // bdf0
   const auto colors = reader.Count(4);
   for (size_t i = 0; i < colors; ++i) {
