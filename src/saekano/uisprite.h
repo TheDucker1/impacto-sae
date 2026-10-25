@@ -60,6 +60,12 @@ struct ProfileItemContentEnvironment {
   std::array<int32_t, 2> LabelOffset{};
   float LabelScale = 0;
 };
+struct ProfileArrowEnvironment {
+  std::array<UiSpriteDefinition, 2> Upper, Lower;
+};
+// Native800bf450..5b4: signed starts/destination ends, unsigned source ends.
+std::array<std::array<float, 4>, 4> ResolveUiQuad(
+    const UiSpriteBlit& blit, uint32_t textureWidth, uint32_t textureHeight);
 struct UiTextBlit {
   std::u16string Text;
   std::array<int32_t, 2> Position{};

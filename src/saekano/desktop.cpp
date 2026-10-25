@@ -5,6 +5,7 @@
 #include "resources.h"
 #include "uisprite.h"
 #include "profilewave.h"
+#include "profilearrow.h"
 #include "profile.h"
 #include "profileitems.h"
 #include "fontface.h"
@@ -447,18 +448,12 @@ void main(){
   void DrawQuad(const UiSpriteBlit& blit, const BoundTexture& texture,
                 bool solid) {
     glUniform1i(Solid, solid ? 1 : 0);
-    if (blit.Source[2] < 0 || blit.Source[3] < 0)
-      throw UnsupportedCommand(
-          "mirrored UI sampling needs native backend binding");
-    const float x = float(blit.Destination[0]), y = float(blit.Destination[1]);
-    const float r = x + blit.Destination[2], b = y + blit.Destination[3];
-    const float u = float(blit.Source[0]) / texture.Width,
-                v = float(blit.Source[1]) / texture.Height;
-    const float ur = (float(blit.Source[0]) + blit.Source[2]) / texture.Width;
-    const float vb = (float(blit.Source[1]) + blit.Source[3]) / texture.Height;
-    const std::array<float, 24> vertices{x, y, u,  v,  r, y, ur, v,
-                                         x, b, u,  vb, x, b, u,  vb,
-                                         r, y, ur, v,  r, b, ur, vb};
+    const auto quad = ResolveUiQuad(blit, texture.Width, texture.Height);
+    std::array<float, 24> vertices;
+    constexpr std::array<size_t, 6> corners{0, 1, 2, 2, 1, 3};
+    for (size_t i = 0; i < corners.size(); ++i)
+      std::copy(quad[corners[i]].begin(), quad[corners[i]].end(),
+                vertices.begin() + i * 4);
     glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices.data());
     glBindTexture(GL_TEXTURE_2D, texture.Handle);
     glUniform4f(Tint, blit.Color[0] / 255.0f, blit.Color[1] / 255.0f,
@@ -928,7 +923,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
                       DecodeSceneImage(resources.LoadProfileTexture(key).Data));
     }
     if (itemScene) {
-      for (const auto id : {16u, 19u}) {
+      for (const auto id : {10u, 16u, 19u}) {
         const ProfileTextureKey key{ProfileTextureSection::Interface, -1, id};
         renderer.Upload(
             key, DecodeSceneImage(resources.LoadProfileTexture(key).Data));
@@ -936,6 +931,10 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
     }
     ProfileWaveAnimation wave;
     wave.Begin(environment.WavePeriod, 0);
+    ProfileArrowMotion arrowMotion;
+    if (itemScene)
+      arrowMotion.Begin(chromeEnvironment->ArrowTravel,
+                        chromeEnvironment->ArrowDuration, 0);
     std::array<uint64_t, 3> times{0, 1147, 8001};
     ProfileSelectionState selection;
     if (itemFrames) {
@@ -983,6 +982,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
         UpdateProfileSelection(selection, *chromeEnvironment, input, now);
       }
       wave.Update(now);
+      if (itemScene) arrowMotion.Update(now);
       int width = 0, height = 0;
       SdlCheck(SDL_GetWindowSizeInPixels(window.Window, &width, &height),
                "frame size");
@@ -1005,6 +1005,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
       renderer.Draw(blits, width, height, commands);
       std::optional<ProfileItemContents> itemContents;
       std::optional<ProfileDescriptionDraws> description;
+      std::vector<UiSpriteBlit> arrowDraws;
       if (itemScene) {
         std::array<std::array<int32_t, 2>, 8> offsets;
         for (size_t i = 0; i < 8; ++i)
@@ -1029,6 +1030,10 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
         glUniform1i(renderer.AlphaMode, 0);
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_STENCIL_TEST);
+        arrowDraws = BuildProfileArrows(chromeEnvironment->Arrows, selection,
+                                       arrowMotion);
+        for (const auto& arrow : arrowDraws)
+          renderer.DrawQuad(arrow, renderer.Textures.at(arrow.Texture), false);
         description = BuildProfileDescription(*chromeEnvironment, phase,
             authoredScene.at(ordinal), selection.Selectors.at(ordinal),
             catalog.at(ordinal).Rows, utility->Size, descriptionFormat->Separator);
@@ -1107,6 +1112,23 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
           report<<",\"description_draws\":[";
           for(size_t i=0;i<3;++i){if(i)report<<',';WriteDescription(report,description->OwnerRow,description->Lines[i]);}
           report<<']';
+        }
+        if (itemScene) {
+          report << ",\"arrow_active\":[" << selection.ArrowActive[0] << ','
+                 << selection.ArrowActive[1] << "],\"arrow_motion\":{\"bits\":["
+                 << std::bit_cast<uint32_t>(arrowMotion.Current) << ','
+                 << std::bit_cast<uint32_t>(arrowMotion.From) << ','
+                 << std::bit_cast<uint32_t>(arrowMotion.To)
+                 << "],\"duration\":" << arrowMotion.Duration
+                 << ",\"epoch\":" << arrowMotion.Epoch
+                 << ",\"elapsed\":" << arrowMotion.Elapsed << ",\"offsets\":["
+                 << arrowMotion.Offsets[0] << ',' << arrowMotion.Offsets[1]
+                 << "]},\"arrow_draws\":[";
+          for (size_t i = 0; i < arrowDraws.size(); ++i) {
+            if (i) report << ',';
+            WriteUiBlit(report, arrowDraws[i]);
+          }
+          report << ']';
         }
         report << "}\n";
         if (++selected == times.size()) quit = true;

@@ -168,7 +168,9 @@ ProfileEnvironment ProfileEnvironment::Decode(std::span<const uint8_t> bytes) {
   cursor.Skip(4 * 36 + 16 + 2 * 4);
   result.ArrowTravel = std::bit_cast<float>(cursor.Word());  // e984
   result.ArrowDuration = cursor.Signed();  // e988
-  cursor.Skip(4 * 36 + 2 * 16);
+  for (auto& sprite : result.Arrows.Upper) sprite = cursor.Sprite();
+  for (auto& sprite : result.Arrows.Lower) sprite = cursor.Sprite();
+  cursor.Skip(2 * 16);
   result.ItemFrames.Sprite = cursor.Sprite();  // ea3c
   const auto itemPositions = cursor.Count(8);
   for (uint32_t i = 0; i < itemPositions; ++i)
@@ -418,6 +420,7 @@ bool UpdateProfileSelection(ProfileSelectionState& selection,
         selection.CarouselY[i].Start(0, delta[1], environment.Carousel, now);
       }
       selection.PendingPhase = 7;
+      selection.ArrowActive[*input.EventDirection ? 0 : 1] = true;
     } else if (input.Accept)
       selection.PendingPhase = 8;
     else if (input.Cancel && selection.CharacterCount != 1)
@@ -442,6 +445,7 @@ bool UpdateProfileSelection(ProfileSelectionState& selection,
         selection.CarouselY[i].Start(0, 0, 0, now);
       }
       selection.PendingPhase = 6;
+      selection.ArrowActive = {};
     }
   }
   if (selection.Phase == 8) {

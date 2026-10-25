@@ -21,6 +21,7 @@ struct ProfileEnvironment {
   uint32_t DescriptionColumns = 0;
   float ArrowTravel = 0;
   int32_t ArrowDuration = 0;
+  ProfileArrowEnvironment Arrows;
   size_t PrefixBytes = 0;
   std::array<std::vector<std::u16string>, 3> ResultLabels;
   std::u16string ResultFormat;
@@ -88,6 +89,7 @@ struct ProfileSelectionState {
   // Widget offsets retain the final sample for the completion frame, even
   // after the content tweens have been reset and the selector has changed.
   std::array<std::array<int32_t, 2>, 8> FrameOffsets{};
+  std::array<bool, 2> ArrowActive{};
 };
 void BeginProfileSelection(ProfileSelectionState& selection,
                            const ProfileOwnerState& owner,

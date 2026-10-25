@@ -27,6 +27,29 @@ int32_t Anchor(int32_t coordinate, int32_t size, int32_t alignment) {
   return coordinate;
 }
 }  // namespace
+std::array<std::array<float, 4>, 4> ResolveUiQuad(
+    const UiSpriteBlit& blit, uint32_t textureWidth, uint32_t textureHeight) {
+  if (!textureWidth || !textureHeight)
+    throw FormatError("zero UI texture dimension");
+  const auto add = [](int32_t a, int32_t b) {
+    return std::bit_cast<int32_t>(uint32_t(a) + uint32_t(b));
+  };
+  const float x = float(blit.Destination[0]), y = float(blit.Destination[1]);
+  const float right = float(add(blit.Destination[0], blit.Destination[2]));
+  const float bottom = float(add(blit.Destination[1], blit.Destination[3]));
+  const float u = float(blit.Source[0]) / float(textureWidth),
+              v = float(blit.Source[1]) / float(textureHeight);
+  const float endU =
+      float(uint32_t(blit.Source[0]) + uint32_t(blit.Source[2])) /
+      float(textureWidth);
+  const float endV =
+      float(uint32_t(blit.Source[1]) + uint32_t(blit.Source[3])) /
+      float(textureHeight);
+  return {{{x, y, u, v},
+           {right, y, endU, v},
+           {x, bottom, u, endV},
+           {right, bottom, endU, endV}}};
+}
 UiSpriteDefinition UiSpriteDefinition::Read(PayloadReader& reader) {
   UiSpriteDefinition result;
   result.Parameter = reader.I32();

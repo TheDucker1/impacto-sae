@@ -1,5 +1,6 @@
 #include "profilearrow.h"
 #include "formats.h"
+#include "profile.h"
 
 #include <bit>
 #include <cmath>
@@ -76,5 +77,24 @@ void ProfileArrowMotion::Update(uint64_t now) {
     Epoch = now;
     Elapsed = 0;
   }
+}
+std::vector<UiSpriteBlit> BuildProfileArrows(
+    const ProfileArrowEnvironment& environment,
+    const ProfileSelectionState& selection, const ProfileArrowMotion& motion) {
+  if (selection.Phase != 6 && selection.Phase != 7) return {};
+  if (!motion.Started)
+    throw FormatError("profile arrow factory has not completed");
+  std::vector<UiSpriteBlit> result;
+  for (size_t i = 0; i < 2; ++i) {
+    auto sprite =
+        (i == 0 ? environment.Upper
+                : environment.Lower)[selection.ArrowActive[i] ? 0 : 1];
+    sprite.Y = std::bit_cast<int32_t>(uint32_t(sprite.Y) +
+                                      uint32_t(motion.Offsets[i]));
+    sprite.Color = {255, 255, 255, 255};
+    result.push_back(ResolveUiSprite({ProfileTextureSection::Interface, -1, 10},
+                                     sprite, 1, i == 0 ? 1.0f : -1.0f));
+  }
+  return result;
 }
 }  // namespace Impacto::Saekano

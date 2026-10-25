@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include "uisprite.h"
 
 namespace Impacto::Saekano {
 // Native profile3d0: stock ease curve, endpoint reversal and previous-sample
@@ -16,4 +17,8 @@ struct ProfileArrowMotion {
   void Begin(float travel, int32_t duration, uint64_t now);
   void Update(uint64_t now);
 };
+struct ProfileSelectionState;
+std::vector<UiSpriteBlit> BuildProfileArrows(
+    const ProfileArrowEnvironment& environment,
+    const ProfileSelectionState& selection, const ProfileArrowMotion& motion);
 }  // namespace Impacto::Saekano
