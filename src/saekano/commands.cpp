@@ -223,7 +223,7 @@ void CompleteCommand(SemanticState& state, uint16_t opcode,
       return;
     case 0x01fb: {
       const auto character = reader.U16();
-      EnsureCharacter(state, character).Priority = reader.U16();
+      SetCharacterPriority(state, character, reader.U16());
       return;
     }
     case 0x03ea: {

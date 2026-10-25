@@ -62,8 +62,15 @@ struct CharacterRuntime {
   uint32_t DefaultColor = 0;  // Native C2030, RGB in low-to-high byte order.
   std::vector<uint16_t> Foreground,
       Background;  // Ordered pointer lists; duplicates allowed.
+  // C14510 / manager14518. Reset sets0; a character save prefix alone does
+  // not contain this later context field. Never derive it from current actors.
+  std::optional<uint32_t> MaximumPriority;
 };
 CharacterState& EnsureCharacter(SemanticState& state, uint16_t id);
+void SetCharacterPriority(SemanticState& state, uint16_t id, uint16_t priority);
+// Native7cc98: ascending priority, then ascending map key, capped by C14510.
+// Includes hidden actors; visibility belongs to the actor draw callback.
+std::vector<uint16_t> SceneCharacterDrawOrder(const SemanticState& state);
 void RestoreNativeCharacters(SemanticState& state,
                              const NativeCharacterSavePrefix& saved,
                              uint64_t now);

@@ -42,6 +42,12 @@ struct CurrentCharacterPoseDraw {
   std::array<int32_t, 2> Position{};
   std::array<uint8_t, 4> Color{255,255,255,255};  // Raw renderer RGBA.
 };
+struct CharacterState;
+// Current-pose callback inputs from live integer tween samples and actor state.
+// Autonomous frame controllers and the actor quake sample are explicit inputs.
+CurrentCharacterPoseDraw CurrentSceneCharacterPoseState(
+    const CharacterState& actor, int32_t eyePhase, int32_t mouthFrame,
+    std::array<int32_t, 2> quake);
 // Native63aa6's current-pose body/eye/mouth pass, with no prior pose/face
 // crossfade or auxiliary effects. Frame state comes from the live controllers.
 std::vector<UiSpriteBlit> BuildCurrentCharacterPose(

@@ -49,6 +49,30 @@ CharacterPoseCache FreshCharacterPoseCache() {
   for (auto& slot : cache.Slots) slot.Geometry = std::array<int32_t, 12>{};
   return cache;
 }
+CurrentCharacterPoseDraw CurrentSceneCharacterPoseState(
+    const CharacterState& actor, int32_t eyePhase, int32_t mouthFrame,
+    std::array<int32_t, 2> quake) {
+  if (!actor.RuntimeKnown || !actor.Pose.Known)
+    throw UnsupportedCommand("scene character draw state is missing");
+  CurrentCharacterPoseDraw result;
+  result.Visible = actor.Pose.Ready;  // Native actor+2fc, not opacity.
+  result.Face = actor.Pose.Face;
+  result.EyePhase = eyePhase;
+  result.MouthFrame = mouthFrame;
+  const auto sample = [&](CharacterTween channel) {
+    return actor.Tweens[size_t(channel)].Current;
+  };
+  result.ScalePercent = sample(CharacterTween::Scale);
+  result.Position = {
+      std::bit_cast<int32_t>(uint32_t(sample(CharacterTween::X)) +
+                             uint32_t(quake[0])),
+      std::bit_cast<int32_t>(uint32_t(sample(CharacterTween::Y)) +
+                             uint32_t(quake[1]))};
+  // The native renderer consumes bytes R2f8,2f9,2fa; tween channels are RGB.
+  result.Color = {actor.Tint[2], actor.Tint[1], actor.Tint[0],
+                  uint8_t(sample(CharacterTween::Opacity))};
+  return result;
+}
 std::vector<UiSpriteBlit> BuildCurrentCharacterPose(
     const PreparedCharacterPose& pose, const CurrentCharacterPoseDraw& state) {
   if (!state.Visible || !state.Color[3]) return {};

@@ -49,6 +49,26 @@ CharacterState& EnsureCharacter(SemanticState& state, uint16_t id) {
   }
   return found->second;
 }
+void SetCharacterPriority(SemanticState& state, uint16_t id,
+                          uint16_t priority) {
+  EnsureCharacter(state, id).Priority = priority;
+  auto& maximum = state.CharacterRuntimeState.MaximumPriority;
+  if (maximum && *maximum < priority) maximum = priority;
+}
+std::vector<uint16_t> SceneCharacterDrawOrder(const SemanticState& state) {
+  RequireCharacters(state);
+  const auto maximum = state.CharacterRuntimeState.MaximumPriority;
+  if (!maximum)
+    throw UnsupportedCommand("scene character maximum priority is missing");
+  std::vector<uint16_t> result;
+  if (*maximum == UINT32_MAX) return result;  // Native wrapped max+1 ==0.
+  for (const auto& [id, actor] : state.Characters)
+    if (actor.Priority <= *maximum) result.push_back(id);
+  std::stable_sort(result.begin(), result.end(), [&](uint16_t a, uint16_t b) {
+    return state.Characters.at(a).Priority < state.Characters.at(b).Priority;
+  });
+  return result;
+}
 NativeCharacterSavePrefix DecodeNativeCharacterSavePrefix(
     std::span<const uint8_t> bytes) {
   const auto image = DecodeNativeImageSavePrefix(bytes);
