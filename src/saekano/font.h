@@ -3,6 +3,15 @@
 #include "image.h"
 
 namespace Impacto::Saekano {
+struct TextLayoutMetrics {
+  uint32_t Height = 0;
+  int32_t Leading = 0;
+  size_t GlobalPrefixBytes = 0, MessagePrefixBytes = 0;
+  static TextLayoutMetrics Decode(std::span<const uint8_t> global,
+                                  std::span<const uint8_t> message);
+  // Native177f4..17844 line advance; glyph widths/wrapping remain separate.
+  int32_t LineAdvance(float scale) const;
+};
 struct GameUtilityFont {
   std::array<uint8_t, 3> Flags{};
   int32_t Size = 0;

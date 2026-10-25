@@ -1,4 +1,5 @@
 #include "font.h"
+#include "commands.h"
 
 #include <bit>
 #include <algorithm>
@@ -6,6 +7,41 @@
 #include <limits>
 
 namespace Impacto::Saekano {
+TextLayoutMetrics TextLayoutMetrics::Decode(std::span<const uint8_t> global,
+                                            std::span<const uint8_t> message) {
+  if (global.size() < 3 || message.size() < 3 ||
+      global.size() > 32 * 1024 * 1024 || message.size() > 32 * 1024 * 1024)
+    throw FormatError("invalid text layout environment extent");
+  TextLayoutMetrics result;
+  PayloadReader g(global.subspan(3));
+  for (size_t i = 0; i < 4; ++i) g.String();
+  g.U32();
+  g.U32();
+  for (size_t i = 0; i < 9; ++i) g.String();
+  result.Height = g.U32();
+  result.GlobalPrefixBytes = global.size() - g.Remaining();
+  PayloadReader m(message.subspan(3));
+  // Three colors, two legacy34 sprites, rect16, fourteen sprites, color,
+  // three sprites, rect16 and point8, before the counted word collection.
+  constexpr size_t fixed = 3 * 4 + 2 * 34 + 16 + 14 * 34 + 4 + 3 * 34 + 16 + 8;
+  for (size_t i = 0; i < fixed / 2; ++i) m.U16();
+  const auto count = m.U32();
+  m.CheckCount(count, 4);
+  for (uint32_t i = 0; i < count; ++i) m.U32();
+  // Three points, word, SHORT, two points, rect16 and two floats.
+  for (size_t i = 0; i < (3 * 8 + 4 + 2 + 2 * 8 + 16 + 2 * 4) / 2; ++i) m.U16();
+  result.Leading = m.I32();
+  result.MessagePrefixBytes = message.size() - m.Remaining();
+  return result;
+}
+int32_t TextLayoutMetrics::LineAdvance(float scale) const {
+  const float product = float(Height) * scale;
+  const float value = product + float(Leading);
+  if (std::isnan(value)) return 0;
+  if (value >= 2147483648.0f) return INT32_MAX;
+  if (value <= -2147483648.0f) return INT32_MIN;
+  return int32_t(value);
+}
 namespace {
 uint32_t Word(std::span<const uint8_t> bytes, size_t at) {
   if (at > bytes.size() || bytes.size() - at < 4)
