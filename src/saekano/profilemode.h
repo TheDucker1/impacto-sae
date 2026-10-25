@@ -1,4 +1,5 @@
 #pragma once
+#include "profilearrow.h"
 
 #include "commands.h"
 #include "seekmap.h"
@@ -34,6 +35,7 @@ class ProfileMode {
   const ProfileResultState& Result() const { return result_; }
   const ProfileResponseState& Response() const { return response_; }
   const ProfileWaveAnimation& Wave() const { return wave_; }
+  const ProfileArrowMotion& Arrows() const { return arrows_; }
 
  private:
   ProfileServices& services_;
@@ -44,6 +46,7 @@ class ProfileMode {
   ProfileResultState result_;
   ProfileResponseState response_;
   ProfileWaveAnimation wave_;
+  ProfileArrowMotion arrows_;
   bool UpdatePhases(SemanticState& state, const ProfileSelectionInput& input,
                     uint64_t now);
 };

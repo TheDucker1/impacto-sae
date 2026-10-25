@@ -165,7 +165,10 @@ ProfileEnvironment ProfileEnvironment::Decode(std::span<const uint8_t> bytes) {
   result.Chrome.LateOverlay = cursor.Sprite();  // e7f0
   cursor.Skip(4 + 5 * 36);
   cursor.Counted(4);  // Packed colors.
-  cursor.Skip(8 * 36 + 3 * 16 + 4 * 4);
+  cursor.Skip(4 * 36 + 16 + 2 * 4);
+  result.ArrowTravel = std::bit_cast<float>(cursor.Word());  // e984
+  result.ArrowDuration = cursor.Signed();  // e988
+  cursor.Skip(4 * 36 + 2 * 16);
   result.ItemFrames.Sprite = cursor.Sprite();  // ea3c
   const auto itemPositions = cursor.Count(8);
   for (uint32_t i = 0; i < itemPositions; ++i)

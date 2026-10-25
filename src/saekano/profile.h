@@ -19,6 +19,8 @@ struct ProfileEnvironment {
   std::vector<std::array<int32_t, 2>> DescriptionPositions;
   float DescriptionScale = 0;
   uint32_t DescriptionColumns = 0;
+  float ArrowTravel = 0;
+  int32_t ArrowDuration = 0;
   size_t PrefixBytes = 0;
   std::array<std::vector<std::u16string>, 3> ResultLabels;
   std::u16string ResultFormat;
