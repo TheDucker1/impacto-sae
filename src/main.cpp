@@ -260,10 +260,13 @@ int main(int argc, char* argv[]) {
     return 1;
   }
   if (argc >= 2 && std::string_view(argv[1]) == "--saekano-first-scene") {
-    if (argc == 3 || (argc == 5 && std::string_view(argv[3]) == "--capture"))
-      return Saekano::RunFirstSceneViewer(argv[2], argc == 5 ? argv[4] : "");
+    if (argc == 3 || (argc == 5 && (std::string_view(argv[3]) == "--capture" ||
+                                   std::string_view(argv[3]) == "--capture-auto")))
+      return Saekano::RunFirstSceneViewer(
+          argv[2], argc == 5 ? argv[4] : "",
+          argc == 5 && std::string_view(argv[3]) == "--capture-auto");
     ImpLog(LogLevel::Error, LogChannel::General,
-           "Usage: --saekano-first-scene USRDIR [--capture DIRECTORY]\n");
+           "Usage: --saekano-first-scene USRDIR [--capture DIRECTORY | --capture-auto DIRECTORY]\n");
     return 1;
   }
   if (argc >= 2 && std::string_view(argv[1]) == "--saekano-profile-items") {

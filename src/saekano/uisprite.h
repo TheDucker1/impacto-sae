@@ -1,6 +1,7 @@
 #pragma once
 
 #include "profiletexture.h"
+#include <optional>
 
 namespace Impacto::Saekano {
 class PayloadReader;
@@ -11,10 +12,15 @@ struct UiSpriteDefinition {
   static UiSpriteDefinition Read(PayloadReader& reader);
   static UiSpriteDefinition ReadLegacy(PayloadReader& reader);
 };
+struct UiSpriteRotation {
+  float Radians = 0;
+  std::array<int32_t, 2> Pivot{};
+};
 struct UiSpriteBlit {
   ProfileTextureKey Texture;
   std::array<int32_t, 4> Destination{}, Source{};  // x,y,width,height.
   std::array<uint8_t, 4> Color{};
+  std::optional<UiSpriteRotation> Rotation;
 };
 // Native8017c4e0 lowers its scale/alignment to the raw sprite backend call.
 UiSpriteBlit ResolveUiSprite(ProfileTextureKey texture,
@@ -111,12 +117,13 @@ struct MessageWindowDraw {
 std::vector<MessageWindowDraw> BuildOrdinaryMessageWindow(
     const OrdinaryMessageEnvironment& environment,
     const OrdinaryMessageWindowState& state);
-// Static ordinary skip/auto widget rows from BindScenarioOwner. Input policy
-// and active-auto rotation are separate controllers; active auto rejects here.
+// Ordinary rows from BindScenarioOwner. Active auto requires the current
+// integer degree sample from its independently updated mode3 controller.
 std::vector<UiSpriteBlit> BuildOrdinaryMessageWidget(
     const OrdinaryMessageEnvironment& environment, uint32_t widget,
     bool skipActive, bool skipGesture, bool autoActive,
-    std::array<int32_t, 2> offset, uint8_t alpha);
+    std::array<int32_t, 2> offset, uint8_t alpha,
+    std::optional<int32_t> autoDegrees = std::nullopt);
 struct ProfileResponseVisualEnvironment {
   UiSpriteDefinition Window;
   std::array<int32_t, 2> TextPosition{};

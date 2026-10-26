@@ -45,10 +45,30 @@ std::array<std::array<float, 4>, 4> ResolveUiQuad(
   const float endV =
       float(uint32_t(blit.Source[1]) + uint32_t(blit.Source[3])) /
       float(textureHeight);
-  return {{{x, y, u, v},
-           {right, y, endU, v},
-           {x, bottom, u, endV},
-           {right, bottom, endU, endV}}};
+  std::array<std::array<float, 4>, 4> result{{{x, y, u, v},
+                                            {right, y, endU, v},
+                                            {x, bottom, u, endV},
+                                            {right, bottom, endU, endV}}};
+  if (blit.Rotation) {
+    const auto& rotation = *blit.Rotation;
+    if (!std::isfinite(rotation.Radians))
+      throw FormatError("nonfinite UI sprite rotation");
+    const float sine = std::sin(rotation.Radians),
+                cosine = std::cos(rotation.Radians);
+    const float localX = float(Subtract(blit.Destination[0], rotation.Pivot[0])),
+                localY = float(Subtract(blit.Destination[1], rotation.Pivot[1]));
+    for (size_t i = 0; i < result.size(); ++i) {
+      const float px = localX + (i % 2 ? float(blit.Destination[2]) : 0.0f),
+                  py = localY + (i / 2 ? float(blit.Destination[3]) : 0.0f);
+      // Native VMLA is separate multiply/add, with the y term first.
+      float rotatedX = py * -sine, rotatedY = py * cosine;
+      rotatedX += px * cosine;
+      rotatedY += px * sine;
+      result[i][0] = rotatedX + float(rotation.Pivot[0]);
+      result[i][1] = rotatedY + float(rotation.Pivot[1]);
+    }
+  }
+  return result;
 }
 UiSpriteDefinition UiSpriteDefinition::Read(PayloadReader& reader) {
   UiSpriteDefinition result;
@@ -179,15 +199,16 @@ std::vector<MessageWindowDraw> BuildOrdinaryMessageWindow(
 std::vector<UiSpriteBlit> BuildOrdinaryMessageWidget(
     const OrdinaryMessageEnvironment& environment, uint32_t widget,
     bool skipActive, bool skipGesture, bool autoActive,
-    std::array<int32_t, 2> offset, uint8_t alpha) {
+    std::array<int32_t, 2> offset, uint8_t alpha,
+    std::optional<int32_t> autoDegrees) {
   if (widget > 2) throw FormatError("unknown ordinary widget");
   if (widget == 0) return {};  // Transparent hit region; no visible content.
-  if (widget == 2 && autoActive)
-    throw UnsupportedCommand("ordinary active-auto rotation is not bound");
+  if (widget == 2 && autoActive && !autoDegrees)
+    throw UnsupportedCommand("ordinary active-auto rotation sample is unknown");
   const std::array<size_t, 3> indices =
       widget == 1 ? std::array<size_t, 3>{0, skipActive ? 2u : 1u,
                                           skipGesture ? 4u : 3u}
-                  : std::array<size_t, 3>{5, 6, 7};
+                  : std::array<size_t, 3>{5, 6, autoActive ? 8u : 7u};
   std::vector<UiSpriteBlit> result;
   for (auto index : indices) {
     auto definition = environment.Auxiliary[index];
@@ -198,8 +219,17 @@ std::vector<UiSpriteBlit> BuildOrdinaryMessageWidget(
         std::bit_cast<int32_t>(uint32_t(definition.X) + uint32_t(offset[0]));
     definition.Y =
         std::bit_cast<int32_t>(uint32_t(definition.Y) + uint32_t(offset[1]));
-    result.push_back(
-        ResolveUiSprite({ProfileTextureSection::MainUi, -1, 3}, definition));
+    auto blit = ResolveUiSprite({ProfileTextureSection::MainUi, -1, 3}, definition);
+    if (widget == 2 && autoActive && index == 8) {
+      const float product = float(*autoDegrees) * std::bit_cast<float>(0x40490fd8u);
+      blit.Rotation = UiSpriteRotation{
+          product / 180.0f,
+          {std::bit_cast<int32_t>(uint32_t(blit.Destination[0]) +
+                                 uint32_t(blit.Destination[2] / 2)),
+           std::bit_cast<int32_t>(uint32_t(blit.Destination[1]) +
+                                 uint32_t(blit.Destination[3] / 2))}};
+    }
+    result.push_back(std::move(blit));
   }
   return result;
 }

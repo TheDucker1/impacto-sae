@@ -1,11 +1,18 @@
 #include "vm.h"
 #include "messagekeywords.h"
+#include "skipauto.h"
 
 #include <algorithm>
 #include <bit>
 #include <utility>
 
 namespace Impacto::Saekano {
+void VirtualMachine::UpdateSkipAuto(SkipAutoState& policy,
+                                   const SkipAutoInput& input,
+                                   int32_t autoKeyDuration, uint64_t now) {
+  if (profile_) throw UnsupportedCommand("profile owns the active input loop");
+  UpdateSkipAutoPolicy(state_, policy, input, autoKeyDuration, now);
+}
 
 CompletedCommand VmBackend::Route(uint16_t, std::span<const uint8_t>) const { return {}; }
 const ChapterTitleAnimation* VirtualMachine::CurrentChapter() const {

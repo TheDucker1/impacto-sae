@@ -6,6 +6,8 @@
 #include <memory>
 
 namespace Impacto::Saekano {
+struct SkipAutoState;
+struct SkipAutoInput;
 
 struct MessageRuntimeContext {
   // These are native context fields that the original portable schema omitted.
@@ -88,6 +90,8 @@ class VirtualMachine {
   const ChapterTitleAnimation* CurrentChapter() const;
   const ProfileMode* CurrentProfile() const { return profile_.get(); }
   VmEvent Step(uint64_t now, const CommandInput& input = {});
+  void UpdateSkipAuto(SkipAutoState& policy, const SkipAutoInput& input,
+                      int32_t autoKeyDuration, uint64_t now);
   void SetGauge(bool battle, int32_t value);
   void ActivateLane(size_t lane);
   void RequestLaneFlush() { dispatcher_.FlushLanes = true; }

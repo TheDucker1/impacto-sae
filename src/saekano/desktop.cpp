@@ -18,6 +18,7 @@
 #include "messagedraw.h"
 #include "scenequeue.h"
 #include "widgetinput.h"
+#include "skipauto.h"
 #include "../io/memorystream.h"
 #include "../texture/texture.h"
 
@@ -234,7 +235,13 @@ void WriteUiBlit(std::ostream& out, const UiSpriteBlit& blit) {
     if (j) out << ',';
     out << unsigned(blit.Color[j]);
   }
-  out << "]}";
+  out << ']';
+  if (blit.Rotation)
+    out << ",\"rotation\":{\"radians_bits\":"
+        << std::bit_cast<uint32_t>(blit.Rotation->Radians)
+        << ",\"pivot\":[" << blit.Rotation->Pivot[0] << ','
+        << blit.Rotation->Pivot[1] << "]}";
+  out << '}';
 }
 void WriteUiCommand(std::ostream& out, const UiRenderCommand& command) {
   if (command.Kind == UiRenderKind::Sprite) {
@@ -599,7 +606,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                       ArchiveBgmResources& music, ArchiveSeResources& sounds,
                       SemanticState&& owner, const ProfileMode& completed,
                       const std::filesystem::path& root,
-                      const std::filesystem::path& captureDirectory = {}) {
+                      const std::filesystem::path& captureDirectory = {},
+                      bool captureAuto = false) {
   const bool capture = !captureDirectory.empty();
   if (!owner.WindowOpacity || !owner.ReadColorEnabled || !owner.TextSpeed ||
       !owner.AutoSpeed)
@@ -614,6 +622,11 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   const auto inputEnvironment = WidgetInputEnvironment::DecodeUtility(
       SceneRead(root / "env/env_game_utility.dat"));
   OrdinaryWidgetInput sceneInput(visual.Window, inputEnvironment.HoldFrames);
+  const auto skipAutoEnvironment = SkipAutoEnvironment::Decode(
+      SceneRead(root / "env/env_global.dat"));
+  SkipAutoState skipAuto;
+  OrdinaryAutoRotation autoRotation;
+  autoRotation.Begin(visual.Window.AutoRotationDuration, 0);
   const auto cursorEnvironment = OrdinaryCursorEnvironment::Decode(
       SceneRead(root / "env/env_message_window.dat"));
   ProfileArrowMotion messageCursor;
@@ -658,6 +671,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   PlainTextLayout layout;
   bool laidOut = false, quit = false;
   bool pointerDown = false;
+  bool autoKeyHeld = false;
+  uint32_t captureAutoStage = 0;
   std::array<float, 2> pointerPosition{};
   uint32_t capturePointerStage = 0;
   std::string previousPointer;
@@ -671,8 +686,9 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         capture ? uint64_t(frame) * 16 : SDL_GetTicks() - epoch;
     messageCursor.Update(now);
     CommandInput input;
+    SkipAutoInput policyInput;
     SDL_Event event;
-    if (capture && firstMessage != UINT64_MAX && capturePointerStage < 4) {
+    if (capture && !captureAuto && firstMessage != UINT64_MAX && capturePointerStage < 4) {
       constexpr std::array<uint64_t, 4> Delays{96, 112, 512, 528};
       if (now - firstMessage >= Delays[capturePointerStage]) {
         SDL_Event synthetic{};
@@ -688,6 +704,18 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         ++capturePointerStage;
       }
     }
+    if (capture && captureAuto && firstMessage != UINT64_MAX && captureAutoStage < 2) {
+      const uint64_t delay = captureAutoStage == 0 ? 96 : 1296;
+      if (now - firstMessage >= delay) {
+        SDL_Event synthetic{};
+        synthetic.type = captureAutoStage == 0 ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+        synthetic.key.windowID = SDL_GetWindowID(window.Window);
+        synthetic.key.key = SDLK_A;
+        synthetic.key.down = captureAutoStage == 0;
+        SdlCheck(SDL_PushEvent(&synthetic), "capture auto-key event");
+        ++captureAutoStage;
+      }
+    }
     while (SDL_PollEvent(&event)) {
       if (event.type == SDL_EVENT_QUIT ||
           (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE))
@@ -695,6 +723,11 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
           event.key.key == SDLK_RETURN)
         input.Advance = true;
+      if ((event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) &&
+          event.key.key == SDLK_A) {
+        autoKeyHeld = event.type == SDL_EVENT_KEY_DOWN;
+        policyInput.AutoPressed |= autoKeyHeld && !event.key.repeat;
+      }
       if ((event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
            event.type == SDL_EVENT_MOUSE_BUTTON_UP) &&
           event.button.button == SDL_BUTTON_LEFT) {
@@ -705,10 +738,23 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         pointerPosition = {event.motion.x, event.motion.y};
       if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
         pointerDown = false;
+        autoKeyHeld = false;
+        policyInput.AutoPressed = false;
         sceneInput.CancelPointer();
       }
     }
     if (quit) break;
+    // Dedicated fresh scene: no hidden-message mode or blocking overlay, and
+    // no restored read history. Button/gesture/skip controls remain unbound.
+    // Policy consumes prior widget samples before this frame's updates.
+    policyInput.AutoHeld = autoKeyHeld;
+    const bool wasAuto = skipAuto.Auto;
+    vm->UpdateSkipAuto(skipAuto, policyInput, skipAutoEnvironment.AutoKeyDuration, now);
+    backend.AutoAdvance = skipAuto.Auto;
+    if (capture && (policyInput.AutoPressed || wasAuto != skipAuto.Auto))
+      events << "{\"kind\":\"auto_policy\",\"frame\":" << frame
+             << ",\"now\":" << now << ",\"pressed\":" << policyInput.AutoPressed
+             << ",\"held\":" << autoKeyHeld << ",\"auto\":" << skipAuto.Auto << "}\n";
     WidgetInputHistory::Snapshot pointerSnapshot;
     if (pointerDown) {
       int logicalWidth = 0, logicalHeight = 0;
@@ -806,6 +852,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         {(*state.Quake[2])[0],
          std::bit_cast<int32_t>(uint32_t(slide) +
                                 uint32_t((*state.Quake[2])[1]))});
+    autoRotation.Update(now);
     int width = 0, height = 0;
     SdlCheck(SDL_GetWindowSizeInPixels(window.Window, &width, &height),
              "scene frame size");
@@ -901,14 +948,11 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
             drawSprite(draw.Sprite);
             spriteDraws.push_back(draw.Sprite);
           } else if (draw.Kind == MessageWindowDrawKind::Widget) {
-            // The fresh preview maps only advance. Native no-skip/auto-input
-            // policy keeps these three conditions false; restored/interactive
-            // skip/auto controllers are not bound by this preview.
-            widgetInputs.push_back({int32_t(draw.Index), 0, 0, draw.Offset[0],
+            widgetInputs.push_back({int32_t(draw.Index), 0, int32_t(skipAuto.AutoIndicator), draw.Offset[0],
                                     draw.Offset[1], int32_t(draw.Parameter)});
             for (const auto& sprite : BuildOrdinaryMessageWidget(
-                     visual.Window, draw.Index, false, false, false,
-                     draw.Offset, uint8_t(draw.Parameter))) {
+                     visual.Window, draw.Index, false, false, skipAuto.AutoIndicator,
+                     draw.Offset, uint8_t(draw.Parameter), autoRotation.Channel.Current)) {
               drawSprite(sprite);
               spriteDraws.push_back(sprite);
             }
@@ -933,7 +977,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     GlCheck("first scene composition");
     std::string signature = std::to_string(message->Reveal.Revealed) + ':' +
                             std::to_string(backend.CursorVisible()) + ':' +
-                            std::to_string(pointerDown);
+                            std::to_string(pointerDown) + ':' +
+                            std::to_string(skipAuto.Auto) + ':' + std::to_string(autoKeyHeld);
     for (const auto& [id, actor] : state.Characters) {
       (void)actor;
       signature += ':' + std::to_string(vm->SpriteBlink(id)->Phase);
@@ -965,12 +1010,17 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
              << ",\"random_draws\":" << state.Random.Draws()
              << ",\"playback_host_reused\":true,\"fresh_unread\":true,"
                 "\"primary_pointer_bound\":true,\"synthetic_pointer_capture\":"
-                "true,"
-                "\"prelude_rendered\":false,\"widget_mode\":\"fresh_idle\","
-                "\"unbound_passes\":[\"skip_auto_input\",\"widget_long_hold_"
+             << (!captureAuto ? "true," : "false,")
+             << "\"prelude_rendered\":false,\"auto_key_bound\":true,\"widget_mode\":\"fresh_controls\","
+                "\"unbound_passes\":[\"skip_and_widget_auto_input\",\"widget_long_hold_"
                 "visual\","
-                "\"active_auto_rotation\",\"letterbox\",\"animation_"
-                "groups\",\"effects\"],\"sprites\":[";
+                "\"letterbox\",\"animation_"
+                "groups\",\"effects\"],\"auto_state\":[" << skipAuto.Auto << ','
+             << autoKeyHeld << ',' << autoRotation.Channel.Current << ','
+             << autoRotation.Channel.Epoch << ',' << autoRotation.Channel.Sample
+             << "],\"message_epoch\":" << message->Epoch
+             << ",\"message_source_units\":" << message->SourceUnits
+             << ",\"capture_auto\":" << captureAuto << ",\"sprites\":[";
       for (size_t i = 0; i < spriteDraws.size(); ++i) {
         if (i) report << ',';
         WriteUiBlit(report, spriteDraws[i]);
@@ -2248,7 +2298,8 @@ int RunProfileItemsViewer(const std::filesystem::path& usrdir, size_t scene,
       captureFlow);
 }
 int RunFirstSceneViewer(const std::filesystem::path& usrdir,
-                        const std::filesystem::path& captureDirectory) {
+                        const std::filesystem::path& captureDirectory,
+                        bool captureAuto) {
   bool created = false;
   try {
     const bool capture = !captureDirectory.empty();
@@ -2308,7 +2359,7 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
     MusicPlayback playback(music, capture, &sounds);
     return RunCompletedScene(window, renderer, fontTextures, font, resources,
                              playback, music, sounds, std::move(owner), mode,
-                             usrdir, captureDirectory);
+                             usrdir, captureDirectory, captureAuto);
   } catch (const std::exception& error) {
     if (created) {
       std::ofstream out(captureDirectory / "error.txt");
