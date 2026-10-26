@@ -90,6 +90,10 @@ class VirtualMachine {
   void RequestLaneFlush() { dispatcher_.FlushLanes = true; }
   void SetMessageContext(MessageRuntimeContext context);
   void SeedRandom(uint32_t seed);
+  // Frontend calls once per real frame, after VM work, with its current clock.
+  // Fresh managers may create controllers; arbitrary restored schedules reject.
+  void UpdateSpriteFrames(uint32_t clockSeed);
+  const CharacterBlink* SpriteBlink(uint16_t id) const;
   std::vector<GameEvent> TakeEvents();
 
  private:
@@ -158,6 +162,8 @@ class VirtualMachine {
   std::array<std::vector<int32_t>, 2> messageKeywords_;
   VmBoundary boundary_ = VmBoundary::BeforeStart;
   std::unique_ptr<ProfileMode> profile_;
+  std::map<uint16_t, CharacterBlink> spriteBlinks_;
+  bool freshSpriteFrames_ = false;
   void Load(bool preserveOwnerState);
   void Start(size_t index, uint64_t now, bool lane);
   bool Update(size_t index, uint64_t now, const CommandInput& input, bool lane);

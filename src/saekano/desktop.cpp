@@ -14,6 +14,9 @@
 #include "profilearchive.h"
 #include "profilemode.h"
 #include "musicplayback.h"
+#include "scenemessage.h"
+#include "messagedraw.h"
+#include "scenequeue.h"
 #include "../io/memorystream.h"
 #include "../texture/texture.h"
 
@@ -582,6 +585,341 @@ void Capture(const std::filesystem::path& file, int width, int height) {
   SdlCheck(bool(surface), "capture surface");
   SdlCheck(SDL_SaveBMP(surface.get(), file.string().c_str()), "frame capture");
 }
+Bytes SceneRead(const std::filesystem::path& path) {
+  std::ifstream file(path, std::ios::binary);
+  if (!file) throw FormatError("cannot open scene input: " + path.string());
+  return Bytes{std::istreambuf_iterator<char>(file), {}};
+}
+// A bounded first-message frontend. Unbound auxiliary/effect passes are
+// reported explicitly; this is not yet the complete scenario renderer.
+int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
+                      FontTextures& fontTextures, PcFontFace& font,
+                      GameResources& resources, MusicPlayback& playback,
+                      ArchiveBgmResources& music, ArchiveSeResources& sounds,
+                      SemanticState&& owner, const ProfileMode& completed,
+                      const std::filesystem::path& root,
+                      const std::filesystem::path& captureDirectory = {}) {
+  const bool capture = !captureDirectory.empty();
+  if (!owner.WindowOpacity || !owner.ReadColorEnabled || !owner.TextSpeed)
+    throw UnsupportedCommand("scene owner display settings are missing");
+  const auto opacity = *owner.WindowOpacity;
+  const auto format = TextFormatEnvironment::Decode(
+      SceneRead(root / "env/env_string_format.dat"), true);
+  const auto timing = TextTimingEnvironment::Decode(
+      SceneRead(root / "env/env_config.dat"), true);
+  const auto visual = OrdinaryTextEnvironment::Decode(
+      SceneRead(root / "env/env_message_window.dat"));
+  const auto metrics =
+      TextLayoutMetrics::Decode(SceneRead(root / "env/env_global.dat"),
+                                SceneRead(root / "env/env_message_window.dat"));
+  const auto utility =
+      GameUtilityFont::Decode(SceneRead(root / "env/env_game_utility.dat"));
+  ArchiveSceneImages images(resources);
+  ArchiveCharacterPoses poses(resources);
+  SceneMessageBackend backend(format, timing, *owner.TextSpeed);
+  backend.SceneImages = &images;
+  backend.CharacterPoses = &poses;
+  backend.MusicResources = &music;
+  backend.SeArchives = &sounds;
+  auto vm = VirtualMachine::FromCompletedProfile(resources, backend,
+                                                 std::move(owner), completed);
+  const auto seed = capture ? 0u : uint32_t(SDL_GetTicks());
+  vm->SeedRandom(seed);
+  SDL_SetWindowTitle(window.Window, "Saekano — first scene preview");
+  std::ofstream report, pcm, events;
+  if (capture) {
+    report.open(captureDirectory / "scene-frames.jsonl");
+    pcm.open(captureDirectory / "scene-output.pcm", std::ios::binary);
+    events.open(captureDirectory / "scene-events.jsonl");
+    if (!report || !pcm || !events)
+      throw FormatError("cannot create scene capture output");
+  }
+  const auto drawSprite = [&](const UiSpriteBlit& sprite) {
+    renderer.DrawQuad(sprite, renderer.Textures.at(sprite.Texture), false);
+  };
+  const auto upload = [&](ProfileTextureKey key, const ImagePixels& pixels) {
+    if (!renderer.Textures.contains(key)) renderer.Upload(key, pixels);
+  };
+  const auto uploadMain = [&](uint32_t id) {
+    const ProfileTextureKey key{ProfileTextureSection::MainUi, -1, id};
+    if (!renderer.Textures.contains(key))
+      upload(key, DecodeSceneImage(resources.LoadProfileTexture(key).Data));
+  };
+  for (auto id : {0u, 1u, 2u, 9u}) uploadMain(id);
+  PlainTextLayout layout;
+  bool laidOut = false, quit = false, advanced = false;
+  uint64_t previous = 0, firstMessage = UINT64_MAX, lastSaved = 0;
+  const auto epoch = SDL_GetTicks();
+  std::string previousSignature;
+  size_t saved = 0;
+  std::map<uint16_t, bool> actorEligibility;
+  for (uint32_t frame = 0; !quit && frame < 2000; ++frame) {
+    const uint64_t now =
+        capture ? uint64_t(frame) * 16 : SDL_GetTicks() - epoch;
+    CommandInput input;
+    SDL_Event event;
+    while (SDL_PollEvent(&event)) {
+      if (event.type == SDL_EVENT_QUIT ||
+          (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE))
+        quit = true;
+      if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
+          event.key.key == SDLK_RETURN)
+        input.Advance = true;
+    }
+    if (quit) break;
+    playback.Update(float(now - previous) / 1000.0f);
+    if (capture && now > previous) {
+      std::vector<int16_t> samples(size_t(now - previous) * 96);
+      playback.Render(samples);
+      pcm.write(reinterpret_cast<const char*>(samples.data()),
+                samples.size() * sizeof(int16_t));
+    }
+    previous = now;
+    if (capture && firstMessage != UINT64_MAX && now - firstMessage >= 3000 &&
+        !advanced) {
+      input.Advance = true;
+      advanced = true;
+    }
+    for (size_t work = 0; work < 256; ++work) {
+      const auto step = vm->Step(now, input);
+      input.Advance = false;
+      if (step.Opcode == 0x64 && step.Boundary == VmBoundary::CommandStarted) {
+        firstMessage = now;
+        break;
+      }
+      if (step.Opcode == 0x64 &&
+          step.Boundary == VmBoundary::CommandCompletedBeforeDispatch) {
+        quit = true;
+        break;
+      }
+      if (step.Boundary == VmBoundary::WaitingInput ||
+          step.Boundary == VmBoundary::WaitingBackend)
+        break;
+      if (step.Boundary == VmBoundary::Ended)
+        throw UnsupportedCommand("scene ended before first dialogue");
+      if (work == 255)
+        throw UnsupportedCommand("scene per-frame command budget exceeded");
+    }
+    for (const auto& request : vm->TakeEvents()) {
+      playback.Submit(request);
+      if (capture)
+        events << "{\"kind\":\"audio\",\"frame\":" << frame
+               << ",\"now\":" << now << ",\"event\":" << int(request.Kind)
+               << ",\"id\":" << request.Id << "}\n";
+    }
+    const auto spriteClock = capture ? uint32_t(now) : uint32_t(SDL_GetTicks());
+    if (capture)
+      for (const auto& [id, actor] : vm->State().Characters) {
+        if (!vm->SpriteBlink(id))
+          events << "{\"kind\":\"blink_init\",\"frame\":" << frame
+                 << ",\"id\":" << id << ",\"seed\":" << spriteClock << "}\n";
+        const bool eligible =
+            actor.Pose.Ready &&
+            actor.Tweens[size_t(CharacterTween::Opacity)].Current != 0;
+        if (!actorEligibility.contains(id) ||
+            actorEligibility[id] != eligible) {
+          events << "{\"kind\":\"blink_gate\",\"frame\":" << frame
+                 << ",\"id\":" << id
+                 << ",\"eligible\":" << (eligible ? "true" : "false") << "}\n";
+          actorEligibility[id] = eligible;
+        }
+      }
+    vm->UpdateSpriteFrames(spriteClock);
+    backend.UpdateMessage(now);
+    const auto& state = vm->State();
+    int width = 0, height = 0;
+    SdlCheck(SDL_GetWindowSizeInPixels(window.Window, &width, &height),
+             "scene frame size");
+    renderer.Draw({}, width, height);
+    const auto* message = backend.CurrentMessage();
+    if (!message) {
+      UiSpriteBlit white;
+      white.Destination = {0, 0, 960, 544};
+      white.Color = {255, 255, 255, 255};
+      renderer.DrawQuad(white, {0, 1, 1}, true);
+      SdlCheck(SDL_GL_SwapWindow(window.Window), "scene prelude swap");
+      if (!capture) SDL_Delay(16);
+      continue;
+    }
+    if (state.ScreenFade != 0 || state.RuleWipe.Active)
+      throw UnsupportedCommand(
+          "first-scene active fade/rule rendering is not bound");
+    if (!state.Quake[0] || !state.Quake[1] || !state.Quake[2])
+      throw UnsupportedCommand("scene quake inputs are missing");
+    if (!laidOut) {
+      layout =
+          LayoutPlainText(message->Reveal.Text, format, font.Cached(), metrics,
+                          visual.Window.TextWidth, visual.BodyScale,
+                          uint32_t(utility.Size), font.NominalSize());
+      laidOut = true;
+    }
+    SceneQueueInputs gates;
+    for (size_t c = 0; c < 2; ++c)
+      for (size_t i = 0; i < 4; ++i) {
+        const auto id = state.SceneImages.Slots.FloatSlots[c][i].Texture;
+        gates.FloatReady[c][i] =
+            id >= 0 && images.AssetReady(
+                           {ImageCategorySection(uint32_t(c)), uint32_t(id)});
+      }
+    for (const auto& slot : state.SceneImages.Slots.IntegerSlots)
+      if (slot.GeometryAndTexture[6] >= 0)
+        throw UnsupportedCommand("first-scene free-image drawing is not bound");
+    const auto queue = BuildSceneDrawQueue(state.SceneImages.Slots, gates);
+    std::vector<UiSpriteBlit> spriteDraws;
+    std::vector<UiTextBlit> textDraws;
+    for (const auto& pass : queue) {
+      if (pass.Kind == SceneDrawKind::Background ||
+          pass.Kind == SceneDrawKind::Event) {
+        const uint32_t c = pass.Kind == SceneDrawKind::Background ? 0 : 1;
+        const auto& slot = state.SceneImages.Slots.FloatSlots[c][pass.Index];
+        const auto* pixels = images.AssetPixels(
+            {ImageCategorySection(c), uint32_t(slot.Texture)});
+        if (!pixels) throw UnsupportedCommand("scene image pixels are missing");
+        auto sprite = BuildFloatSceneImage(slot, c, *state.Quake[0]);
+        upload(sprite.Texture, *pixels);
+        drawSprite(sprite);
+        spriteDraws.push_back(sprite);
+      } else if (pass.Kind == SceneDrawKind::Characters) {
+        for (auto id : SceneCharacterDrawOrder(state)) {
+          const auto& actor = state.Characters.at(id);
+          const auto* blink = vm->SpriteBlink(id);
+          if (!blink) throw UnsupportedCommand("scene actor blink is missing");
+          auto poseState = CurrentSceneCharacterPoseState(actor, blink->Phase,
+                                                          2, *state.Quake[1]);
+          if (!poseState.Visible || !poseState.Color[3]) continue;
+          if (actor.Tweens[size_t(CharacterTween::PreviousPose)].Current ||
+              actor.PreviousFaceOpacity.Current)
+            throw UnsupportedCommand(
+                "first-scene actor crossfade is not bound");
+          if (!actor.Pose.ResourceSlot)
+            throw UnsupportedCommand("scene actor resource slot is missing");
+          const auto* pose = poses.Get(*actor.Pose.ResourceSlot);
+          if (!pose) throw UnsupportedCommand("scene actor pixels are missing");
+          for (size_t i = 0; i < pose->Textures.size(); ++i)
+            upload(
+                {ProfileTextureSection::CharacterPose, pose->Pose, uint32_t(i)},
+                pose->Textures[i]);
+          for (const auto& sprite :
+               BuildCurrentCharacterPose(*pose, poseState)) {
+            drawSprite(sprite);
+            spriteDraws.push_back(sprite);
+          }
+        }
+      } else if (pass.Kind == SceneDrawKind::MessageWindow) {
+        OrdinaryMessageWindowState windowState;
+        windowState.Openness = state.WindowOpenness[0];
+        windowState.OpacitySetting = opacity;
+        windowState.Quake = *state.Quake[2];
+        windowState.SpeakerId = state.SpeakerId;
+        windowState.MessageCommand = true;
+        windowState.CursorVisible =
+            false;  // Cursor controller remains explicitly unbound.
+        if (state.SpeakerId >= 0) uploadMain(uint32_t(state.SpeakerId) + 41);
+        for (const auto& draw :
+             BuildOrdinaryMessageWindow(visual.Window, windowState)) {
+          if (draw.Kind == MessageWindowDrawKind::Sprite) {
+            drawSprite(draw.Sprite);
+            spriteDraws.push_back(draw.Sprite);
+          } else if (draw.Kind == MessageWindowDrawKind::AlphaTest)
+            glUniform1i(renderer.AlphaMode, draw.Index);
+          else if (draw.Kind == MessageWindowDrawKind::RendererState &&
+                   draw.Index)
+            throw UnsupportedCommand("scene renderer effect is not bound");
+        }
+      } else if (pass.Kind == SceneDrawKind::MessageText) {
+        // This entry is an explicitly fresh owner with no loaded read history.
+        textDraws = BuildOrdinaryMessageTextDraws(
+            visual, message->Parsed, message->Reveal, layout, format,
+            font.Cached(), uint32_t(utility.Size), font.NominalSize(),
+            state.WindowOpenness[0], *state.Quake[2], visual.UnreadColor);
+        for (const auto& text : textDraws)
+          fontTextures.DrawString(renderer, font, text.Text, text.Position[0],
+                                  text.Position[1], text.Size, text.Color);
+      } else if (pass.Kind == SceneDrawKind::Fill)
+        throw UnsupportedCommand("first-scene fill drawing is not bound");
+    }
+    GlCheck("first scene composition");
+    std::string signature = std::to_string(message->Reveal.Revealed);
+    for (const auto& [id, actor] : state.Characters) {
+      (void)actor;
+      signature += ':' + std::to_string(vm->SpriteBlink(id)->Phase);
+    }
+    if (capture && (saved == 0 || signature != previousSignature ||
+                    now - lastSaved >= 1500 || quit)) {
+      const auto file = "scene-" + std::to_string(saved++) + ".bmp";
+      Capture(captureDirectory / file, width, height);
+      report << "{\"file\":\"" << file << "\",\"now\":" << now
+             << ",\"script\":" << state.ScriptFileId
+             << ",\"command\":" << state.CurrentCommandIndex << ",\"revealed\":"
+             << (message->Reveal.Revealed ? "true" : "false")
+             << ",\"frame\":" << frame
+             << ",\"completed\":" << (quit ? "true" : "false")
+             << ",\"bgm\":" << state.BgmTrack.value_or(-1)
+             << ",\"window_opacity_setting\":" << int(opacity)
+             << ",\"window_open\":" << state.WindowOpenness[0]
+             << ",\"speaker\":" << state.SpeakerId << ",\"read_color_enabled\":"
+             << (*state.ReadColorEnabled ? "true" : "false")
+             << ",\"random_seed\":" << seed
+             << ",\"random_draws\":" << state.Random.Draws()
+             << ",\"playback_host_reused\":true,\"fresh_unread\":true,"
+                "\"prelude_rendered\":false,\"unbound_passes\":[\"auxiliary_"
+                "widgets\",\"message_cursor\",\"letterbox\",\"animation_"
+                "groups\",\"effects\"],\"sprites\":[";
+      for (size_t i = 0; i < spriteDraws.size(); ++i) {
+        if (i) report << ',';
+        WriteUiBlit(report, spriteDraws[i]);
+      }
+      report << "],\"text\":[";
+      for (size_t i = 0; i < textDraws.size(); ++i) {
+        if (i) report << ',';
+        WriteDescription(report, -1, textDraws[i]);
+      }
+      report << "],\"actor_inputs\":[";
+      bool firstInput = true;
+      for (auto id : SceneCharacterDrawOrder(state)) {
+        const auto& actor = state.Characters.at(id);
+        const auto* blink = vm->SpriteBlink(id);
+        auto poseInput = CurrentSceneCharacterPoseState(actor, blink->Phase, 2,
+                                                        *state.Quake[1]);
+        if (!poseInput.Visible || !poseInput.Color[3]) continue;
+        if (!firstInput) report << ',';
+        firstInput = false;
+        const uint32_t rgba = uint32_t(poseInput.Color[0]) |
+                              (uint32_t(poseInput.Color[1]) << 8) |
+                              (uint32_t(poseInput.Color[2]) << 16) |
+                              (uint32_t(poseInput.Color[3]) << 24);
+        report << '[' << actor.Pose.Current << ',' << poseInput.Face << ','
+               << poseInput.EyePhase << ',' << poseInput.MouthFrame << ','
+               << poseInput.ScalePercent << ',' << poseInput.Position[0] << ','
+               << poseInput.Position[1] << ',' << rgba << ','
+               << poseInput.Visible << ']';
+      }
+      report << "],\"blink\":[";
+      bool first = true;
+      for (const auto& [id, actor] : state.Characters) {
+        (void)actor;
+        if (!first) report << ',';
+        first = false;
+        const auto* blink = vm->SpriteBlink(id);
+        report << '[' << id << ',' << blink->Wait << ',' << blink->WaitTarget
+               << ',' << blink->Phase << ',' << blink->Hold << ']';
+      }
+      report << "]}\n";
+      previousSignature = signature;
+      lastSaved = now;
+    }
+    SdlCheck(SDL_GL_SwapWindow(window.Window), "scene frame swap");
+    if (!capture) SDL_Delay(16);
+  }
+  if (capture) {
+    report.close();
+    pcm.close();
+    events.close();
+    if (!quit || firstMessage == UINT64_MAX)
+      throw UnsupportedCommand("scene preview budget exhausted");
+  }
+  return 0;
+}
 }  // namespace
 
 int RunFontSample(const std::filesystem::path& usrdir,
@@ -1021,6 +1359,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
     }
     std::unique_ptr<SemanticState> flowOwner;
     std::unique_ptr<ArchiveBgmResources> flowMusic;
+    std::unique_ptr<ArchiveSeResources> flowSounds;
     std::unique_ptr<SystemSoundAssets> flowSystemSounds;
     std::unique_ptr<MusicPlayback> flowPlayback;
     std::unique_ptr<PlaybackProfileVoice> flowVoice;
@@ -1045,6 +1384,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
       const auto root = resourceDat.parent_path();
       flowOwner = std::make_unique<SemanticState>();
       InitializeFreshAudioOwner(*flowOwner);
+      InitializeFreshMessageOwner(*flowOwner);
       InitializeFreshProfileEntry(
           *flowOwner, ProfileInitialStats::Decode(read(environmentDat)),
           catalog);
@@ -1063,7 +1403,9 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
       flowMessageCursor = MessageCursorEnvironment::Decode(
           read(root / "env/env_message_window.dat"));
       flowMusic = std::make_unique<ArchiveBgmResources>(root);
-      flowPlayback = std::make_unique<MusicPlayback>(*flowMusic, capture);
+      flowSounds = std::make_unique<ArchiveSeResources>(root);
+      flowPlayback = std::make_unique<MusicPlayback>(*flowMusic, capture,
+                                                     flowSounds.get());
       flowSystemSounds =
           std::make_unique<SystemSoundAssets>(read(root / "first.dat"));
       // Fresh settings7350: option S60235=8; channel coefficient starts at1.
@@ -1728,6 +2070,11 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
       if (!flowDone)
         throw FormatError("owning profile capture did not finish within40s");
     }
+    if (flowDone && !capture)
+      return RunCompletedScene(window, renderer, fontTextures, *font, resources,
+                               *flowPlayback, *flowMusic, *flowSounds,
+                               std::move(*flowOwner), *flowMode,
+                               resourceDat.parent_path());
     return 0;
   } catch (const std::exception& error) {
     if (captureCreated) {
@@ -1747,5 +2094,77 @@ int RunProfileItemsViewer(const std::filesystem::path& usrdir, size_t scene,
       usrdir / "resource.dat", usrdir / "env/env_otaku_mode.dat",
       captureDirectory, true, true, scene, captureNavigation, captureDialog,
       captureFlow);
+}
+int RunFirstSceneViewer(const std::filesystem::path& usrdir,
+                        const std::filesystem::path& captureDirectory) {
+  bool created = false;
+  try {
+    const bool capture = !captureDirectory.empty();
+    if (capture) {
+      const auto output = std::filesystem::weakly_canonical(captureDirectory);
+      const auto input = std::filesystem::weakly_canonical(usrdir);
+      for (auto parent = output; !parent.empty();
+           parent = parent.parent_path()) {
+        if (parent == input || parent == input.parent_path())
+          throw FormatError("scene capture overlaps original data");
+        if (parent == parent.parent_path()) break;
+      }
+      if (std::filesystem::exists(output))
+        throw FormatError("choose a fresh scene capture directory");
+      std::filesystem::create_directories(output);
+      created = true;
+    }
+    GameResources resources(SceneRead(usrdir / "resource.dat"));
+    const auto profileRaw = SceneRead(usrdir / "env/env_otaku_mode.dat");
+    const auto profile = ProfileEnvironment::Decode(profileRaw);
+    const auto shared = ModeResultEnvironment::DecodeApproach(
+        SceneRead(usrdir / "env/env_approach.dat"));
+    const auto format = TextFormatEnvironment::Decode(
+        SceneRead(usrdir / "env/env_string_format.dat"), true);
+    const auto timing = TextTimingEnvironment::Decode(
+        SceneRead(usrdir / "env/env_config.dat"), true);
+    SemanticState owner;
+    InitializeFreshAudioOwner(owner);
+    InitializeFreshMessageOwner(owner);
+    InitializeFreshProfileEntry(
+        owner, ProfileInitialStats::Decode(profileRaw),
+        LoadProfileItemCatalog(SceneRead(usrdir / "first.dat")));
+    ArchiveProfileServices services(
+        resources,
+        ScriptNameIndex::FromFirstArchive(SceneRead(usrdir / "first.dat")),
+        format, timing);
+    ProfileMode mode(owner, services, profile, shared);
+    ProfileSelectionInput input;
+    input.Accept = true;
+    input.Confirmation = true;
+    uint64_t now = 0;
+    for (size_t n = 0;
+         n < 2500 && mode.CurrentStage() != ProfileMode::Stage::Complete; ++n) {
+      mode.Update(owner, input, now += 16);
+      owner.PendingEvents.clear();
+    }
+    if (mode.CurrentStage() != ProfileMode::Stage::Complete)
+      throw FormatError("headless profile entry did not complete");
+    ViewerWindow window(capture, true);
+    SdlCheck(SDL_SetWindowSize(window.Window, 960, 544), "scene viewport size");
+    UiBlitRenderer renderer;
+    FontTextures fontTextures;
+    PcFontFace font(SceneRead(usrdir / "DFHSR4.TTC"),
+                    GsfFont::Decode(SceneRead(usrdir / "Font.gsf")));
+    ArchiveBgmResources music(usrdir);
+    ArchiveSeResources sounds(usrdir);
+    MusicPlayback playback(music, capture, &sounds);
+    return RunCompletedScene(window, renderer, fontTextures, font, resources,
+                             playback, music, sounds, std::move(owner), mode,
+                             usrdir, captureDirectory);
+  } catch (const std::exception& error) {
+    if (created) {
+      std::ofstream out(captureDirectory / "error.txt");
+      out << std::string(error.what()).substr(0, 2048) << '\n';
+    }
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Saekano scene: %s",
+                 error.what());
+    return 1;
+  }
 }
 }  // namespace Impacto::Saekano

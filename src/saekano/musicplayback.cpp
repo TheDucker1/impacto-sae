@@ -174,6 +174,7 @@ struct MusicPlayback::Impl {
   std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> Channel;
   std::array<std::unique_ptr<Audio::OpenAL::OpenALAudioChannel>,4> SeChannels;
   std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> ProfileVoice;
+  std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> SecondaryVoice;
   std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> UiSound;
   SystemSoundAssets* UiSounds = nullptr;
   float UiSoundGain = 0;
@@ -222,6 +223,8 @@ struct MusicPlayback::Impl {
           Audio::AC_BGM0, Audio::ACG_BGM);
       ProfileVoice = std::make_unique<Audio::OpenAL::OpenALAudioChannel>(
           Audio::AC_VOICE0, Audio::ACG_Voice);
+      SecondaryVoice = std::make_unique<Audio::OpenAL::OpenALAudioChannel>(
+          Audio::AC_VOICE1, Audio::ACG_Voice);
       UiSound = std::make_unique<Audio::OpenAL::OpenALAudioChannel>(
           Audio::AC_SE0, Audio::ACG_SE);
       if (Sounds) for (size_t i=0; i<SeChannels.size(); ++i)
@@ -236,6 +239,7 @@ struct MusicPlayback::Impl {
   void Cleanup() {
     Channel.reset();
     ProfileVoice.reset();
+    SecondaryVoice.reset();
     UiSound.reset();
     PreparedProfileVoice.reset();
     for (auto& channel : SeChannels) channel.reset();
@@ -319,21 +323,29 @@ void MusicPlayback::Submit(const GameEvent& event) {
     if (event.Parameter != 0)
       throw UnsupportedCommand("native SE fade-time conversion is not verified");
     impl_->SeChannels[size_t(event.Id - 2)]->Stop(0);
+  } else if (event.Kind == GameEventKind::StopChannel) {
+    if (event.Parameter || (event.Id != 7 && event.Id != 8))
+      throw UnsupportedCommand(
+          "native channel stop outside bound voice7/8 or nonzero fade");
+    (event.Id == 7 ? impl_->ProfileVoice : impl_->SecondaryVoice)->Stop(0);
   } else
-    throw UnsupportedCommand(
-        "Saekano audio host cannot consume this event yet");
+    throw UnsupportedCommand("Saekano audio host cannot consume event kind " +
+                             std::to_string(int(event.Kind)) + " id " +
+                             std::to_string(event.Id));
   AlCheck("BGM request");
 }
 void MusicPlayback::Update(float seconds) {
   impl_->Channel->Update(seconds);
   for (auto& channel : impl_->SeChannels) if (channel) channel->Update(seconds);
   impl_->ProfileVoice->Update(seconds);
+  impl_->SecondaryVoice->Update(seconds);
   impl_->UiSound->Update(seconds);
   AlCheck("BGM frame");
 }
 bool MusicPlayback::Playing() const {
   if (impl_->Channel->GetState() != Audio::ACS_Stopped) return true;
   if (impl_->ProfileVoice->GetState() != Audio::ACS_Stopped) return true;
+  if (impl_->SecondaryVoice->GetState() != Audio::ACS_Stopped) return true;
   if (UiSoundPlaying()) return true;
   for (auto& channel : impl_->SeChannels)
     if (channel && channel->GetState() != Audio::ACS_Stopped) return true;

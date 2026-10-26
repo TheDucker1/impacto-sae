@@ -140,6 +140,8 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     }
   }
   if (preserveOwnerState) {
+    spriteBlinks_.clear();
+    freshSpriteFrames_ = true;
     // Called after context reset by the outer file-chain path. The owner banks,
     // flags, titles and metadata survive; per-manager presentation does not.
     state_.PendingCommandIndex = -1;
@@ -249,6 +251,24 @@ void VirtualMachine::SeedRandom(uint32_t seed) {
       boundary_ != VmBoundary::ProfileDestinationLoaded)
     throw std::runtime_error("random initialization must precede Start");
   state_.Random.Seed(seed);
+}
+void VirtualMachine::UpdateSpriteFrames(uint32_t clockSeed) {
+  if (!state_.Random.Known())
+    throw UnsupportedCommand("sprite frame RNG state is missing");
+  for (const auto& [id, actor] : state_.Characters)
+    if (!actor.RuntimeKnown || !actor.Pose.Known ||
+        (!freshSpriteFrames_ && !spriteBlinks_.contains(id)))
+      throw UnsupportedCommand("restored sprite frame schedule is missing");
+  for (const auto& [id, actor] : state_.Characters) {
+    auto [found, inserted] = spriteBlinks_.try_emplace(id);
+    if (inserted) found->second.Initialize(clockSeed);
+    found->second.Update(state_.Random, actor.Pose.Ready,
+                         actor.Tweens[size_t(CharacterTween::Opacity)].Current);
+  }
+}
+const CharacterBlink* VirtualMachine::SpriteBlink(uint16_t id) const {
+  const auto found = spriteBlinks_.find(id);
+  return found == spriteBlinks_.end() ? nullptr : &found->second;
 }
 std::vector<GameEvent> VirtualMachine::TakeEvents() {
   return std::exchange(state_.PendingEvents, {});

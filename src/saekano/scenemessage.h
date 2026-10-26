@@ -3,6 +3,8 @@
 #include "headlessbackend.h"
 
 namespace Impacto::Saekano {
+// Explicit fresh settings7350 only. Never apply on manager reset or restore.
+void InitializeFreshMessageOwner(SemanticState& owner);
 struct SceneMessageTextState {
   size_t Command = 0;
   OrdinaryMessageText Parsed;

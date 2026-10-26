@@ -59,6 +59,9 @@ struct SemanticState {
   std::optional<ChapterTitleCommand> SavedChapter;  // S600b4/6007c/60044.
   ProfileOwnerState ProfileOwner;
   std::optional<uint8_t> TextSpeed;  // Owner S6022c, omitted from SAS1.
+  std::optional<uint8_t> WindowOpacity;  // Owner S6022f, omitted from SAS1.
+  std::optional<bool>
+      ReadColorEnabled;  // Owner S60232; read history is separate.
   std::map<uint16_t, CharacterState> Characters;
   CharacterRuntime CharacterRuntimeState;
   CharacterPoseCache PoseCache;

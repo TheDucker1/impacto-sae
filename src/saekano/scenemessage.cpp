@@ -1,6 +1,13 @@
 #include "scenemessage.h"
 
 namespace Impacto::Saekano {
+void InitializeFreshMessageOwner(SemanticState& owner) {
+  if (owner.WindowOpacity || owner.ReadColorEnabled)
+    throw UnsupportedCommand(
+        "fresh message settings would overwrite known owner state");
+  owner.WindowOpacity = 10;
+  owner.ReadColorEnabled = true;
+}
 SceneMessageBackend::SceneMessageBackend(const TextFormatEnvironment& format,
                                          const TextTimingEnvironment& timing,
                                          uint8_t textSpeed)
