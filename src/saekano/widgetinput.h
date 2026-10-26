@@ -5,6 +5,7 @@
 #include <optional>
 #include <span>
 #include <vector>
+#include "uisprite.h"
 
 namespace Impacto::Saekano {
 struct WidgetTouch {
@@ -75,5 +76,26 @@ struct WidgetInputHistory {
   void BeginFrame(Snapshot snapshot);
   void Publish(uint16_t widgetFlags);
   std::array<float, 2> Velocity(uint32_t channel) const;
+};
+// Fresh ordinary manager's ten input components in native factory order.
+class OrdinaryWidgetInput {
+ public:
+  OrdinaryWidgetInput(const OrdinaryMessageEnvironment& environment,
+                      uint32_t holdFrames);
+  void BeginFrame(WidgetInputHistory::Snapshot snapshot);
+  bool UpdatePrimary();
+  void UpdateButtons(std::array<int32_t, 2> offset);
+  void CancelPointer();  // PC focus/capture loss: discard contacts without
+                         // activation.
+  const WidgetInputHistory& Input() const { return input_; }
+  const std::vector<WidgetEventHistory>& Components() const {
+    return components_;
+  }
+
+ private:
+  void UpdateComponent(size_t index, std::array<int32_t, 4> rectangle);
+  OrdinaryMessageEnvironment environment_;
+  WidgetInputHistory input_;
+  std::vector<WidgetEventHistory> components_;
 };
 }  // namespace Impacto::Saekano

@@ -77,6 +77,7 @@ struct MessageCursorEnvironment {
   static MessageCursorEnvironment Decode(std::span<const uint8_t> message);
 };
 struct OrdinaryMessageEnvironment {
+  std::array<int32_t, 4> HitRegion{};
   std::array<UiSpriteDefinition, 2> Frame;
   std::array<UiSpriteDefinition, 3> Nameplate;
   std::array<UiSpriteDefinition, 2> Cursors;

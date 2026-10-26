@@ -17,6 +17,7 @@
 #include "scenemessage.h"
 #include "messagedraw.h"
 #include "scenequeue.h"
+#include "widgetinput.h"
 #include "../io/memorystream.h"
 #include "../texture/texture.h"
 
@@ -609,6 +610,9 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       SceneRead(root / "env/env_config.dat"), true);
   const auto visual = OrdinaryTextEnvironment::Decode(
       SceneRead(root / "env/env_message_window.dat"));
+  const auto inputEnvironment = WidgetInputEnvironment::DecodeUtility(
+      SceneRead(root / "env/env_game_utility.dat"));
+  OrdinaryWidgetInput sceneInput(visual.Window, inputEnvironment.HoldFrames);
   const auto cursorEnvironment = OrdinaryCursorEnvironment::Decode(
       SceneRead(root / "env/env_message_window.dat"));
   ProfileArrowMotion messageCursor;
@@ -651,7 +655,11 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   };
   for (auto id : {0u, 1u, 2u, 3u, 9u}) uploadMain(id);
   PlainTextLayout layout;
-  bool laidOut = false, quit = false, advanced = false;
+  bool laidOut = false, quit = false;
+  bool pointerDown = false;
+  std::array<float, 2> pointerPosition{};
+  uint32_t capturePointerStage = 0;
+  std::string previousPointer;
   uint64_t previous = 0, firstMessage = UINT64_MAX, lastSaved = 0;
   const auto epoch = SDL_GetTicks();
   std::string previousSignature;
@@ -663,6 +671,22 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     messageCursor.Update(now);
     CommandInput input;
     SDL_Event event;
+    if (capture && firstMessage != UINT64_MAX && capturePointerStage < 4) {
+      constexpr std::array<uint64_t, 4> Delays{96, 112, 512, 528};
+      if (now - firstMessage >= Delays[capturePointerStage]) {
+        SDL_Event synthetic{};
+        synthetic.type = (capturePointerStage % 2 == 0)
+                             ? SDL_EVENT_MOUSE_BUTTON_DOWN
+                             : SDL_EVENT_MOUSE_BUTTON_UP;
+        synthetic.button.windowID = SDL_GetWindowID(window.Window);
+        synthetic.button.button = SDL_BUTTON_LEFT;
+        synthetic.button.down = capturePointerStage % 2 == 0;
+        synthetic.button.x = 400;
+        synthetic.button.y = 440;
+        SdlCheck(SDL_PushEvent(&synthetic), "capture pointer event");
+        ++capturePointerStage;
+      }
+    }
     while (SDL_PollEvent(&event)) {
       if (event.type == SDL_EVENT_QUIT ||
           (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE))
@@ -670,8 +694,50 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
           event.key.key == SDLK_RETURN)
         input.Advance = true;
+      if ((event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+           event.type == SDL_EVENT_MOUSE_BUTTON_UP) &&
+          event.button.button == SDL_BUTTON_LEFT) {
+        pointerDown = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+        pointerPosition = {event.button.x, event.button.y};
+      }
+      if (event.type == SDL_EVENT_MOUSE_MOTION)
+        pointerPosition = {event.motion.x, event.motion.y};
+      if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
+        pointerDown = false;
+        sceneInput.CancelPointer();
+      }
     }
     if (quit) break;
+    WidgetInputHistory::Snapshot pointerSnapshot;
+    if (pointerDown) {
+      int logicalWidth = 0, logicalHeight = 0;
+      SdlCheck(SDL_GetWindowSize(window.Window, &logicalWidth, &logicalHeight),
+               "pointer viewport size");
+      const float x = pointerPosition[0] * 960.0f / float(logicalWidth),
+                  y = pointerPosition[1] * 544.0f / float(logicalHeight);
+      if (x >= INT16_MIN && x <= INT16_MAX && y >= INT16_MIN && y <= INT16_MAX)
+        pointerSnapshot[0] = WidgetTouch{0, {int16_t(x), int16_t(y)}};
+    }
+    sceneInput.BeginFrame(pointerSnapshot);
+    const bool pointerAdvance = sceneInput.UpdatePrimary();
+    input.Advance = input.Advance || pointerAdvance;
+    if (capture) {
+      const auto& point = pointerSnapshot[0];
+      const auto signature = point ? std::to_string(point->Position[0]) + ',' +
+                                         std::to_string(point->Position[1])
+                                   : "none";
+      if (signature != previousPointer) {
+        events << "{\"kind\":\"pointer\",\"frame\":" << frame
+               << ",\"present\":" << (point ? "true" : "false");
+        if (point)
+          events << ",\"position\":[" << point->Position[0] << ','
+                 << point->Position[1] << ']';
+        events << ",\"synthetic\":true}\n";
+        previousPointer = signature;
+      }
+      if (pointerAdvance)
+        events << "{\"kind\":\"pointer_advance\",\"frame\":" << frame << "}\n";
+    }
     playback.Update(float(now - previous) / 1000.0f);
     if (capture && now > previous) {
       std::vector<int16_t> samples(size_t(now - previous) * 96);
@@ -680,11 +746,6 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                 samples.size() * sizeof(int16_t));
     }
     previous = now;
-    if (capture && firstMessage != UINT64_MAX && now - firstMessage >= 3000 &&
-        !advanced) {
-      input.Advance = true;
-      advanced = true;
-    }
     for (size_t work = 0; work < 256; ++work) {
       const auto step = vm->Step(now, input);
       input.Advance = false;
@@ -732,6 +793,18 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     vm->UpdateSpriteFrames(spriteClock);
     backend.UpdateMessage(now);
     const auto& state = vm->State();
+    // Primary updates before command work; button widgets update every variant
+    // afterwards, using the new frame's slide/quake offset.
+    if (!state.Quake[2])
+      throw UnsupportedCommand("widget quake inputs are missing");
+    const int32_t slide =
+        std::bit_cast<int32_t>(uint32_t(visual.Window.WindowTravel) *
+                               (100u - state.WindowOpenness[0])) /
+        100;
+    sceneInput.UpdateButtons(
+        {(*state.Quake[2])[0],
+         std::bit_cast<int32_t>(uint32_t(slide) +
+                                uint32_t((*state.Quake[2])[1]))});
     int width = 0, height = 0;
     SdlCheck(SDL_GetWindowSizeInPixels(window.Window, &width, &height),
              "scene frame size");
@@ -858,7 +931,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     }
     GlCheck("first scene composition");
     std::string signature = std::to_string(message->Reveal.Revealed) + ':' +
-                            std::to_string(backend.CursorVisible());
+                            std::to_string(backend.CursorVisible()) + ':' +
+                            std::to_string(pointerDown);
     for (const auto& [id, actor] : state.Characters) {
       (void)actor;
       signature += ':' + std::to_string(vm->SpriteBlink(id)->Phase);
@@ -889,13 +963,52 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
              << ",\"random_seed\":" << seed
              << ",\"random_draws\":" << state.Random.Draws()
              << ",\"playback_host_reused\":true,\"fresh_unread\":true,"
+                "\"primary_pointer_bound\":true,\"synthetic_pointer_capture\":"
+                "true,"
                 "\"prelude_rendered\":false,\"widget_mode\":\"fresh_idle\","
-                "\"unbound_passes\":[\"widget_input\","
+                "\"unbound_passes\":[\"skip_auto_input\",\"widget_long_hold_"
+                "visual\","
                 "\"active_auto_rotation\",\"letterbox\",\"animation_"
                 "groups\",\"effects\"],\"sprites\":[";
       for (size_t i = 0; i < spriteDraws.size(); ++i) {
         if (i) report << ',';
         WriteUiBlit(report, spriteDraws[i]);
+      }
+      report << "],\"input_ring\":[" << sceneInput.Input().Count << ','
+             << sceneInput.Input().Oldest << ',' << sceneInput.Input().Next
+             << "],\"input_offset\":[" << (*state.Quake[2])[0] << ','
+             << std::bit_cast<int32_t>(uint32_t(slide) +
+                                       uint32_t((*state.Quake[2])[1]))
+             << "],\"input_components\":[";
+      for (size_t i = 0; i < sceneInput.Components().size(); ++i) {
+        if (i) report << ',';
+        const auto& component = sceneInput.Components()[i];
+        report << "{\"flags\":" << component.Flags
+               << ",\"tracked\":" << component.TrackedId
+               << ",\"index\":" << component.HistoryIndex
+               << ",\"double\":" << component.DoublePressCounter
+               << ",\"gesture\":" << component.GestureCounter
+               << ",\"secondary\":" << component.SecondaryGestureCounter
+               << ",\"toggle\":" << component.Toggle << ",\"delta\":["
+               << component.Delta[0] << ',' << component.Delta[1]
+               << "],\"velocity_bits\":["
+               << std::bit_cast<uint32_t>(component.Velocity[0]) << ','
+               << std::bit_cast<uint32_t>(component.Velocity[1])
+               << "],\"absolute_bits\":";
+        if (component.AbsoluteVelocity)
+          report << '['
+                 << std::bit_cast<uint32_t>((*component.AbsoluteVelocity)[0])
+                 << ','
+                 << std::bit_cast<uint32_t>((*component.AbsoluteVelocity)[1])
+                 << ']';
+        else
+          report << "null";
+        report << ",\"history\":[";
+        for (size_t j = 0; j < component.HeldHistory.size(); ++j) {
+          if (j) report << ',';
+          report << int(component.HeldHistory[j]);
+        }
+        report << "]}";
       }
       report << "],\"widget_inputs\":[";
       for (size_t i = 0; i < widgetInputs.size(); ++i) {

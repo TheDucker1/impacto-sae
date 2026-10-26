@@ -169,4 +169,41 @@ std::array<float, 2> WidgetInputHistory::Velocity(uint32_t channel) const {
   for (size_t i = 0; i < Capacity; ++i) samples[i] = Frames[i][channel];
   return WidgetHistoryVelocity(samples, Count, Oldest);
 }
+OrdinaryWidgetInput::OrdinaryWidgetInput(
+    const OrdinaryMessageEnvironment& environment, uint32_t holdFrames)
+    : environment_(environment) {
+  components_.reserve(10);
+  for (size_t i = 0; i < 10; ++i) components_.emplace_back(holdFrames);
+}
+void OrdinaryWidgetInput::BeginFrame(WidgetInputHistory::Snapshot snapshot) {
+  input_.BeginFrame(std::move(snapshot));
+}
+void OrdinaryWidgetInput::UpdateComponent(size_t index,
+                                          std::array<int32_t, 4> rectangle) {
+  auto& component = components_.at(index);
+  component.Update(SampleWidgetContact(rectangle, input_.Current[0],
+                                       input_.Previous[0], component.TrackedId,
+                                       input_.Velocity(0)));
+  input_.Publish(component.Flags);
+}
+bool OrdinaryWidgetInput::UpdatePrimary() {
+  UpdateComponent(0, environment_.HitRegion);
+  return (components_[0].Flags & 8) != 0;
+}
+void OrdinaryWidgetInput::UpdateButtons(std::array<int32_t, 2> offset) {
+  constexpr std::array<size_t, 9> Indices{0, 2, 1, 4, 3, 5, 6, 8, 7};
+  for (size_t i = 0; i < Indices.size(); ++i) {
+    const auto sprite = ResolveUiSprite({ProfileTextureSection::MainUi, -1, 3},
+                                        environment_.Auxiliary[Indices[i]]);
+    auto rectangle = sprite.Destination;
+    for (size_t axis = 0; axis < 2; ++axis)
+      rectangle[axis] = std::bit_cast<int32_t>(uint32_t(rectangle[axis]) +
+                                               uint32_t(offset[axis]));
+    UpdateComponent(i + 1, rectangle);
+  }
+}
+void OrdinaryWidgetInput::CancelPointer() {
+  input_.Current = input_.Previous = {};
+  for (auto& component : components_) component.TrackedId = -1;
+}
 }  // namespace Impacto::Saekano

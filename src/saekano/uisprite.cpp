@@ -89,7 +89,7 @@ OrdinaryMessageEnvironment OrdinaryMessageEnvironment::Decode(
   OrdinaryMessageEnvironment result;
   for (auto& sprite : result.Frame)
     sprite = UiSpriteDefinition::ReadLegacy(reader);
-  for (size_t i = 0; i < 4; ++i) reader.U32();
+  for (auto& value : result.HitRegion) value = reader.I32();
   for (auto& sprite : result.Nameplate)
     sprite = UiSpriteDefinition::ReadLegacy(reader);
   for (auto& sprite : result.Cursors)
