@@ -4,6 +4,12 @@
 
 namespace Impacto::Saekano {
 struct SemanticState;
+// env_global prefix through the authored auto-key hold duration.
+struct SkipAutoEnvironment {
+  int32_t AutoKeyDuration = 0;
+  size_t PrefixBytes = 0;
+  static SkipAutoEnvironment Decode(std::span<const uint8_t> bytes);
+};
 struct SkipAutoInput {
   bool HideMessages = false, ServicesBlocked = false;
   bool HistoryGate =

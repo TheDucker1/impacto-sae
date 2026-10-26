@@ -4,6 +4,25 @@
 #include <bit>
 
 namespace Impacto::Saekano {
+SkipAutoEnvironment SkipAutoEnvironment::Decode(std::span<const uint8_t> bytes) {
+  if (bytes.size() < 3) throw FormatError("truncated global environment flags");
+  PayloadReader reader(bytes.subspan(3));
+  for (int i = 0; i < 4; ++i) reader.String();
+  reader.U32();
+  reader.U32();
+  for (int i = 0; i < 9; ++i) reader.String();
+  // Height and two scalars, rect/point pairs, float, rect/point, float.
+  // Each native rect/point reader consumes four/two serialized words.
+  for (int count : {3, 4, 2, 4, 2, 1, 4, 2, 1})
+    for (int i = 0; i < count; ++i) reader.U32();
+  SkipAutoEnvironment result;
+  result.AutoKeyDuration = reader.I32();
+  if (result.AutoKeyDuration < 0)
+    throw FormatError("negative auto key duration");
+  result.PrefixBytes = bytes.size() - reader.Remaining();
+  return result;
+}
+
 void UpdateSkipAutoPolicy(SemanticState& owner, SkipAutoState& policy,
                           const SkipAutoInput& input, int32_t autoKeyDuration,
                           uint64_t now) {
