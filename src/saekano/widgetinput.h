@@ -57,4 +57,23 @@ struct WidgetEventHistory {
       AbsoluteVelocity;  // Native leaves these unused until release.
   std::vector<uint8_t> HeldHistory;
 };
+struct WidgetInputEnvironment {
+  uint32_t HoldFrames = 0;
+  size_t PrefixBytes = 0;
+  static WidgetInputEnvironment DecodeUtility(std::span<const uint8_t> utility);
+};
+// Fresh platform input owner. BeginFrame shifts snapshots once. Each widget's
+// event publication may reset/append movement history; idle frames do not
+// append.
+struct WidgetInputHistory {
+  static constexpr uint32_t Capacity =
+      4;  // Original platform constructor98684.
+  using Snapshot = std::array<std::optional<WidgetTouch>, 2>;
+  Snapshot Current{}, Previous{};
+  std::array<std::array<WidgetHistoryFrame, 2>, Capacity> Frames{};
+  uint32_t Count = 0, Oldest = 0, Next = 0;
+  void BeginFrame(Snapshot snapshot);
+  void Publish(uint16_t widgetFlags);
+  std::array<float, 2> Velocity(uint32_t channel) const;
+};
 }  // namespace Impacto::Saekano

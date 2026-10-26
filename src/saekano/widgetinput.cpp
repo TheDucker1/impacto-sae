@@ -1,8 +1,10 @@
 #include "widgetinput.h"
 #include "formats.h"
+#include "commands.h"
 
 #include <bit>
 #include <cmath>
+#include <utility>
 
 namespace Impacto::Saekano {
 bool WidgetContainsPoint(std::array<int32_t, 4> rectangle,
@@ -123,5 +125,48 @@ void WidgetEventHistory::Update(const WidgetContactEvents& contact) {
   if (Flags & 0x80) SecondaryGestureCounter = 1;
   GestureCounter = advance(GestureCounter);
   SecondaryGestureCounter = advance(SecondaryGestureCounter);
+}
+WidgetInputEnvironment WidgetInputEnvironment::DecodeUtility(
+    std::span<const uint8_t> utility) {
+  if (utility.size() < 3) throw FormatError("truncated widget utility flags");
+  PayloadReader reader(utility.subspan(3));
+  reader.U32();  // Font size.
+  const auto count = reader.U32();
+  reader.CheckCount(count, 4);
+  for (uint32_t i = 0; i < count; ++i) reader.U32();
+  if (!reader.Remaining()) throw FormatError("truncated widget debug flag");
+  PayloadReader tail(utility.subspan(utility.size() - reader.Remaining() + 1));
+  tail.U32();  // Debug tint follows its one-byte flag.
+  WidgetInputEnvironment result;
+  result.HoldFrames = tail.U32();
+  if (!result.HoldFrames || result.HoldFrames > 65536)
+    throw FormatError("invalid authored widget hold history length");
+  result.PrefixBytes = utility.size() - tail.Remaining();
+  return result;
+}
+void WidgetInputHistory::BeginFrame(Snapshot snapshot) {
+  Previous = Current;
+  Current = std::move(snapshot);
+}
+void WidgetInputHistory::Publish(uint16_t widgetFlags) {
+  if (widgetFlags & 1) Count = Oldest = Next = 0;
+  if (!(widgetFlags & 0x10)) return;
+  for (size_t channel = 0; channel < Current.size(); ++channel) {
+    const auto& touch = Current[channel];
+    Frames[Next][channel] =
+        touch ? WidgetHistoryFrame{1, touch->Position} : WidgetHistoryFrame{};
+  }
+  Next = (Next + 1) % Capacity;
+  if (Count < Capacity)
+    ++Count;
+  else
+    Oldest = (Oldest + 1) % Capacity;
+}
+std::array<float, 2> WidgetInputHistory::Velocity(uint32_t channel) const {
+  if (channel >= Current.size())
+    throw FormatError("unknown widget input channel");
+  std::array<WidgetHistoryFrame, Capacity> samples;
+  for (size_t i = 0; i < Capacity; ++i) samples[i] = Frames[i][channel];
+  return WidgetHistoryVelocity(samples, Count, Oldest);
 }
 }  // namespace Impacto::Saekano
