@@ -80,6 +80,7 @@ struct OrdinaryMessageEnvironment {
   std::array<UiSpriteDefinition, 2> Frame;
   std::array<UiSpriteDefinition, 3> Nameplate;
   std::array<UiSpriteDefinition, 2> Cursors;
+  std::array<UiSpriteDefinition, 9> Auxiliary;
   int32_t WindowTravel = 0, TextWidth = 0;
   std::array<int32_t, 2> TextPosition{};
   size_t PrefixBytes = 0;
@@ -94,18 +95,24 @@ struct OrdinaryMessageWindowState {
   float CursorOffset = 0;  // Manager1670 sample.
   uint32_t RendererMode = 0, RendererParameter = 0;  // Parameter is an F32 bit pattern.
 };
-enum class MessageWindowDrawKind { Sprite, TextWidget, RendererState, AlphaTest };
+enum class MessageWindowDrawKind { Sprite, Widget, RendererState, AlphaTest };
 struct MessageWindowDraw {
   MessageWindowDrawKind Kind = MessageWindowDrawKind::Sprite;
   UiSpriteBlit Sprite;
-  uint32_t Index = 0;  // Text:manager20fc/15078/15050; Renderer:mode.
-  uint32_t Parameter = 0;  // Text:alpha; Renderer:native F32 parameter bits.
+  uint32_t Index = 0;      // Widget:manager20fc/15078/15050; Renderer:mode.
+  uint32_t Parameter = 0;  // Widget:alpha; Renderer:native F32 parameter bits.
 };
 // Native79a9c ordered frame/nameplate/cursor sprites and text widget calls.
-// Text widget contents/rasterization and renderer mode backend execution are separate.
+// Generic widget bodies and renderer mode backend execution are separate.
 std::vector<MessageWindowDraw> BuildOrdinaryMessageWindow(
     const OrdinaryMessageEnvironment& environment,
     const OrdinaryMessageWindowState& state);
+// Static ordinary skip/auto widget rows from BindScenarioOwner. Input policy
+// and active-auto rotation are separate controllers; active auto rejects here.
+std::vector<UiSpriteBlit> BuildOrdinaryMessageWidget(
+    const OrdinaryMessageEnvironment& environment, uint32_t widget,
+    bool skipActive, bool skipGesture, bool autoActive,
+    std::array<int32_t, 2> offset, uint8_t alpha);
 struct ProfileResponseVisualEnvironment {
   UiSpriteDefinition Window;
   std::array<int32_t, 2> TextPosition{};

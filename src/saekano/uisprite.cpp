@@ -94,7 +94,8 @@ OrdinaryMessageEnvironment OrdinaryMessageEnvironment::Decode(
     sprite = UiSpriteDefinition::ReadLegacy(reader);
   for (auto& sprite : result.Cursors)
     sprite = UiSpriteDefinition::ReadLegacy(reader);
-  for (size_t i = 0; i < 9; ++i) UiSpriteDefinition::ReadLegacy(reader);
+  for (auto& sprite : result.Auxiliary)
+    sprite = UiSpriteDefinition::ReadLegacy(reader);
   reader.U32();
   for (size_t i = 0; i < 3; ++i) UiSpriteDefinition::ReadLegacy(reader);
   for (size_t i = 0; i < 6; ++i) reader.U32();
@@ -143,9 +144,9 @@ std::vector<MessageWindowDraw> BuildOrdinaryMessageWindow(
         ResolveUiSprite({ProfileTextureSection::MainUi, -1, entry}, definition);
     draws.push_back(draw);
   };
-  const auto text = [&](uint32_t widget, uint32_t opacity) {
+  const auto widgetCall = [&](uint32_t widget, uint32_t opacity) {
     MessageWindowDraw draw;
-    draw.Kind = MessageWindowDrawKind::TextWidget;
+    draw.Kind = MessageWindowDrawKind::Widget;
     draw.Index = widget;
     draw.Parameter = opacity;
     draws.push_back(draw);
@@ -153,14 +154,14 @@ std::vector<MessageWindowDraw> BuildOrdinaryMessageWindow(
   rendererMode(0, 0);
   sprite(environment.Frame[0], 0);
   sprite(environment.Frame[1], 1);
-  text(0, 255);  // This widget call deliberately uses opaque white.
+  widgetCall(0, 255);  // This widget call deliberately uses opaque white.
   if (state.SpeakerId != -1) {
     sprite(environment.Nameplate[0], 9);
     sprite(environment.Nameplate[1], 9);
     sprite(environment.Nameplate[2], uint32_t(state.SpeakerId) + 41u);
   }
-  text(1, alpha);
-  text(2, alpha);
+  widgetCall(1, alpha);
+  widgetCall(2, alpha);
   if (state.MessageCommand && state.CursorVisible)
     for (auto definition : environment.Cursors)
       sprite(definition, 2, Convert(state.CursorOffset));
@@ -171,6 +172,33 @@ std::vector<MessageWindowDraw> BuildOrdinaryMessageWindow(
                    ? state.RendererParameter
                    : 0);
   return draws;
+}
+std::vector<UiSpriteBlit> BuildOrdinaryMessageWidget(
+    const OrdinaryMessageEnvironment& environment, uint32_t widget,
+    bool skipActive, bool skipGesture, bool autoActive,
+    std::array<int32_t, 2> offset, uint8_t alpha) {
+  if (widget > 2) throw FormatError("unknown ordinary widget");
+  if (widget == 0) return {};  // Transparent hit region; no visible content.
+  if (widget == 2 && autoActive)
+    throw UnsupportedCommand("ordinary active-auto rotation is not bound");
+  const std::array<size_t, 3> indices =
+      widget == 1 ? std::array<size_t, 3>{0, skipActive ? 2u : 1u,
+                                          skipGesture ? 4u : 3u}
+                  : std::array<size_t, 3>{5, 6, 7};
+  std::vector<UiSpriteBlit> result;
+  for (auto index : indices) {
+    auto definition = environment.Auxiliary[index];
+    // The native factory ignores descriptor tint and uses opaque white. Its
+    // auto row1 accidentally borrows row0's width; honor row1's own width.
+    definition.Color = {255, 255, 255, alpha};
+    definition.X =
+        std::bit_cast<int32_t>(uint32_t(definition.X) + uint32_t(offset[0]));
+    definition.Y =
+        std::bit_cast<int32_t>(uint32_t(definition.Y) + uint32_t(offset[1]));
+    result.push_back(
+        ResolveUiSprite({ProfileTextureSection::MainUi, -1, 3}, definition));
+  }
+  return result;
 }
 MessageCursorEnvironment MessageCursorEnvironment::Decode(
     std::span<const uint8_t> bytes) {
