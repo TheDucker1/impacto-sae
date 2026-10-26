@@ -1,9 +1,27 @@
 #pragma once
 
 #include <cstdint>
+#include <array>
+#include <span>
 #include <vector>
 
 namespace Impacto::Saekano {
+struct OrdinaryVoiceRange { int32_t Group, First, Last; };
+struct OrdinaryVoiceSettings {
+  uint8_t Volume;
+  bool StopOnAdvance;
+  std::array<uint8_t, 9> Enabled;
+};
+OrdinaryVoiceSettings MakeFreshOrdinaryVoiceSettings();
+std::vector<OrdinaryVoiceRange> DecodeOrdinaryVoiceRanges(
+    std::span<const uint8_t> text);
+std::vector<OrdinaryVoiceRange> LoadOrdinaryVoiceRangesFromFirst(
+    std::vector<uint8_t> firstDat);
+struct OrdinaryVoiceEligibility { bool Enabled; int32_t Group; };
+OrdinaryVoiceEligibility OrdinaryVoiceEligible(
+    int32_t voiceId, std::span<const OrdinaryVoiceRange> ranges,
+    const OrdinaryVoiceSettings& settings);
+
 enum class OrdinaryVoiceReveal { Unvoiced, Voiced, Fallback };
 
 // Boundaries of message update84982..84d7e. The owner supplies its actual
