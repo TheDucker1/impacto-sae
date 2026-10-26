@@ -169,6 +169,53 @@ std::vector<UiTextBlit> BuildPlainTextDraws(const PlainTextLayout& layout,
   }
   return result;
 }
+OrdinaryMessageText SplitOrdinaryMessageText(
+    std::u16string_view source, const TextFormatEnvironment& format,
+    std::optional<std::u16string_view> previousName) {
+  if (format.CharacterMaps.size() < 2 || format.Following.size() < 3 ||
+      format.Following[0].size() < 2 || format.Following[1].empty() ||
+      format.Following[2].size() < 2 || format.Tokens[2].empty() ||
+      format.CharacterMaps[0].size() != format.CharacterMaps[1].size())
+    throw FormatError("ordinary message format is incomplete");
+  if (source.size() > 1024 * 1024)
+    throw FormatError("ordinary message exceeds budget");
+  std::u16string normalized(source.substr(0, source.find(u'\0')));
+  for (auto& c : normalized) {
+    const auto at = format.CharacterMaps[0].find(c);
+    if (at != std::u16string::npos) c = format.CharacterMaps[1][at];
+  }
+  const auto nul = normalized.find(u'\0');
+  if (nul != std::u16string::npos) normalized.resize(nul);
+  if (normalized.find_first_of(format.Tokens[2]) != std::u16string::npos)
+    throw UnsupportedCommand(
+        "ordinary inline message directives require their parser");
+  OrdinaryMessageText result;
+  result.InheritedName = previousName.has_value();
+  if (previousName) {
+    result.Name = *previousName;
+    result.NameEnabled = true;
+  } else {
+    const auto quote = normalized.find(format.Following[1]);
+    if (quote != std::u16string::npos) {
+      result.Name = normalized.substr(0, quote);
+      result.NameEnabled = true;
+    }
+  }
+  // Native strips quote characters from asides immediately following a name.
+  if (!result.Name.empty() && result.Name.size() + 1 < normalized.size() &&
+      format.Following[0].substr(0, 2).find(
+          normalized[result.Name.size() + 1]) != std::u16string::npos) {
+    const auto& quotes = format.Following[2];
+    normalized.erase(std::remove_if(normalized.begin(), normalized.end(),
+                                    [&](char16_t c) {
+                                      return c == quotes[0] || c == quotes[1];
+                                    }),
+                     normalized.end());
+  }
+  result.Body =
+      result.InheritedName ? normalized : normalized.substr(result.Name.size());
+  return result;
+}
 void VoiceTextReveal::Prepare(std::string_view cp932,
                               const TextFormatEnvironment& format,
                               uint64_t now) {

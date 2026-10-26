@@ -56,6 +56,15 @@ struct TextColorRange {
   size_t Begin = 0, End = 0;
   std::array<uint8_t, 3> Rgb{};
 };
+struct OrdinaryMessageText {
+  std::u16string Name, Body;
+  bool InheritedName = false, NameEnabled = false;
+};
+// Native16d16 ordinary name/body parsing before glyph layout. Inline directives
+// require the full control-tag parser and are rejected by this plain path.
+OrdinaryMessageText SplitOrdinaryMessageText(
+    std::u16string_view source, const TextFormatEnvironment& format,
+    std::optional<std::u16string_view> previousName = std::nullopt);
 // The native mode0 path for text with no inline timing/format directives.
 // Original profile responses use plain text and the authored line-break marker.
 // Font metrics/wrapping are separate; they do not alter this glyph count/order.
