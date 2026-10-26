@@ -34,6 +34,9 @@ class VmBackend {
   virtual bool MessageRevealed(size_t command, uint64_t now) = 0;
   virtual bool MessageAdvanceAllowed(size_t command, uint64_t now) = 0;
   virtual void RevealMessage(size_t command) = 0;
+  // Normal message update tail, after reveal/input/auto decisions. Render-only
+  // sampling and the next-update completion dispatch do not publish this flag.
+  virtual void EndMessageUpdate(size_t, uint64_t) {}
   virtual Live2dDriver* Models() { return nullptr; }
   virtual SceneImageDriver* Images() { return nullptr; }
   virtual CharacterPoseDriver* Poses() { return nullptr; }

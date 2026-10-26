@@ -9,12 +9,13 @@ void InitializeFreshProfileEntry(
       state.ProfileOwner.CachedOrdinal != 0 ||
       std::any_of(state.ProfileOwner.Stats.begin(), state.ProfileOwner.Stats.end(),
                   [](int32_t value) { return value != 0; }) ||
-      state.TextSpeed || state.LastBackgroundId)
+      state.TextSpeed || state.AutoSpeed || state.LastBackgroundId)
     throw FormatError("fresh profile entry would overwrite existing owner state");
   // Build before publishing, so malformed authored data leaves state untouched.
   auto owner = MakeFreshProfileOwner(stats, catalog);
   state.ProfileOwner = std::move(owner);
   state.TextSpeed = 2;          // Owner217f6 -> settings7350, S6022c byte0.
+  state.AutoSpeed = 2;          // Same constructor, S6022d byte1.
   state.LastBackgroundId = -1;  // Owner216c4, S5e830.
 }
 

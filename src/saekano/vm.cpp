@@ -545,6 +545,7 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
     }
     if (!backend_.MessageRevealed(index, now)) {
       if (input.Advance || input.Route == UpdateRoute::Skipping) backend_.RevealMessage(index);
+      if (input.Route == UpdateRoute::Normal) backend_.EndMessageUpdate(index, now);
       return false;
     }
     CollectMessageKeywords(index);
@@ -552,6 +553,7 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
         ((command.Message->CompletionPolicy == 0 || command.Message->CompletionPolicy == 2) &&
          (input.Advance || backend_.MessageAdvanceAllowed(index, now))))
       command.AdvancePending = true;
+    if (input.Route == UpdateRoute::Normal) backend_.EndMessageUpdate(index, now);
     return false;
   }
   if (opcode == 0x2c0) {

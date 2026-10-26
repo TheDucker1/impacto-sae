@@ -601,13 +601,14 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                       const std::filesystem::path& root,
                       const std::filesystem::path& captureDirectory = {}) {
   const bool capture = !captureDirectory.empty();
-  if (!owner.WindowOpacity || !owner.ReadColorEnabled || !owner.TextSpeed)
+  if (!owner.WindowOpacity || !owner.ReadColorEnabled || !owner.TextSpeed ||
+      !owner.AutoSpeed)
     throw UnsupportedCommand("scene owner display settings are missing");
   const auto opacity = *owner.WindowOpacity;
   const auto format = TextFormatEnvironment::Decode(
       SceneRead(root / "env/env_string_format.dat"), true);
   const auto timing = TextTimingEnvironment::Decode(
-      SceneRead(root / "env/env_config.dat"), true);
+      SceneRead(root / "env/env_config.dat"), true, true);
   const auto visual = OrdinaryTextEnvironment::Decode(
       SceneRead(root / "env/env_message_window.dat"));
   const auto inputEnvironment = WidgetInputEnvironment::DecodeUtility(
@@ -624,7 +625,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       GameUtilityFont::Decode(SceneRead(root / "env/env_game_utility.dat"));
   ArchiveSceneImages images(resources);
   ArchiveCharacterPoses poses(resources);
-  SceneMessageBackend backend(format, timing, *owner.TextSpeed);
+  SceneMessageBackend backend(format, timing, *owner.TextSpeed, owner.AutoSpeed);
   backend.SceneImages = &images;
   backend.CharacterPoses = &poses;
   backend.MusicResources = &music;
