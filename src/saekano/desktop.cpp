@@ -649,7 +649,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     if (!renderer.Textures.contains(key))
       upload(key, DecodeSceneImage(resources.LoadProfileTexture(key).Data));
   };
-  for (auto id : {0u, 1u, 2u, 9u}) uploadMain(id);
+  for (auto id : {0u, 1u, 2u, 3u, 9u}) uploadMain(id);
   PlainTextLayout layout;
   bool laidOut = false, quit = false, advanced = false;
   uint64_t previous = 0, firstMessage = UINT64_MAX, lastSaved = 0;
@@ -771,6 +771,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         throw UnsupportedCommand("first-scene free-image drawing is not bound");
     const auto queue = BuildSceneDrawQueue(state.SceneImages.Slots, gates);
     std::vector<UiSpriteBlit> spriteDraws;
+    std::vector<std::array<int32_t, 6>> widgetInputs;
     std::vector<UiTextBlit> textDraws;
     for (const auto& pass : queue) {
       if (pass.Kind == SceneDrawKind::Background ||
@@ -825,6 +826,18 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
           if (draw.Kind == MessageWindowDrawKind::Sprite) {
             drawSprite(draw.Sprite);
             spriteDraws.push_back(draw.Sprite);
+          } else if (draw.Kind == MessageWindowDrawKind::Widget) {
+            // The fresh preview maps only advance. Native no-skip/auto-input
+            // policy keeps these three conditions false; restored/interactive
+            // skip/auto controllers are not bound by this preview.
+            widgetInputs.push_back({int32_t(draw.Index), 0, 0, draw.Offset[0],
+                                    draw.Offset[1], int32_t(draw.Parameter)});
+            for (const auto& sprite : BuildOrdinaryMessageWidget(
+                     visual.Window, draw.Index, false, false, false,
+                     draw.Offset, uint8_t(draw.Parameter))) {
+              drawSprite(sprite);
+              spriteDraws.push_back(sprite);
+            }
           } else if (draw.Kind == MessageWindowDrawKind::AlphaTest)
             glUniform1i(renderer.AlphaMode, draw.Index);
           else if (draw.Kind == MessageWindowDrawKind::RendererState &&
@@ -876,12 +889,23 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
              << ",\"random_seed\":" << seed
              << ",\"random_draws\":" << state.Random.Draws()
              << ",\"playback_host_reused\":true,\"fresh_unread\":true,"
-                "\"prelude_rendered\":false,\"unbound_passes\":[\"auxiliary_"
-                "widgets\",\"letterbox\",\"animation_"
+                "\"prelude_rendered\":false,\"widget_mode\":\"fresh_idle\","
+                "\"unbound_passes\":[\"widget_input\","
+                "\"active_auto_rotation\",\"letterbox\",\"animation_"
                 "groups\",\"effects\"],\"sprites\":[";
       for (size_t i = 0; i < spriteDraws.size(); ++i) {
         if (i) report << ',';
         WriteUiBlit(report, spriteDraws[i]);
+      }
+      report << "],\"widget_inputs\":[";
+      for (size_t i = 0; i < widgetInputs.size(); ++i) {
+        if (i) report << ',';
+        report << '[';
+        for (size_t j = 0; j < widgetInputs[i].size(); ++j) {
+          if (j) report << ',';
+          report << widgetInputs[i][j];
+        }
+        report << ']';
       }
       report << "],\"text\":[";
       for (size_t i = 0; i < textDraws.size(); ++i) {

@@ -101,6 +101,8 @@ struct MessageWindowDraw {
   UiSpriteBlit Sprite;
   uint32_t Index = 0;      // Widget:manager20fc/15078/15050; Renderer:mode.
   uint32_t Parameter = 0;  // Widget:alpha; Renderer:native F32 parameter bits.
+  std::array<int32_t, 2>
+      Offset{};  // Widget frame offset, separate from authored geometry.
 };
 // Native79a9c ordered frame/nameplate/cursor sprites and text widget calls.
 // Generic widget bodies and renderer mode backend execution are separate.

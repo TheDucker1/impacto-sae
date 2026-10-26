@@ -149,6 +149,7 @@ std::vector<MessageWindowDraw> BuildOrdinaryMessageWindow(
     draw.Kind = MessageWindowDrawKind::Widget;
     draw.Index = widget;
     draw.Parameter = opacity;
+    if (widget) draw.Offset = {state.Quake[0], add(slide, state.Quake[1])};
     draws.push_back(draw);
   };
   rendererMode(0, 0);
