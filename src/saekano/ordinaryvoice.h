@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 namespace Impacto::Saekano {
 enum class OrdinaryVoiceReveal { Unvoiced, Voiced, Fallback };
@@ -32,4 +33,29 @@ struct OrdinaryVoiceUpdate {
 OrdinaryVoiceUpdate UpdateOrdinaryVoice(OrdinaryVoiceGate& state,
                                       uint32_t baseChannel,
                                       OrdinaryVoiceServices& services);
+
+struct PreparedOrdinaryVoice {
+  uint32_t Slot;
+  int16_t VoiceId;
+};
+struct OrdinaryVoiceQueue {
+  std::vector<int16_t> Catalog;  // Unique IDs in native registration order.
+  uint32_t BaseChannel;
+  uint32_t NextSlot;
+  std::vector<PreparedOrdinaryVoice> Prepared;
+};
+// Explicit context construction1a053a..05ae only; never use for a restore.
+OrdinaryVoiceQueue MakeFreshOrdinaryVoiceQueue();
+class OrdinaryVoicePreparation {
+ public:
+  virtual ~OrdinaryVoicePreparation() = default;
+  virtual void Stop(uint32_t channel) = 0;
+  virtual void Prepare(uint32_t channel, int16_t voiceId) = 0;
+  virtual void Start(uint32_t channel) = 0;
+};
+// Native1ad708: consume a matching prepared entry or stop/reprepare both slots,
+// start requested voice, and optionally prepare one next catalog entry.
+uint32_t PrepareOrdinaryVoice(OrdinaryVoiceQueue& state, int16_t voiceId,
+                             bool lookahead,
+                             OrdinaryVoicePreparation& services);
 }  // namespace Impacto::Saekano
