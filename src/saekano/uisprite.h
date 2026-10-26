@@ -76,6 +76,36 @@ struct MessageCursorEnvironment {
   size_t PrefixBytes = 0;
   static MessageCursorEnvironment Decode(std::span<const uint8_t> message);
 };
+struct OrdinaryMessageEnvironment {
+  std::array<UiSpriteDefinition, 2> Frame;
+  std::array<UiSpriteDefinition, 3> Nameplate;
+  std::array<UiSpriteDefinition, 2> Cursors;
+  int32_t WindowTravel = 0, TextWidth = 0;
+  std::array<int32_t, 2> TextPosition{};
+  size_t PrefixBytes = 0;
+  static OrdinaryMessageEnvironment Decode(std::span<const uint8_t> message);
+};
+struct OrdinaryMessageWindowState {
+  uint32_t Openness = 0;
+  uint8_t OpacitySetting = 0;  // Owner6022f, native slider0..11.
+  std::array<int32_t, 2> Quake{};
+  int32_t SpeakerId = -1;  // Manager15a4 = context159c, distinct from BGM.
+  bool MessageCommand = false, CursorVisible = false;  // Manager1668 gate.
+  float CursorOffset = 0;  // Manager1670 sample.
+  uint32_t RendererMode = 0, RendererParameter = 0;  // Parameter is an F32 bit pattern.
+};
+enum class MessageWindowDrawKind { Sprite, TextWidget, RendererState, AlphaTest };
+struct MessageWindowDraw {
+  MessageWindowDrawKind Kind = MessageWindowDrawKind::Sprite;
+  UiSpriteBlit Sprite;
+  uint32_t Index = 0;  // Text:manager20fc/15078/15050; Renderer:mode.
+  uint32_t Parameter = 0;  // Text:alpha; Renderer:native F32 parameter bits.
+};
+// Native79a9c ordered frame/nameplate/cursor sprites and text widget calls.
+// Text widget contents/rasterization and renderer mode backend execution are separate.
+std::vector<MessageWindowDraw> BuildOrdinaryMessageWindow(
+    const OrdinaryMessageEnvironment& environment,
+    const OrdinaryMessageWindowState& state);
 struct ProfileResponseVisualEnvironment {
   UiSpriteDefinition Window;
   std::array<int32_t, 2> TextPosition{};

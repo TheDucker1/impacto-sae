@@ -80,6 +80,98 @@ UiSpriteDefinition UiSpriteDefinition::ReadLegacy(PayloadReader& reader) {
                   uint8_t(color >> 24)};
   return result;
 }
+OrdinaryMessageEnvironment OrdinaryMessageEnvironment::Decode(
+    std::span<const uint8_t> bytes) {
+  if (bytes.size() < 3)
+    throw FormatError("truncated ordinary message environment");
+  PayloadReader reader(bytes.subspan(3));
+  for (size_t i = 0; i < 3; ++i) reader.U32();
+  OrdinaryMessageEnvironment result;
+  for (auto& sprite : result.Frame)
+    sprite = UiSpriteDefinition::ReadLegacy(reader);
+  for (size_t i = 0; i < 4; ++i) reader.U32();
+  for (auto& sprite : result.Nameplate)
+    sprite = UiSpriteDefinition::ReadLegacy(reader);
+  for (auto& sprite : result.Cursors)
+    sprite = UiSpriteDefinition::ReadLegacy(reader);
+  for (size_t i = 0; i < 9; ++i) UiSpriteDefinition::ReadLegacy(reader);
+  reader.U32();
+  for (size_t i = 0; i < 3; ++i) UiSpriteDefinition::ReadLegacy(reader);
+  for (size_t i = 0; i < 6; ++i) reader.U32();
+  const auto count = reader.U32();
+  reader.CheckCount(count, 4);
+  for (uint32_t i = 0; i < count; ++i) reader.U32();
+  reader.I32();
+  reader.I32();  // First point belongs to another widget.
+  reader.I32();
+  result.WindowTravel = reader.I32();
+  result.TextPosition = {reader.I32(), reader.I32()};
+  result.TextWidth = reader.I32();
+  result.PrefixBytes = bytes.size() - reader.Remaining();
+  return result;
+}
+std::vector<MessageWindowDraw> BuildOrdinaryMessageWindow(
+    const OrdinaryMessageEnvironment& environment,
+    const OrdinaryMessageWindowState& state) {
+  const auto add = [](int32_t a, int32_t b) {
+    return std::bit_cast<int32_t>(uint32_t(a) + uint32_t(b));
+  };
+  const auto slide = std::bit_cast<int32_t>(uint32_t(environment.WindowTravel) *
+                                            (100u - state.Openness)) /
+                     100;
+  const auto alpha = uint8_t(uint32_t(state.OpacitySetting) * 255 / 11);
+  std::vector<MessageWindowDraw> draws;
+  const auto rendererMode = [&](uint32_t mode, uint32_t parameter) {
+    MessageWindowDraw draw;
+    draw.Kind = MessageWindowDrawKind::RendererState;
+    draw.Index = mode;
+    draw.Parameter = parameter;
+    draws.push_back(draw);
+  };
+  const auto sprite = [&](UiSpriteDefinition definition, uint32_t entry,
+                          int32_t cursorOffset = 0) {
+    definition.X = add(definition.X, state.Quake[0]);
+    definition.Y =
+        add(add(add(definition.Y, slide), state.Quake[1]), cursorOffset);
+    definition.Color[3] = alpha;
+    MessageWindowDraw alphaTest;
+    alphaTest.Kind = MessageWindowDrawKind::AlphaTest;
+    alphaTest.Index = 1;
+    draws.push_back(alphaTest);
+    MessageWindowDraw draw;
+    draw.Sprite =
+        ResolveUiSprite({ProfileTextureSection::MainUi, -1, entry}, definition);
+    draws.push_back(draw);
+  };
+  const auto text = [&](uint32_t widget, uint32_t opacity) {
+    MessageWindowDraw draw;
+    draw.Kind = MessageWindowDrawKind::TextWidget;
+    draw.Index = widget;
+    draw.Parameter = opacity;
+    draws.push_back(draw);
+  };
+  rendererMode(0, 0);
+  sprite(environment.Frame[0], 0);
+  sprite(environment.Frame[1], 1);
+  text(0, 255);  // This widget call deliberately uses opaque white.
+  if (state.SpeakerId != -1) {
+    sprite(environment.Nameplate[0], 9);
+    sprite(environment.Nameplate[1], 9);
+    sprite(environment.Nameplate[2], uint32_t(state.SpeakerId) + 41u);
+  }
+  text(1, alpha);
+  text(2, alpha);
+  if (state.MessageCommand && state.CursorVisible)
+    for (auto definition : environment.Cursors)
+      sprite(definition, 2, Convert(state.CursorOffset));
+  rendererMode(state.RendererMode >= 1 && state.RendererMode <= 3
+                   ? state.RendererMode
+                   : 0,
+               state.RendererMode >= 1 && state.RendererMode <= 3
+                   ? state.RendererParameter
+                   : 0);
+  return draws;
+}
 MessageCursorEnvironment MessageCursorEnvironment::Decode(
     std::span<const uint8_t> bytes) {
   if (bytes.size() < 3) throw FormatError("truncated message cursor flags");
