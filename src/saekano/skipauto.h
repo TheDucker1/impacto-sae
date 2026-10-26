@@ -10,6 +10,14 @@ struct SkipAutoEnvironment {
   size_t PrefixBytes = 0;
   static SkipAutoEnvironment Decode(std::span<const uint8_t> bytes);
 };
+// Fresh mode3 component timer: updated even when its inactive variant draws.
+// Native drops cycle overrun and restarts360->0 at this update's clock.
+struct OrdinaryAutoRotation {
+  bool Started = false;
+  ScriptLinearTween Channel;
+  void Begin(int32_t duration, uint64_t now);
+  void Update(uint64_t now);
+};
 struct SkipAutoInput {
   bool HideMessages = false, ServicesBlocked = false;
   bool HistoryGate =

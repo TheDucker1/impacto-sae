@@ -96,7 +96,9 @@ OrdinaryMessageEnvironment OrdinaryMessageEnvironment::Decode(
     sprite = UiSpriteDefinition::ReadLegacy(reader);
   for (auto& sprite : result.Auxiliary)
     sprite = UiSpriteDefinition::ReadLegacy(reader);
-  reader.U32();
+  result.AutoRotationDuration = reader.I32();
+  if (result.AutoRotationDuration < 0)
+    throw FormatError("negative ordinary auto rotation duration");
   for (size_t i = 0; i < 3; ++i) UiSpriteDefinition::ReadLegacy(reader);
   for (size_t i = 0; i < 6; ++i) reader.U32();
   const auto count = reader.U32();

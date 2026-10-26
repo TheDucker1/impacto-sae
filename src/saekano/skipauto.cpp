@@ -4,6 +4,21 @@
 #include <bit>
 
 namespace Impacto::Saekano {
+void OrdinaryAutoRotation::Begin(int32_t duration, uint64_t now) {
+  Channel.Start(360, 0, duration, now);
+  Started = true;
+}
+void OrdinaryAutoRotation::Update(uint64_t now) {
+  if (!Started) throw UnsupportedCommand("ordinary auto rotation is unknown");
+  // Native Tick passes a signed low32 sample delta to its update routine.
+  // A negative delta restarts the epoch, including gaps >=2^31 milliseconds.
+  const auto delta = std::bit_cast<int32_t>(uint32_t(now - Channel.Sample));
+  if (delta < 0) Channel.Epoch = Channel.Sample = now;
+  Channel.Tick(Channel.Sample + uint32_t(delta < 0 ? 0 : delta));
+  if (Channel.Finished())
+    Channel.StartUnsigned(Channel.From, Channel.To, Channel.Duration, now);
+}
+
 SkipAutoEnvironment SkipAutoEnvironment::Decode(std::span<const uint8_t> bytes) {
   if (bytes.size() < 3) throw FormatError("truncated global environment flags");
   PayloadReader reader(bytes.subspan(3));
