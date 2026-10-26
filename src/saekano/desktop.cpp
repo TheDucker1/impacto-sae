@@ -607,7 +607,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                       SemanticState&& owner, const ProfileMode& completed,
                       const std::filesystem::path& root,
                       const std::filesystem::path& captureDirectory = {},
-                      bool captureAuto = false) {
+                      bool captureAuto = false, bool captureButtonAuto = false) {
   const bool capture = !captureDirectory.empty();
   if (!owner.WindowOpacity || !owner.ReadColorEnabled || !owner.TextSpeed ||
       !owner.AutoSpeed)
@@ -672,6 +672,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   bool laidOut = false, quit = false;
   bool pointerDown = false;
   bool autoKeyHeld = false;
+  std::array<bool, 2> skipKeysHeld{};
+  uint32_t previousPolicyFlags = UINT32_MAX;
   uint32_t captureAutoStage = 0;
   std::array<float, 2> pointerPosition{};
   uint32_t capturePointerStage = 0;
@@ -688,7 +690,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     CommandInput input;
     SkipAutoInput policyInput;
     SDL_Event event;
-    if (capture && !captureAuto && firstMessage != UINT64_MAX && capturePointerStage < 4) {
+    if (capture && !captureAuto && firstMessage != UINT64_MAX &&
+        capturePointerStage < (captureButtonAuto ? 2u : 4u)) {
       constexpr std::array<uint64_t, 4> Delays{96, 112, 512, 528};
       if (now - firstMessage >= Delays[capturePointerStage]) {
         SDL_Event synthetic{};
@@ -700,6 +703,12 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         synthetic.button.down = capturePointerStage % 2 == 0;
         synthetic.button.x = 400;
         synthetic.button.y = 440;
+        if (captureButtonAuto) {
+          const auto button = ResolveUiSprite(
+              {ProfileTextureSection::MainUi, -1, 3}, visual.Window.Auxiliary[5]);
+          synthetic.button.x = float(button.Destination[0] + button.Destination[2]/2);
+          synthetic.button.y = float(button.Destination[1] + button.Destination[3]/2);
+        }
         SdlCheck(SDL_PushEvent(&synthetic), "capture pointer event");
         ++capturePointerStage;
       }
@@ -728,6 +737,13 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         autoKeyHeld = event.type == SDL_EVENT_KEY_DOWN;
         policyInput.AutoPressed |= autoKeyHeld && !event.key.repeat;
       }
+      if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) {
+        if (event.key.key == SDLK_LCTRL || event.key.key == SDLK_RCTRL)
+          skipKeysHeld[event.key.key == SDLK_RCTRL] = event.type == SDL_EVENT_KEY_DOWN;
+        if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_TAB &&
+            !event.key.repeat)
+          policyInput.SkipPressed = true;
+      }
       if ((event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
            event.type == SDL_EVENT_MOUSE_BUTTON_UP) &&
           event.button.button == SDL_BUTTON_LEFT) {
@@ -740,17 +756,42 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         pointerDown = false;
         autoKeyHeld = false;
         policyInput.AutoPressed = false;
+        skipKeysHeld = {};
+        policyInput.SkipPressed = false;
         sceneInput.CancelPointer();
       }
     }
     if (quit) break;
     // Dedicated fresh scene: no hidden-message mode or blocking overlay, and
-    // no restored read history. Button/gesture/skip controls remain unbound.
+    // no restored read history. History eligibility is an explicit false input
+    // for this fresh-unread preview; a loaded-history owner must supply its lookup.
     // Policy consumes prior widget samples before this frame's updates.
     policyInput.AutoHeld = autoKeyHeld;
+    policyInput.SkipHeld = skipKeysHeld[0] || skipKeysHeld[1];
+    policyInput.SkipButtonReleased = sceneInput.Query(
+        1, WidgetQuery::Released, skipAuto.SkipIndicators[0], skipAuto.SkipIndicators[1]);
+    policyInput.AutoButtonReleased = sceneInput.Query(
+        2, WidgetQuery::Released, skipAuto.AutoIndicator);
+    policyInput.PrimaryFullHold = sceneInput.Query(0, WidgetQuery::FullHold);
+    policyInput.PrimaryFlick = sceneInput.Query(0, WidgetQuery::Flick);
+    policyInput.PrimaryVelocityX = sceneInput.Components()[0].Velocity[0];
+    const uint32_t policyFlags =
+        (policyInput.SkipHeld ? 8u : 0u) | (policyInput.SkipPressed ? 16u : 0u) |
+        (policyInput.SkipButtonReleased ? 32u : 0u) | (policyInput.PrimaryFlick ? 64u : 0u) |
+        (policyInput.AutoPressed ? 128u : 0u) | (policyInput.AutoHeld ? 256u : 0u) |
+        (policyInput.AutoButtonReleased ? 512u : 0u) | (policyInput.PrimaryFullHold ? 1024u : 0u);
     const bool wasAuto = skipAuto.Auto;
     vm->UpdateSkipAuto(skipAuto, policyInput, skipAutoEnvironment.AutoKeyDuration, now);
     backend.AutoAdvance = skipAuto.Auto;
+    input.Route = vm->State().SkipPhase ? UpdateRoute::Skipping : UpdateRoute::Normal;
+    if (capture && policyFlags != previousPolicyFlags) {
+      events << "{\"kind\":\"widget_policy\",\"frame\":" << frame
+             << ",\"now\":" << now << ",\"flags\":" << policyFlags
+             << ",\"velocity_x_bits\":" << std::bit_cast<uint32_t>(policyInput.PrimaryVelocityX)
+             << ",\"mode\":" << vm->State().SkipMode << ",\"phase\":" << vm->State().SkipPhase
+             << ",\"auto\":" << skipAuto.Auto << "}\n";
+      previousPolicyFlags = policyFlags;
+    }
     if (capture && (policyInput.AutoPressed || wasAuto != skipAuto.Auto))
       events << "{\"kind\":\"auto_policy\",\"frame\":" << frame
              << ",\"now\":" << now << ",\"pressed\":" << policyInput.AutoPressed
@@ -948,10 +989,12 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
             drawSprite(draw.Sprite);
             spriteDraws.push_back(draw.Sprite);
           } else if (draw.Kind == MessageWindowDrawKind::Widget) {
-            widgetInputs.push_back({int32_t(draw.Index), 0, int32_t(skipAuto.AutoIndicator), draw.Offset[0],
+            widgetInputs.push_back({int32_t(draw.Index), int32_t(skipAuto.SkipIndicators[0]) |
+                                        (int32_t(skipAuto.SkipIndicators[1]) << 1),
+                                    int32_t(skipAuto.AutoIndicator), draw.Offset[0],
                                     draw.Offset[1], int32_t(draw.Parameter)});
             for (const auto& sprite : BuildOrdinaryMessageWidget(
-                     visual.Window, draw.Index, false, false, skipAuto.AutoIndicator,
+                     visual.Window, draw.Index, skipAuto.SkipIndicators[0], skipAuto.SkipIndicators[1], skipAuto.AutoIndicator,
                      draw.Offset, uint8_t(draw.Parameter), autoRotation.Channel.Current)) {
               drawSprite(sprite);
               spriteDraws.push_back(sprite);
@@ -1012,7 +1055,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                 "\"primary_pointer_bound\":true,\"synthetic_pointer_capture\":"
              << (!captureAuto ? "true," : "false,")
              << "\"prelude_rendered\":false,\"auto_key_bound\":true,\"widget_mode\":\"fresh_controls\","
-                "\"unbound_passes\":[\"skip_and_widget_auto_input\",\"widget_long_hold_"
+                "\"unbound_passes\":[\"restored_read_history\",\"widget_long_hold_"
                 "visual\","
                 "\"letterbox\",\"animation_"
                 "groups\",\"effects\"],\"auto_state\":[" << skipAuto.Auto << ','
@@ -1020,7 +1063,10 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
              << autoRotation.Channel.Epoch << ',' << autoRotation.Channel.Sample
              << "],\"message_epoch\":" << message->Epoch
              << ",\"message_source_units\":" << message->SourceUnits
-             << ",\"capture_auto\":" << captureAuto << ",\"sprites\":[";
+             << ",\"skip_state\":[" << state.SkipMode << ',' << state.SkipPhase << ']'
+             << ",\"history_gate_supplied\":false"
+             << ",\"capture_auto\":" << captureAuto
+             << ",\"capture_auto_button\":" << captureButtonAuto << ",\"sprites\":[";
       for (size_t i = 0; i < spriteDraws.size(); ++i) {
         if (i) report << ',';
         WriteUiBlit(report, spriteDraws[i]);
@@ -2299,7 +2345,7 @@ int RunProfileItemsViewer(const std::filesystem::path& usrdir, size_t scene,
 }
 int RunFirstSceneViewer(const std::filesystem::path& usrdir,
                         const std::filesystem::path& captureDirectory,
-                        bool captureAuto) {
+                        bool captureAuto, bool captureButtonAuto) {
   bool created = false;
   try {
     const bool capture = !captureDirectory.empty();
@@ -2359,7 +2405,7 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
     MusicPlayback playback(music, capture, &sounds);
     return RunCompletedScene(window, renderer, fontTextures, font, resources,
                              playback, music, sounds, std::move(owner), mode,
-                             usrdir, captureDirectory, captureAuto);
+                             usrdir, captureDirectory, captureAuto, captureButtonAuto);
   } catch (const std::exception& error) {
     if (created) {
       std::ofstream out(captureDirectory / "error.txt");

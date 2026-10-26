@@ -46,6 +46,7 @@ WidgetContactEvents SampleWidgetContact(
     std::array<float, 2> velocity);
 struct WidgetEventHistory {
   explicit WidgetEventHistory(uint32_t historyFrames);
+  bool Enabled = true;  // Fresh componentE0; query gate, not collection gate.
   void Update(const WidgetContactEvents& contact);
   uint16_t Flags = 0;
   int32_t TrackedId = -1, HistoryIndex = 0;
@@ -58,6 +59,12 @@ struct WidgetEventHistory {
       AbsoluteVelocity;  // Native leaves these unused until release.
   std::vector<uint8_t> HeldHistory;
 };
+enum class WidgetQuery : uint16_t { FullHold = 4, Released = 8, Flick = 0x40 };
+// Selected variants only, in row order. All ten component histories are kept
+// updated independently; hidden variants do not activate their widget.
+bool QueryOrdinaryWidget(std::span<const WidgetEventHistory> components,
+                          uint32_t widget, WidgetQuery query,
+                          bool condition0 = false, bool condition1 = false);
 struct WidgetInputEnvironment {
   uint32_t HoldFrames = 0;
   size_t PrefixBytes = 0;
@@ -87,6 +94,8 @@ class OrdinaryWidgetInput {
   void UpdateButtons(std::array<int32_t, 2> offset);
   void CancelPointer();  // PC focus/capture loss: discard contacts without
                          // activation.
+  bool Query(uint32_t widget, WidgetQuery query, bool condition0 = false,
+              bool condition1 = false) const;
   const WidgetInputHistory& Input() const { return input_; }
   const std::vector<WidgetEventHistory>& Components() const {
     return components_;

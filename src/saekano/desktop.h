@@ -6,7 +6,7 @@
 namespace Impacto::Saekano {
 int RunFirstSceneViewer(const std::filesystem::path& usrdir,
                         const std::filesystem::path& captureDirectory = {},
-                        bool captureAuto = false);
+                        bool captureAuto = false, bool captureButtonAuto = false);
 int RunFontSample(const std::filesystem::path& usrdir,
                    const std::filesystem::path& captureDirectory = {});
 // Diagnostic entry point for the loader/SDK rendering path intended for the

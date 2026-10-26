@@ -7,6 +7,33 @@
 #include <utility>
 
 namespace Impacto::Saekano {
+bool QueryOrdinaryWidget(std::span<const WidgetEventHistory> components,
+                          uint32_t widget, WidgetQuery query,
+                          bool condition0, bool condition1) {
+  if (components.size() != 10 || widget > 2)
+    throw FormatError("invalid ordinary widget query layout");
+  const auto mask = uint16_t(query);
+  if (query != WidgetQuery::FullHold && query != WidgetQuery::Released &&
+      query != WidgetQuery::Flick)
+    throw FormatError("unknown ordinary widget query");
+  const auto test = [&](size_t index) {
+    return components[index].Enabled && (components[index].Flags & mask) != 0;
+  };
+  if (widget == 0) return test(0);
+  const auto indices = widget == 1
+                           ? std::array<size_t, 3>{1, condition0 ? 2u : 3u,
+                                                   condition1 ? 4u : 5u}
+                           : std::array<size_t, 3>{6, 7, condition0 ? 8u : 9u};
+  for (auto index : indices)
+    if (test(index)) return true;
+  return false;
+}
+
+bool OrdinaryWidgetInput::Query(uint32_t widget, WidgetQuery query,
+                                bool condition0, bool condition1) const {
+  return QueryOrdinaryWidget(components_, widget, query, condition0, condition1);
+}
+
 bool WidgetContainsPoint(std::array<int32_t, 4> rectangle,
                          std::array<int16_t, 2> point) {
   const auto add = [](int32_t a, int32_t b) {
@@ -204,6 +231,9 @@ void OrdinaryWidgetInput::UpdateButtons(std::array<int32_t, 2> offset) {
 }
 void OrdinaryWidgetInput::CancelPointer() {
   input_.Current = input_.Previous = {};
-  for (auto& component : components_) component.TrackedId = -1;
+  for (auto& component : components_) {
+    component.TrackedId = -1;
+    component.Flags = 0;
+  }
 }
 }  // namespace Impacto::Saekano
