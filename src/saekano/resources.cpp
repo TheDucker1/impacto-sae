@@ -7,8 +7,28 @@
 #include <bit>
 #include <charconv>
 #include <limits>
+#include <set>
 
 namespace Impacto::Saekano {
+std::vector<ScriptVoiceEnvelope> DecodeScriptVoiceEnvelopes(
+    std::span<const int32_t> voiceIds, Bytes envelopeArchive) {
+  GpdaArchive archive(std::move(envelopeArchive));
+  std::set<int32_t> seen;
+  std::vector<ScriptVoiceEnvelope> result;
+  for (auto id : voiceIds) {
+    if (id < 0) continue;
+    if (id > INT16_MAX) throw FormatError("script voice ID exceeds verified signed16 range");
+    if (!seen.insert(id).second) continue;
+    const size_t index = result.size();
+    if (index >= archive.Entries().size())
+      throw FormatError("script voice envelope archive is missing an entry");
+    if (archive.Entries()[index].Type != 0)
+      throw FormatError("unsupported script voice envelope entry type");
+    result.push_back({id, archive.Entries()[index].Name,
+                       DecodeProfileMouth(archive.Data(index))});
+  }
+  return result;
+}
 namespace {
 Bytes RawEntry(const GpdaArchive& archive, size_t index) {
   if (archive.Entries().at(index).Type != 0)
@@ -232,6 +252,19 @@ Bytes GameResources::Load(int32_t scriptId) {
   // Script objects are gzip bytes with type 0; model leaves use type 1.
   // The native script loader inflates explicitly rather than testing that word.
   return CompressedEntry(object, 0, 0);
+}
+std::vector<ScriptVoiceEnvelope> GameResources::LoadScriptVoiceEnvelopes(
+    int32_t scriptId) const {
+  if (scriptId < 0 || size_t(scriptId) >= ScriptCount())
+    throw FormatError("script ID outside resource archive");
+  const GpdaArchive script(RawEntry(scripts_, size_t(scriptId)));
+  const GpdaArchive object(RawEntry(script, 0));
+  const ScriptObject commands(CompressedEntry(object, 0, 0));
+  std::vector<int32_t> voiceIds;
+  for (size_t i = 0; i < commands.Records().size(); ++i)
+    if (commands.Records()[i].Opcode == 0x64)
+      voiceIds.push_back(DecodeMessage(commands.Payload(i)).VoiceId);
+  return DecodeScriptVoiceEnvelopes(voiceIds, CompressedEntry(object, 1, 0));
 }
 
 Live2dModelAssets GameResources::LoadLive2d(size_t modelId) const {

@@ -48,6 +48,16 @@ struct ProfileVoiceAssets {
   Bytes Hca;
   ProfileMouthAnimation Mouth;
 };
+struct ScriptVoiceEnvelope {
+  int32_t VoiceId = -1;
+  Bytes Name;
+  ProfileMouthAnimation Mouth;
+};
+// Native companion stage consumes one .wav.vol for each first-occurring ID
+// from the message-load list. Preserve all payload samples (native strlen+2
+// sizing drops the last sample). Unknown IDs are never aliased through int16.
+std::vector<ScriptVoiceEnvelope> DecodeScriptVoiceEnvelopes(
+    std::span<const int32_t> voiceIds, Bytes envelopeArchive);
 CharacterPoseAssets DecodeCharacterPoseArchive(Bytes archive);
 
 // These are native archive section indexes, not alphabetical filename order.
@@ -79,6 +89,7 @@ class GameResources final : public ScriptSource {
   std::vector<ProfileMenuAsset> LoadProfileMenu() const;
   ProfileMenuAsset LoadProfileTexture(ProfileTextureKey key) const;
   ProfileVoiceAssets LoadProfileVoice(size_t characterId, size_t entry) const;
+  std::vector<ScriptVoiceEnvelope> LoadScriptVoiceEnvelopes(int32_t scriptId) const;
   ResourceAsset LoadImage(ImageSection section, size_t imageId) const;
   size_t ImageCount(ImageSection section) const;
   size_t ScriptCount() const { return scripts_.Entries().size(); }
