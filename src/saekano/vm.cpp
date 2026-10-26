@@ -7,6 +7,13 @@
 #include <utility>
 
 namespace Impacto::Saekano {
+bool VirtualMachine::SkipHistoryGate(const HistoryEnvironment& environment,
+                                     const ScriptReadHistory* currentFileHistory) const {
+  if (state_.CurrentCommandIndex < 0)
+    throw UnsupportedCommand("history query has no current command");
+  return SkipHistoryEligible(environment, script_->Records(),
+                              uint32_t(state_.CurrentCommandIndex), currentFileHistory);
+}
 void VirtualMachine::UpdateSkipAuto(SkipAutoState& policy,
                                    const SkipAutoInput& input,
                                    int32_t autoKeyDuration, uint64_t now) {

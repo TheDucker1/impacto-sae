@@ -4,6 +4,26 @@
 
 namespace Impacto::Saekano {
 struct SemanticState;
+struct HistoryEnvironment {
+  uint8_t SuppressReadHistory = 0;
+  size_t PrefixBytes = 0;
+  static HistoryEnvironment DecodeDebug(std::span<const uint8_t> bytes);
+};
+struct ReadHistoryBranch {
+  uint16_t Endpoint = 0;
+  std::vector<uint8_t> Flags;
+};
+// Explicit known current-file tables. Empty is a real native state, not an
+// unknown restore or a fabricated fresh-unread table.
+struct ScriptReadHistory {
+  std::vector<uint16_t> Segments;  // Low15 endpoint, high bit read.
+  std::vector<ReadHistoryBranch> Branches;
+};
+bool SkipHistoryEligible(const HistoryEnvironment& environment,
+                          std::span<const ScriptRecord> records,
+                          uint32_t current, const ScriptReadHistory* history);
+void MarkHistoryRead(const HistoryEnvironment& environment,
+                      ScriptReadHistory& history, uint32_t command);
 // env_global prefix through the authored auto-key hold duration.
 struct SkipAutoEnvironment {
   int32_t AutoKeyDuration = 0;

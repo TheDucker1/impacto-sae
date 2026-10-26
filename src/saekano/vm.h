@@ -8,6 +8,8 @@
 namespace Impacto::Saekano {
 struct SkipAutoState;
 struct SkipAutoInput;
+struct HistoryEnvironment;
+struct ScriptReadHistory;
 
 struct MessageRuntimeContext {
   // These are native context fields that the original portable schema omitted.
@@ -92,6 +94,8 @@ class VirtualMachine {
   VmEvent Step(uint64_t now, const CommandInput& input = {});
   void UpdateSkipAuto(SkipAutoState& policy, const SkipAutoInput& input,
                       int32_t autoKeyDuration, uint64_t now);
+  bool SkipHistoryGate(const HistoryEnvironment& environment,
+                       const ScriptReadHistory* currentFileHistory) const;
   void SetGauge(bool battle, int32_t value);
   void ActivateLane(size_t lane);
   void RequestLaneFlush() { dispatcher_.FlushLanes = true; }

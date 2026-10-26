@@ -4,6 +4,55 @@
 #include <bit>
 
 namespace Impacto::Saekano {
+HistoryEnvironment HistoryEnvironment::DecodeDebug(std::span<const uint8_t> bytes) {
+  // Three header flags;20 feature bytes; two scalar words; one preceding
+  // feature byte; then native8025c25d. The prefix has no counted fields.
+  constexpr size_t At = 3 + 20 + 2 * 4 + 1;
+  if (bytes.size() <= At) throw FormatError("truncated history debug settings");
+  return {bytes[At], At + 1};
+}
+bool SkipHistoryEligible(const HistoryEnvironment& environment,
+                          std::span<const ScriptRecord> records,
+                          uint32_t current, const ScriptReadHistory* history) {
+  for (size_t i = current; i < records.size(); ++i) {
+    const auto opcode = records[i].Opcode;
+    if (opcode != 0x64 && opcode != 0x65 && opcode != 0x2be) continue;
+    if (environment.SuppressReadHistory) return false;
+    if (!history) throw UnsupportedCommand("current-file read history is unknown");
+    // Look-ahead locates a relevant opcode; the lookup still uses current,
+    // not that future record's index. Preserve original first-match order.
+    for (const auto segment : history->Segments) {
+      const uint16_t endpoint = segment & 0x7fff;
+      if (endpoint < current) continue;
+      bool read = (segment & 0x8000) != 0;
+      for (const auto& branch : history->Branches) {
+        if (branch.Endpoint < current) continue;
+        if (branch.Endpoint <= endpoint) {
+          read = false;
+          for (const auto value : branch.Flags)
+            if (value) {
+              read = true;
+              break;
+            }
+        }
+        break;
+      }
+      return read;
+    }
+    return true;  // Native empty/exhausted segment table behavior.
+  }
+  return false;
+}
+void MarkHistoryRead(const HistoryEnvironment& environment,
+                      ScriptReadHistory& history, uint32_t command) {
+  if (environment.SuppressReadHistory) return;
+  for (auto& segment : history.Segments)
+    if (segment == command) {
+      segment |= 0x8000;
+      break;
+    }
+}
+
 void OrdinaryAutoRotation::Begin(int32_t duration, uint64_t now) {
   Channel.Start(360, 0, duration, now);
   Started = true;
