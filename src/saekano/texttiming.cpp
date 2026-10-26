@@ -24,7 +24,7 @@ uint32_t Duration(uint32_t duration, float factor) {
 }
 }  // namespace
 TextTimingEnvironment TextTimingEnvironment::Decode(
-    std::span<const uint8_t> bytes, bool readIntervals) {
+    std::span<const uint8_t> bytes, bool readIntervals, bool readAutoDelays) {
   if (bytes.size() < 3) throw FormatError("truncated text timing prefix");
   TextTimingEnvironment result;
   std::copy_n(bytes.begin(), 3, result.Flags.begin());
@@ -40,7 +40,7 @@ TextTimingEnvironment TextTimingEnvironment::Decode(
     result.Factors.push_back(factor);
   }
   result.PrefixBytes = bytes.size() - reader.Remaining();
-  if (readIntervals) {
+  if (readIntervals || readAutoDelays) {
     const auto intervals = reader.U32();
     reader.CheckCount(intervals, 4);
     if (!intervals || intervals > 4096)
@@ -49,7 +49,38 @@ TextTimingEnvironment TextTimingEnvironment::Decode(
       result.Intervals.push_back(reader.U32());
     result.IntervalPrefixBytes = bytes.size() - reader.Remaining();
   }
+  if (readAutoDelays) {
+    const auto delays = reader.U32();
+    reader.CheckCount(delays, 4);
+    if (!delays || delays > 4096)
+      throw FormatError("invalid auto delay count");
+    for (uint32_t i = 0; i < delays; ++i)
+      result.AutoDelays.push_back(reader.I32());
+    result.AutoDelayPrefixBytes = bytes.size() - reader.Remaining();
+  }
   return result;
+}
+int32_t TextTimingEnvironment::ForAutoDelay(uint8_t option) const {
+  if (option >= AutoDelays.size())
+    throw FormatError("auto speed option outside delay table");
+  return AutoDelays[option];
+}
+bool MessageAutoReady(const TextTimingEnvironment& environment,
+                      const MessageAutoTiming& message, uint64_t now) {
+  if (!message.AutoEnabled || !message.PreviousUpdated || !message.TextRevealed)
+    return false;
+  uint32_t duration;
+  if (message.VoiceId >= 0) {
+    if (!message.VoiceDuration)
+      throw FormatError("message auto timing needs native voice duration");
+    duration = *message.VoiceDuration;
+  } else {
+    duration = environment.ForCharacters(message.TextSpeed) * message.SourceUnits;
+  }
+  const uint64_t deadline =
+      message.Epoch + uint64_t(duration) +
+      uint64_t(int64_t(environment.ForAutoDelay(message.AutoSpeed)));
+  return now >= deadline;
 }
 uint32_t TextTimingEnvironment::ForCharacters(uint8_t option) const {
   if (option >= Intervals.size())
