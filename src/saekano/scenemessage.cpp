@@ -30,6 +30,7 @@ void SceneMessageBackend::BeginMessage(size_t command,
   if (AutoReveal) next.Reveal.Reveal(now);
   current_ = std::move(next);
   sample_ = now;
+  cursorVisible_ = false;
 }
 void SceneMessageBackend::UpdateMessage(uint64_t now) {
   if (!current_) return;
@@ -40,6 +41,7 @@ bool SceneMessageBackend::MessageRevealed(size_t command, uint64_t now) {
   if (!current_ || current_->Command != command)
     throw UnsupportedCommand("scene message has not started");
   UpdateMessage(now);
+  if (current_->Reveal.Revealed) cursorVisible_ = true;
   return current_->Reveal.Revealed;
 }
 void SceneMessageBackend::RevealMessage(size_t command) {
@@ -53,5 +55,6 @@ const SceneMessageTextState* SceneMessageBackend::CurrentMessage() const {
 void SceneMessageBackend::ResetMessages() {
   current_.reset();
   sample_ = 0;
+  cursorVisible_ = false;
 }
 }  // namespace Impacto::Saekano

@@ -609,6 +609,10 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       SceneRead(root / "env/env_config.dat"), true);
   const auto visual = OrdinaryTextEnvironment::Decode(
       SceneRead(root / "env/env_message_window.dat"));
+  const auto cursorEnvironment = OrdinaryCursorEnvironment::Decode(
+      SceneRead(root / "env/env_message_window.dat"));
+  ProfileArrowMotion messageCursor;
+  messageCursor.Begin(cursorEnvironment.Travel, cursorEnvironment.Duration, 0);
   const auto metrics =
       TextLayoutMetrics::Decode(SceneRead(root / "env/env_global.dat"),
                                 SceneRead(root / "env/env_message_window.dat"));
@@ -656,6 +660,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   for (uint32_t frame = 0; !quit && frame < 2000; ++frame) {
     const uint64_t now =
         capture ? uint64_t(frame) * 16 : SDL_GetTicks() - epoch;
+    messageCursor.Update(now);
     CommandInput input;
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
@@ -812,8 +817,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         windowState.Quake = *state.Quake[2];
         windowState.SpeakerId = state.SpeakerId;
         windowState.MessageCommand = true;
-        windowState.CursorVisible =
-            false;  // Cursor controller remains explicitly unbound.
+        windowState.CursorVisible = backend.CursorVisible();
+        windowState.CursorOffset = messageCursor.Current;
         if (state.SpeakerId >= 0) uploadMain(uint32_t(state.SpeakerId) + 41);
         for (const auto& draw :
              BuildOrdinaryMessageWindow(visual.Window, windowState)) {
@@ -839,7 +844,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         throw UnsupportedCommand("first-scene fill drawing is not bound");
     }
     GlCheck("first scene composition");
-    std::string signature = std::to_string(message->Reveal.Revealed);
+    std::string signature = std::to_string(message->Reveal.Revealed) + ':' +
+                            std::to_string(backend.CursorVisible());
     for (const auto& [id, actor] : state.Characters) {
       (void)actor;
       signature += ':' + std::to_string(vm->SpriteBlink(id)->Phase);
@@ -857,13 +863,21 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
              << ",\"bgm\":" << state.BgmTrack.value_or(-1)
              << ",\"window_opacity_setting\":" << int(opacity)
              << ",\"window_open\":" << state.WindowOpenness[0]
+             << ",\"cursor_visible\":"
+             << (backend.CursorVisible() ? "true" : "false")
+             << ",\"cursor_bits\":["
+             << std::bit_cast<uint32_t>(messageCursor.Current) << ','
+             << std::bit_cast<uint32_t>(messageCursor.From) << ','
+             << std::bit_cast<uint32_t>(messageCursor.To)
+             << "],\"cursor_epoch\":" << messageCursor.Epoch
+             << ",\"cursor_elapsed\":" << messageCursor.Elapsed
              << ",\"speaker\":" << state.SpeakerId << ",\"read_color_enabled\":"
              << (*state.ReadColorEnabled ? "true" : "false")
              << ",\"random_seed\":" << seed
              << ",\"random_draws\":" << state.Random.Draws()
              << ",\"playback_host_reused\":true,\"fresh_unread\":true,"
                 "\"prelude_rendered\":false,\"unbound_passes\":[\"auxiliary_"
-                "widgets\",\"message_cursor\",\"letterbox\",\"animation_"
+                "widgets\",\"letterbox\",\"animation_"
                 "groups\",\"effects\"],\"sprites\":[";
       for (size_t i = 0; i < spriteDraws.size(); ++i) {
         if (i) report << ',';

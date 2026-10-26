@@ -22,6 +22,7 @@ class SceneMessageBackend : public HeadlessBackend {
   bool MessageRevealed(size_t command, uint64_t now) override;
   void RevealMessage(size_t command) override;
   void UpdateMessage(uint64_t now);
+  bool CursorVisible() const { return cursorVisible_; }
   const SceneMessageTextState* CurrentMessage() const;
   void ResetMessages();  // Owning frontend calls this on manager replacement.
 
@@ -29,6 +30,7 @@ class SceneMessageBackend : public HeadlessBackend {
   const TextFormatEnvironment& format_;
   uint32_t interval_;
   uint64_t sample_ = 0;
+  bool cursorVisible_ = false;
   std::optional<SceneMessageTextState> current_;
 };
 }  // namespace Impacto::Saekano

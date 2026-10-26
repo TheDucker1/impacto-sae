@@ -31,6 +31,13 @@ struct ProfileCursorMotion {
   void Update(const ProfileCursorEnvironment& environment, bool ready,
               uint64_t now);
 };
+// Ordinary manager cursor starts at scene load, independently of visibility.
+struct OrdinaryCursorEnvironment {
+  int32_t Duration = 0;
+  float Travel = 0;
+  size_t PrefixBytes = 0;
+  static OrdinaryCursorEnvironment Decode(std::span<const uint8_t> message);
+};
 std::vector<UiSpriteBlit> BuildProfileArrows(
     const ProfileArrowEnvironment& environment,
     const ProfileSelectionState& selection, const ProfileArrowMotion& motion);

@@ -1,6 +1,8 @@
 #include "profilearrow.h"
+#include "commands.h"
 #include "formats.h"
 #include "profile.h"
+#include "messagedraw.h"
 
 #include <bit>
 #include <cmath>
@@ -84,6 +86,20 @@ void ProfileCursorMotion::Update(const ProfileCursorEnvironment& environment,
   if (!Channel.Started)
     Channel.Begin(environment.Travel, environment.Duration, now);
   Channel.Update(now);
+}
+OrdinaryCursorEnvironment OrdinaryCursorEnvironment::Decode(
+    std::span<const uint8_t> message) {
+  const auto text = OrdinaryTextEnvironment::Decode(message);
+  PayloadReader reader(message.subspan(text.PrefixBytes));
+  reader.U32();
+  reader.U32();
+  OrdinaryCursorEnvironment result;
+  result.Duration = reader.I32();
+  result.Travel = std::bit_cast<float>(reader.U32());
+  if (result.Duration < 0 || !std::isfinite(result.Travel))
+    throw FormatError("invalid ordinary cursor motion configuration");
+  result.PrefixBytes = message.size() - reader.Remaining();
+  return result;
 }
 std::vector<UiSpriteBlit> BuildProfileArrows(
     const ProfileArrowEnvironment& environment,
