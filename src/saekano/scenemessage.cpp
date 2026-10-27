@@ -54,6 +54,7 @@ void SceneMessageBackend::BeginMessage(size_t command,
   }
   if (envelope) {
     voices_->Output.Update(now);
+    voices_->Mouth.End(message.SpeakerId);  // Native setup843d4, before audio replacement.
     next.VoiceGate.Phase = 0;
     next.VoiceGate.Slot = int32_t(PrepareOrdinaryVoice(
         voices_->Queue, int16_t(message.VoiceId), true, voices_->Output));
@@ -151,10 +152,13 @@ bool SceneMessageBackend::BeginMessageUpdate(size_t command, uint64_t now,
 void SceneMessageBackend::CompleteMessage(size_t command, uint64_t now) {
   if (!current_ || current_->Command != command)
     throw UnsupportedCommand("scene message has not started");
-  if (current_->VoiceId < 0) return;
-  if (!voices_) throw UnsupportedCommand("ordinary voice owner is unavailable");
+  if (!voices_) {
+    if (current_->VoiceId >= 0)
+      throw UnsupportedCommand("ordinary voice owner is unavailable");
+    return;
+  }
   voices_->Output.Update(now);
-  if (voices_->Settings.StopOnAdvance && current_->VoiceGate.Slot >= 0)
+  if (current_->VoiceId >= 0 && voices_->Settings.StopOnAdvance && current_->VoiceGate.Slot >= 0)
     voices_->Output.Stop(voices_->Queue.BaseChannel + uint32_t(current_->VoiceGate.Slot));
   voices_->Mouth.End(current_->Speaker);
 }
@@ -171,7 +175,7 @@ void SceneMessageBackend::ResetMessages() {
     voices_->Output.Stop(voices_->Queue.BaseChannel);
     voices_->Output.Stop(voices_->Queue.BaseChannel + 1);
     voices_->Queue.Prepared.clear();
-    if (current_ && current_->VoiceId >= 0) voices_->Mouth.End(current_->Speaker);
+    voices_->Mouth.End(current_ ? current_->Speaker : -1);
     voices_ = nullptr;
   }
   current_.reset();
