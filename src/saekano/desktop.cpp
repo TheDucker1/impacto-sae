@@ -19,6 +19,7 @@
 #include "scenequeue.h"
 #include "widgetinput.h"
 #include "skipauto.h"
+#include "mouthselection.h"
 #include "../io/memorystream.h"
 #include "../texture/texture.h"
 
@@ -598,7 +599,7 @@ Bytes SceneRead(const std::filesystem::path& path) {
   if (!file) throw FormatError("cannot open scene input: " + path.string());
   return Bytes{std::istreambuf_iterator<char>(file), {}};
 }
-// A bounded first-message frontend. Unbound auxiliary/effect passes are
+// An ordinary-dialogue frontend. Unbound auxiliary/effect passes are
 // reported explicitly; this is not yet the complete scenario renderer.
 int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                       FontTextures& fontTextures, PcFontFace& font,
@@ -607,7 +608,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                       SemanticState&& owner, const ProfileMode& completed,
                       const std::filesystem::path& root,
                       const std::filesystem::path& captureDirectory = {},
-                      bool captureAuto = false, bool captureButtonAuto = false) {
+                      bool captureAuto = false, bool captureButtonAuto = false,
+                      bool captureVoiced = false) {
   const bool capture = !captureDirectory.empty();
   if (!owner.WindowOpacity || !owner.ReadColorEnabled || !owner.TextSpeed ||
       !owner.AutoSpeed)
@@ -645,6 +647,37 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   backend.SeArchives = &sounds;
   auto vm = VirtualMachine::FromCompletedProfile(resources, backend,
                                                  std::move(owner), completed);
+  auto mouthControl = MakeFreshOrdinaryMouthControl();
+  std::map<uint16_t, ProfileMouthPlayback> mouths;
+  SpriteMessageMouth spriteMouth(vm->State(), mouthControl, mouths);
+  const auto voiceSettings = MakeFreshOrdinaryVoiceSettings();
+  PlaybackOrdinaryVoice voices(playback, root, voiceSettings.Volume, 1.0f);
+  std::unique_ptr<SceneMessageVoiceOwner> voiceOwner;
+  int32_t voiceScript = -1;
+  const auto bindScriptVoices = [&] {
+    if (voiceScript == vm->State().ScriptFileId) return;
+    backend.ResetMessages();
+    mouths.clear();
+    mouthControl = MakeFreshOrdinaryMouthControl();
+    voiceOwner = std::make_unique<SceneMessageVoiceOwner>(SceneMessageVoiceOwner{
+        voices, spriteMouth, MakeFreshOrdinaryVoiceQueue(),
+        resources.LoadScriptVoiceEnvelopes(vm->State().ScriptFileId),
+        LoadOrdinaryVoiceRangesFromFirst(SceneRead(root / "first.dat")), voiceSettings});
+    for (const auto& envelope : voiceOwner->Envelopes)
+      voiceOwner->Queue.Catalog.push_back(int16_t(envelope.VoiceId));
+    backend.BindVoiceOwner(*voiceOwner);
+    voiceScript = vm->State().ScriptFileId;
+  };
+  bindScriptVoices();
+  const auto syncMouths = [&] {
+    // This entry replaces the manager with fresh sprite runtimes. Unknown
+    // restored animation state is not filled by this frontend.
+    for (const auto& [id, actor] : vm->State().Characters) {
+      if (!actor.RuntimeKnown) throw UnsupportedCommand("scene mouth actor runtime is unknown");
+      mouths.try_emplace(id);
+    }
+    std::erase_if(mouths, [&](const auto& item) { return !vm->State().Characters.contains(item.first); });
+  };
   const auto seed = capture ? 0u : uint32_t(SDL_GetTicks());
   vm->SeedRandom(seed);
   SDL_SetWindowTitle(window.Window, "Saekano — first scene preview");
@@ -669,6 +702,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   };
   for (auto id : {0u, 1u, 2u, 3u, 9u}) uploadMain(id);
   PlainTextLayout layout;
+  size_t layoutCommand = SIZE_MAX;
   bool laidOut = false, quit = false;
   bool pointerDown = false;
   bool autoKeyHeld = false;
@@ -683,7 +717,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   std::string previousSignature;
   size_t saved = 0;
   std::map<uint16_t, bool> actorEligibility;
-  for (uint32_t frame = 0; !quit && frame < 2000; ++frame) {
+  for (uint32_t frame = 0; !quit && (!capture || frame < 2000); ++frame) {
     const uint64_t now =
         capture ? uint64_t(frame) * 16 : SDL_GetTicks() - epoch;
     messageCursor.Update(now);
@@ -835,22 +869,35 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     }
     previous = now;
     for (size_t work = 0; work < 256; ++work) {
+      bindScriptVoices();
+      syncMouths();
       const auto step = vm->Step(now, input);
       input.Advance = false;
+      syncMouths();
+      if (capture && (step.Boundary == VmBoundary::CommandStarted ||
+                      step.Boundary == VmBoundary::CommandCompletedBeforeDispatch))
+        events << "{\"kind\":\"command\",\"frame\":" << frame << ",\"now\":" << now
+               << ",\"script\":" << step.Script << ",\"command\":" << step.Command
+               << ",\"opcode\":" << step.Opcode << ",\"boundary\":" << int(step.Boundary) << "}\n";
       if (step.Opcode == 0x64 && step.Boundary == VmBoundary::CommandStarted) {
         firstMessage = now;
+        laidOut = false;
+        capturePointerStage = 0;
         break;
       }
       if (step.Opcode == 0x64 &&
-          step.Boundary == VmBoundary::CommandCompletedBeforeDispatch) {
+          step.Boundary == VmBoundary::CommandCompletedBeforeDispatch && capture &&
+          (!captureVoiced || step.Command >= 67)) {
         quit = true;
         break;
       }
       if (step.Boundary == VmBoundary::WaitingInput ||
           step.Boundary == VmBoundary::WaitingBackend)
         break;
-      if (step.Boundary == VmBoundary::Ended)
-        throw UnsupportedCommand("scene ended before first dialogue");
+      if (step.Boundary == VmBoundary::Ended) {
+        quit = true;
+        break;
+      }
       if (work == 255)
         throw UnsupportedCommand("scene per-frame command budget exceeded");
     }
@@ -879,6 +926,9 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         }
       }
     vm->UpdateSpriteFrames(spriteClock);
+    for (const auto& [id, actor] : vm->State().Characters)
+      if (actor.Pose.Ready && actor.Tweens[size_t(CharacterTween::Opacity)].Current != 0)
+        mouths.at(id).Update(now);
     backend.UpdateMessage(now);
     const auto& state = vm->State();
     // Primary updates before command work; button widgets update every variant
@@ -913,12 +963,13 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
           "first-scene active fade/rule rendering is not bound");
     if (!state.Quake[0] || !state.Quake[1] || !state.Quake[2])
       throw UnsupportedCommand("scene quake inputs are missing");
-    if (!laidOut) {
+    if (!laidOut || layoutCommand != message->Command) {
       layout =
           LayoutPlainText(message->Reveal.Text, format, font.Cached(), metrics,
                           visual.Window.TextWidth, visual.BodyScale,
                           uint32_t(utility.Size), font.NominalSize());
       laidOut = true;
+      layoutCommand = message->Command;
     }
     SceneQueueInputs gates;
     for (size_t c = 0; c < 2; ++c)
@@ -953,7 +1004,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
           const auto* blink = vm->SpriteBlink(id);
           if (!blink) throw UnsupportedCommand("scene actor blink is missing");
           auto poseState = CurrentSceneCharacterPoseState(actor, blink->Phase,
-                                                          2, *state.Quake[1]);
+                                                          mouths.at(id).Frame, *state.Quake[1]);
           if (!poseState.Visible || !poseState.Color[3]) continue;
           if (actor.Tweens[size_t(CharacterTween::PreviousPose)].Current ||
               actor.PreviousFaceOpacity.Current)
@@ -1022,9 +1073,11 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                             std::to_string(backend.CursorVisible()) + ':' +
                             std::to_string(pointerDown) + ':' +
                             std::to_string(skipAuto.Auto) + ':' + std::to_string(autoKeyHeld);
+    if (captureVoiced) signature = std::to_string(message->Command) + ':' +
+        std::to_string(message->Reveal.Revealed) + ':' + std::to_string(message->VoiceGate.Phase);
     for (const auto& [id, actor] : state.Characters) {
       (void)actor;
-      signature += ':' + std::to_string(vm->SpriteBlink(id)->Phase);
+      if (!captureVoiced) signature += ':' + std::to_string(vm->SpriteBlink(id)->Phase);
     }
     if (capture && (saved == 0 || signature != previousSignature ||
                     now - lastSaved >= 1500 || quit)) {
@@ -1063,6 +1116,9 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
              << autoRotation.Channel.Epoch << ',' << autoRotation.Channel.Sample
              << "],\"message_epoch\":" << message->Epoch
              << ",\"message_source_units\":" << message->SourceUnits
+             << ",\"capture_voiced\":" << (captureVoiced ? "true" : "false")
+             << ",\"voice_id\":" << message->VoiceId << ",\"voice_phase\":" << message->VoiceGate.Phase
+             << ",\"voice_slot\":" << message->VoiceGate.Slot << ",\"voice_position_ms\":" << message->AudioPosition
              << ",\"skip_state\":[" << state.SkipMode << ',' << state.SkipPhase << ']'
              << ",\"history_gate_supplied\":false"
              << ",\"capture_auto\":" << captureAuto
@@ -1127,7 +1183,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       for (auto id : SceneCharacterDrawOrder(state)) {
         const auto& actor = state.Characters.at(id);
         const auto* blink = vm->SpriteBlink(id);
-        auto poseInput = CurrentSceneCharacterPoseState(actor, blink->Phase, 2,
+        auto poseInput = CurrentSceneCharacterPoseState(actor, blink->Phase, mouths.at(id).Frame,
                                                         *state.Quake[1]);
         if (!poseInput.Visible || !poseInput.Color[3]) continue;
         if (!firstInput) report << ',';
@@ -2345,7 +2401,7 @@ int RunProfileItemsViewer(const std::filesystem::path& usrdir, size_t scene,
 }
 int RunFirstSceneViewer(const std::filesystem::path& usrdir,
                         const std::filesystem::path& captureDirectory,
-                        bool captureAuto, bool captureButtonAuto) {
+                        bool captureAuto, bool captureButtonAuto, bool captureVoiced) {
   bool created = false;
   try {
     const bool capture = !captureDirectory.empty();
@@ -2405,7 +2461,7 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
     MusicPlayback playback(music, capture, &sounds);
     return RunCompletedScene(window, renderer, fontTextures, font, resources,
                              playback, music, sounds, std::move(owner), mode,
-                             usrdir, captureDirectory, captureAuto, captureButtonAuto);
+                             usrdir, captureDirectory, captureAuto, captureButtonAuto, captureVoiced);
   } catch (const std::exception& error) {
     if (created) {
       std::ofstream out(captureDirectory / "error.txt");
