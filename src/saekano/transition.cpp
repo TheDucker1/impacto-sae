@@ -323,6 +323,34 @@ bool UpdateQuake(SemanticState& state, QuakeAnimation& animation,
   if (selector == 3 || selector == 4) state.Quake[2] = pair;
   return animation.Completed;
 }
+RuleWipeDraw BuildRuleWipeDraw(const RuleWipeState& state) {
+  if (!state.Known)
+    throw UnsupportedCommand("restored rule-wipe drawing inputs are missing");
+  RuleWipeDraw draw;
+  if (!state.Active && !state.Auxiliary) return draw;
+  if (!state.Progress)
+    throw UnsupportedCommand("rule-wipe drawing progress is missing");
+  draw.Destination = draw.Source = {0, 0, 960, 544};
+  draw.Background = state.BackgroundResource;
+  draw.Color = draw.Background ? std::array<uint8_t, 4>{255, 255, 255, 255}
+                               : state.Color;
+  if (state.Active) {
+    if (state.CachedRule < 0)
+      throw UnsupportedCommand("active rule-wipe drawing resource is missing");
+    draw.Kind = draw.Background ? RuleWipeDrawKind::MaskedImage
+                               : RuleWipeDrawKind::MaskedSolid;
+    draw.Rule = ImageKey{ImageSection::Rule, uint32_t(state.CachedRule)};
+    draw.Value = float(*state.Progress) / 100.0f;
+  } else {
+    draw.Kind = draw.Background ? RuleWipeDrawKind::Image
+                               : RuleWipeDrawKind::Solid;
+    // Preserve native I32 wrap, signed division toward zero and byte narrowing.
+    const auto numerator = Signed(uint32_t(*state.Progress) * 255u + 25500u);
+    draw.Color[3] = uint8_t(numerator / 200);
+    draw.EnableAlphaTest = draw.Background.has_value();
+  }
+  return draw;
+}
 RuleWipeCommand RuleWipeCommand::Decode(std::span<const uint8_t> payload) {
   PayloadReader reader(payload);
   RuleWipeCommand result{reader.I32(), reader.I32(), reader.I32(),

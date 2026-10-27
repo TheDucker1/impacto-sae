@@ -293,6 +293,7 @@ struct UiBlitRenderer {
   GLuint Program = 0, Vertex = 0, Fragment = 0, Vao = 0, Buffer = 0;
   GLint Tint = -1, Solid = -1, AlphaMode = -1;
   GLint FilterMode = -1, FilterValue = -1, Glyph = -1;
+  GLint ColoredRule = -1, RuleValue = -1;
   struct BoundTexture {
     GLuint Handle;
     uint32_t Width, Height;
@@ -331,11 +332,16 @@ uniform int alphaMode;
 uniform int filterMode;
 uniform float filterValue;
 uniform bool glyph;
+uniform bool coloredRule;
+uniform float ruleValue;
 out vec4 outputColor;
 void main(){
   outputColor=solid?tint:texture(image,texturePosition)*tint;
   // Native rectangles and glyphs use independent fragment programs.
-  if(filterMode==1 && !solid && !glyph){
+  if(coloredRule){
+    vec4 result=vec4(tint.rgb,clamp(texture(image,texturePosition).a+ruleValue,0.0,1.0));
+    outputColor=vec4(unpackHalf2x16(packHalf2x16(result.xy)),unpackHalf2x16(packHalf2x16(result.zw)));
+  }else if(filterMode==1 && !solid && !glyph){
     float value=clamp(filterValue,0.0,1.0);
     float luminance=dot(vec3(0.298911988735199,0.5866109728813171,0.11447799950838089),outputColor.rgb);
     float weighted=value*luminance;
@@ -378,6 +384,8 @@ void main(){
       FilterMode = glGetUniformLocation(Program, "filterMode");
       FilterValue = glGetUniformLocation(Program, "filterValue");
       Glyph = glGetUniformLocation(Program, "glyph");
+      ColoredRule = glGetUniformLocation(Program, "coloredRule");
+      RuleValue = glGetUniformLocation(Program, "ruleValue");
       GlCheck("UI renderer initialization");
     } catch (...) {
       Release();
@@ -494,9 +502,14 @@ void main(){
     GlCheck("profile UI drawing");
   }
   void DrawQuad(const UiSpriteBlit& blit, const BoundTexture& texture,
-                bool solid, bool glyph = false) {
+                bool solid, bool glyph = false,
+                std::optional<float> coloredRule = {}) {
+    if (coloredRule && !std::isfinite(*coloredRule))
+      throw FormatError("nonfinite rule shader value");
     glUniform1i(Solid, solid ? 1 : 0);
     glUniform1i(Glyph, glyph ? 1 : 0);
+    glUniform1i(ColoredRule, coloredRule.has_value() ? 1 : 0);
+    glUniform1f(RuleValue, coloredRule.value_or(0.0f));
     const auto quad = ResolveUiQuad(blit, texture.Width, texture.Height);
     std::array<float, 24> vertices;
     constexpr std::array<size_t, 6> corners{0, 1, 2, 2, 1, 3};
@@ -1015,9 +1028,9 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       if (!capture) SDL_Delay(16);
       continue;
     }
-    if (state.ScreenFade != 0 || state.RuleWipe.Active)
+    if (state.ScreenFade != 0)
       throw UnsupportedCommand(
-          "first-scene active fade/rule rendering is not bound");
+          "first-scene active screen-fade rendering is not bound");
     if (!state.Quake[0] || !state.Quake[1] || !state.Quake[2])
       throw UnsupportedCommand("scene quake inputs are missing");
     if (!laidOut || layoutCommand != message->Command) {
@@ -1029,6 +1042,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       layoutCommand = message->Command;
     }
     SceneQueueInputs gates;
+    gates.EffectPlacement = state.RuleWipe.Parameter;
     for (size_t c = 0; c < 2; ++c)
       for (size_t i = 0; i < 4; ++i) {
         const auto id = state.SceneImages.Slots.FloatSlots[c][i].Texture;
@@ -1077,6 +1091,26 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
             drawSprite(sprite);
             spriteDraws.push_back(sprite);
           }
+        }
+      } else if (pass.Kind == SceneDrawKind::Effect) {
+        const auto effect = BuildRuleWipeDraw(state.RuleWipe);
+        if (effect.Kind == RuleWipeDrawKind::MaskedImage || effect.Kind == RuleWipeDrawKind::Image)
+          throw UnsupportedCommand("rule-wipe image-background shader/state is not bound");
+        if (effect.Kind != RuleWipeDrawKind::None) {
+          UiSpriteBlit sprite;
+          sprite.Destination = effect.Destination; sprite.Source = effect.Source;
+          sprite.Color = effect.Color;
+          if (effect.Kind == RuleWipeDrawKind::Solid) {
+            renderer.DrawQuad(sprite, {0, 1, 1}, true);
+          } else {
+            const auto* pixels = images.Pixels(ImageSlot::Rule);
+            if (!pixels || images.Key(ImageSlot::Rule) != effect.Rule)
+              throw UnsupportedCommand("rule-wipe mask pixels do not match active resource");
+            sprite.Texture = {ProfileTextureSection::SceneImage, int32_t(ImageSection::Rule), effect.Rule->Id};
+            upload(sprite.Texture, *pixels);
+            renderer.DrawQuad(sprite, renderer.Textures.at(sprite.Texture), false, false, effect.Value);
+          }
+          spriteDraws.push_back(sprite);
         }
       } else if (pass.Kind == SceneDrawKind::MessageWindow) {
         OrdinaryMessageWindowState windowState;
@@ -1131,6 +1165,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                             std::to_string(skipAuto.Auto) + ':' + std::to_string(autoKeyHeld);
     if (captureVoiced) signature = std::to_string(message->Command) + ':' +
         std::to_string(message->Reveal.Revealed) + ':' + std::to_string(message->VoiceGate.Phase);
+    signature += ':' + std::to_string(state.RuleWipe.Active) + ':' +
+        std::to_string(state.RuleWipe.Auxiliary) + ':' + std::to_string(state.RuleWipe.Progress.value_or(0) / 25);
     for (const auto& [id, actor] : state.Characters) {
       if (!captureVoiced) signature += ':' + std::to_string(vm->SpriteBlink(id)->Phase);
       if (captureUntilMessage) signature += ':' + std::to_string(actor.Pose.Current) + ':' +
@@ -1151,6 +1187,11 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       report
              << ",\"completed\":" << (quit ? "true" : "false")
              << ",\"bgm\":" << state.BgmTrack.value_or(-1)
+             << ",\"screen_fade\":" << state.ScreenFade.value_or(-1)
+             << ",\"screen_filter\":[" << *state.ScreenFilter.Mode << ',' << *state.ScreenFilter.Intensity << ']'
+             << ",\"rule_wipe\":[" << state.RuleWipe.Active << ',' << state.RuleWipe.Auxiliary
+             << ',' << state.RuleWipe.Progress.value_or(0) << ',' << state.RuleWipe.CachedRule
+             << ',' << state.RuleWipe.Parameter << ',' << state.RuleWipe.BackgroundKind << ']'
              << ",\"window_opacity_setting\":" << int(opacity)
              << ",\"window_open\":" << state.WindowOpenness[0]
              << ",\"cursor_visible\":"
@@ -1353,7 +1394,7 @@ int RunScreenFilterProbe(const std::filesystem::path& fixtureDirectory,
       const auto pixel = reader.U32(), color = reader.U32(), mode = reader.U32();
       const auto value = std::bit_cast<float>(reader.U32());
       const auto kind = reader.U32();
-      if (kind > 2) throw FormatError("invalid filter probe primitive");
+      if (kind > 3) throw FormatError("invalid filter probe primitive");
       const ProfileTextureKey key{ProfileTextureSection::MainUi, -1, i};
       const ImagePixels pixels{1, 1, {uint8_t(pixel), uint8_t(pixel >> 8), uint8_t(pixel >> 16), uint8_t(pixel >> 24)}};
       UiSpriteBlit draw;
@@ -1365,7 +1406,9 @@ int RunScreenFilterProbe(const std::filesystem::path& fixtureDirectory,
         glViewport(0,0,1,1); glDisable(GL_BLEND);
         renderer.SetFilter(1, 1.0f);  // Also exercise a real reset to Normal.
         renderer.SetFilter(int32_t(mode), value);
-        renderer.DrawQuad(draw, renderer.Textures.at(key), kind == 2, kind == 1);
+        if (kind == 3) glUniform1i(renderer.AlphaMode, 0);  // Base native GXP family.
+        renderer.DrawQuad(draw, renderer.Textures.at(key), kind == 2, kind == 1,
+                          kind == 3 ? std::optional<float>(value) : std::nullopt);
         std::array<float,4> result;
         glReadPixels(0,0,1,1,GL_RGBA,GL_FLOAT,result.data());
         GlCheck("offscreen filter sample");

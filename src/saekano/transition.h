@@ -109,6 +109,20 @@ struct RuleWipeCommand {
   std::optional<int32_t> ColorOrImage;
   static RuleWipeCommand Decode(std::span<const uint8_t> payload);
 };
+enum class RuleWipeDrawKind : uint32_t {
+  None, Solid, Image, MaskedSolid, MaskedImage
+};
+// Native effect callback800798e6, before GPU submission. Resource identities
+// remain explicit; a retained background pointer wins over BackgroundKind.
+struct RuleWipeDraw {
+  RuleWipeDrawKind Kind = RuleWipeDrawKind::None;
+  std::array<int32_t, 4> Destination{}, Source{};
+  std::array<uint8_t, 4> Color{};
+  float Value = 0;
+  bool EnableAlphaTest = false;
+  std::optional<ImageKey> Rule, Background;
+};
+RuleWipeDraw BuildRuleWipeDraw(const RuleWipeState& state);
 struct RuleWipeAnimation {
   bool Started = false, Completed = false;
   uint32_t Stage = 0;
