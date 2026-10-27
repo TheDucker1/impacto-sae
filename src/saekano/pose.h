@@ -60,6 +60,11 @@ class CharacterPoseDriver {
   virtual void Reset() = 0;
   virtual bool GateReady() const { return true; }
 };
+// Native6375a previous-pose pass precedes63aa6's current pass. Separate facial
+// crossfade/auxiliary effects remain explicit unsupported inputs.
+std::vector<UiSpriteBlit> BuildSceneCharacterPose(
+    const CharacterState& actor, const CharacterPoseDriver& poses,
+    int32_t eyePhase, int32_t mouthFrame, std::array<int32_t, 2> quake);
 // Direct original root6 loading and complete P8 pixel preparation. No SDK/GPU.
 // Slots have stable identities, matching the native mutable resource records.
 class ArchiveCharacterPoses final : public CharacterPoseDriver {

@@ -1003,23 +1003,20 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
           const auto& actor = state.Characters.at(id);
           const auto* blink = vm->SpriteBlink(id);
           if (!blink) throw UnsupportedCommand("scene actor blink is missing");
-          auto poseState = CurrentSceneCharacterPoseState(actor, blink->Phase,
-                                                          mouths.at(id).Frame, *state.Quake[1]);
-          if (!poseState.Visible || !poseState.Color[3]) continue;
-          if (actor.Tweens[size_t(CharacterTween::PreviousPose)].Current ||
-              actor.PreviousFaceOpacity.Current)
-            throw UnsupportedCommand(
-                "first-scene actor crossfade is not bound");
-          if (!actor.Pose.ResourceSlot)
-            throw UnsupportedCommand("scene actor resource slot is missing");
-          const auto* pose = poses.Get(*actor.Pose.ResourceSlot);
-          if (!pose) throw UnsupportedCommand("scene actor pixels are missing");
-          for (size_t i = 0; i < pose->Textures.size(); ++i)
-            upload(
-                {ProfileTextureSection::CharacterPose, pose->Pose, uint32_t(i)},
-                pose->Textures[i]);
-          for (const auto& sprite :
-               BuildCurrentCharacterPose(*pose, poseState)) {
+          const auto draws = BuildSceneCharacterPose(
+              actor, poses, blink->Phase, mouths.at(id).Frame, *state.Quake[1]);
+          for (const auto& sprite : draws) {
+            // Both retained and current resource slots can contribute a pass.
+            const PreparedCharacterPose* pixels = nullptr;
+            for (const auto slot : {actor.Pose.PreviousResourceSlot,
+                                    actor.Pose.ResourceSlot}) {
+              if (!slot) continue;
+              const auto* candidate = poses.Get(*slot);
+              if (candidate && candidate->Pose == sprite.Texture.Character) pixels = candidate;
+            }
+            if (!pixels || sprite.Texture.Entry >= pixels->Textures.size())
+              throw UnsupportedCommand("scene actor draw texture is missing");
+            upload(sprite.Texture, pixels->Textures[sprite.Texture.Entry]);
             drawSprite(sprite);
             spriteDraws.push_back(sprite);
           }

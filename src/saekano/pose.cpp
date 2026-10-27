@@ -132,6 +132,39 @@ std::vector<UiSpriteBlit> BuildCurrentCharacterPose(
   }
   return draws;
 }
+std::vector<UiSpriteBlit> BuildSceneCharacterPose(
+    const CharacterState& actor, const CharacterPoseDriver& poses,
+    int32_t eyePhase, int32_t mouthFrame, std::array<int32_t, 2> quake) {
+  const auto current = CurrentSceneCharacterPoseState(actor, eyePhase, mouthFrame, quake);
+  std::vector<UiSpriteBlit> draws;
+  if (!current.Visible) return draws;
+  const auto previousOpacity = actor.Tweens[size_t(CharacterTween::PreviousPose)].Current;
+  if (previousOpacity > 0 && actor.Pose.PreviousResourceSlot) {
+    const auto* previous = poses.Get(*actor.Pose.PreviousResourceSlot);
+    if (!previous || !actor.Pose.PreviousGeometry || previous->Geometry != *actor.Pose.PreviousGeometry)
+      throw UnsupportedCommand("previous character pose pixels/geometry are missing");
+    auto state = current;
+    state.Face = actor.Pose.PreviousFace;
+    state.Color[3] = uint8_t(previousOpacity);
+    auto prior = BuildCurrentCharacterPose(*previous, state);
+    // Original6375a crops the old mouth at+2; current63aa6 uses+1. Keep the
+    // observed source-coordinate distinction, not an inferred face effect.
+    if (!prior.empty())
+      prior.back().Source[1] = std::bit_cast<int32_t>(uint32_t(prior.back().Source[1]) + 1u);
+    draws.insert(draws.end(), prior.begin(), prior.end());
+  }
+  if (!current.Color[3]) return draws;
+  if (actor.PreviousFaceOpacity.Current)
+    throw UnsupportedCommand("character facial crossfade rendering is not bound");
+  if (!actor.Pose.ResourceSlot)
+    throw UnsupportedCommand("current character pose resource slot is missing");
+  const auto* prepared = poses.Get(*actor.Pose.ResourceSlot);
+  if (!prepared || !actor.Pose.Geometry || prepared->Geometry != *actor.Pose.Geometry)
+    throw UnsupportedCommand("current character pose pixels/geometry are missing");
+  const auto main = BuildCurrentCharacterPose(*prepared, current);
+  draws.insert(draws.end(), main.begin(), main.end());
+  return draws;
+}
 std::optional<size_t> TouchCharacterPose(CharacterPoseCache& cache,
                                          int32_t pose) {
   RequireCache(cache);
