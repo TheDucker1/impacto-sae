@@ -65,7 +65,7 @@ if(SAEKANO_CUBISM2_SDK_ROOT)
     target_link_libraries(saekano_model_scene_probe PRIVATE saekano_live2d_driver)
 endif()
 
-add_executable(saekano_inspect inspect.cpp)
+add_executable(saekano_inspect inspect.cpp scenecontinuation.cpp)
 target_sources(saekano_core PRIVATE profilemode.cpp profilearchive.cpp profilemouth.cpp mouthselection.cpp profilevoiceoutput.cpp ordinaryvoiceoutput.cpp uisprite.cpp profilewave.cpp profilearrow.cpp dialog.cpp widgetinput.cpp skipauto.cpp)
 target_link_libraries(saekano_inspect PRIVATE saekano_core)
 add_executable(saekano_core_tests ../../tests/saekano/formats_test.cpp)
