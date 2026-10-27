@@ -9,6 +9,26 @@
 #include <limits>
 
 namespace Impacto::Saekano {
+bool BgmStopFade::Request(int32_t duration, float currentWeight) {
+  if (duration < 0) throw UnsupportedCommand("negative BGM fade duration is not bound");
+  if (!std::isfinite(currentWeight) || currentWeight < 0 || currentWeight > 1)
+    throw FormatError("invalid current BGM fade weight");
+  if (Active()) {
+    Phase = 3; Weight = 0;
+    return true;  // Native Stop first retires the already-fading voice.
+  }
+  Phase = 1; Duration = uint32_t(duration); Elapsed = 0;
+  From = Weight = currentWeight;
+  return false;
+}
+void BgmStopFade::Tick(uint32_t elapsedMilliseconds) {
+  if (!Active()) return;
+  if (Phase == 1) { Phase = 2; return; }  // Ready callback arms its clock at zero.
+  Elapsed += std::min(elapsedMilliseconds, 67u);
+  Weight = Duration == 0 || Elapsed >= Duration
+      ? 0.0f : From * (1.0f - float(Elapsed) / float(Duration));
+  if (uint64_t(Elapsed) >= uint64_t(Duration) + 500u) Phase = 3;
+}
 void InitializeFreshAudioOwner(SemanticState& state) {
   if (state.MusicHistory.ExtentKnown || !state.MusicHistory.Entries.empty() ||
       state.MusicHistory.Default != 0 || state.BgmMasterVolume ||

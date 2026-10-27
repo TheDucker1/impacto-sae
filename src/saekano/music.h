@@ -9,6 +9,17 @@
 
 namespace Impacto::Saekano {
 struct SemanticState;
+// Attached BGM fader with the game's proved500ms silent retirement delay.
+// Tick inputs are audio-service elapsed milliseconds; the native service caps
+// each clock delta at67ms. Device callbacks and readiness are owned by the host.
+struct BgmStopFade {
+  uint32_t Phase = 0, Duration = 0, Elapsed = 0;
+  float From = 1.0f, Weight = 1.0f;
+  bool Active() const { return Phase == 1 || Phase == 2; }
+  // True requests immediate device retirement (a repeated Stop while fading).
+  bool Request(int32_t duration, float currentWeight = 1.0f);
+  void Tick(uint32_t elapsedMilliseconds);
+};
 // Explicit fresh-owner operation, before loading persistent/global progress.
 // Existing or partial audio inputs reject; VM replacement never calls this.
 void InitializeFreshAudioOwner(SemanticState& state);

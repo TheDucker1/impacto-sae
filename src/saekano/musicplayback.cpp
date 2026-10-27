@@ -178,6 +178,16 @@ struct MusicPlayback::Impl {
   std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> UiSound;
   SystemSoundAssets* UiSounds = nullptr;
   float UiSoundGain = 0;
+  BgmStopFade BgmFade;
+  float BgmGain = 1.0f;
+  double BgmFadeFraction = 0;
+  uint32_t BgmFadeFrameRemainder = 0;
+  void AdvanceBgmFade(uint32_t milliseconds) {
+    if (!BgmFade.Active()) return;
+    BgmFade.Tick(milliseconds);
+    Channel->SetVolume(BgmGain * BgmFade.Weight);
+    if (!BgmFade.Active()) Channel->Stop(0);
+  }
   std::unique_ptr<HcaPlaybackStream> PreparedProfileVoice;
   std::array<std::unique_ptr<HcaPlaybackStream>, 2> PreparedOrdinaryVoices;
   std::array<bool, 2> HasOrdinaryVoice{};
@@ -282,13 +292,30 @@ void MusicPlayback::Submit(const GameEvent& event) {
     auto stream =
         std::make_unique<HcaPlaybackStream>(impl_->Resources, request.Track);
     const bool loop = impl_->Resources.Info(request.Track).Loop;
+    if (impl_->BgmFade.Active())
+      throw UnsupportedCommand("overlapping BGM crossfade playback is not bound");
+    impl_->BgmFade = {};
+    impl_->BgmFadeFraction = 0;
+    impl_->BgmFadeFrameRemainder = 0;
+    impl_->BgmGain = request.Volume->Gain;
     impl_->Channel->SetVolume(request.Volume->Gain);
     impl_->Channel->Play(std::move(stream), loop, 0);
   } else if (event.Kind == GameEventKind::StopBgm) {
-    if (event.Parameter != 0)
-      throw UnsupportedCommand(
-          "native BGM fade-time conversion is not verified");
-    impl_->Channel->Stop(0);
+    if (event.Parameter < 0)
+      throw UnsupportedCommand("negative BGM fade duration is not bound");
+    if (impl_->Channel->GetState() != Audio::ACS_Stopped) {
+      if (impl_->BgmFade.Request(event.Parameter)) {
+        impl_->Channel->SetVolume(0); impl_->Channel->Stop(0);
+      }
+      else {
+        // The attached fader is already ready. Pump its zero-time arm/sample;
+        // duration0 silences immediately, while retaining its retirement delay.
+        impl_->BgmFade.Tick(0); impl_->BgmFade.Tick(0);
+        impl_->BgmFadeFraction = 0;
+        impl_->BgmFadeFrameRemainder = 0;
+        impl_->Channel->SetVolume(impl_->BgmGain * impl_->BgmFade.Weight);
+      }
+    }
   } else if (event.Kind == GameEventKind::PlaySe) {
     if (!impl_->Sounds || !event.Se || event.Se->Track != event.Id)
       throw FormatError("invalid typed SE request or missing SE bank");
@@ -337,6 +364,14 @@ void MusicPlayback::Submit(const GameEvent& event) {
   AlCheck("BGM request");
 }
 void MusicPlayback::Update(float seconds) {
+  if (!std::isfinite(seconds) || seconds < 0)
+    throw FormatError("invalid audio update interval");
+  if (impl_->BgmFade.Active() && !impl_->RenderSamples) {
+    impl_->BgmFadeFraction += double(seconds) * 1000.0;
+    const double whole = std::floor(impl_->BgmFadeFraction);
+    impl_->BgmFadeFraction -= whole;
+    impl_->AdvanceBgmFade(uint32_t(std::min(whole, 67.0)));
+  }
   impl_->Channel->Update(seconds);
   for (auto& channel : impl_->SeChannels) if (channel) channel->Update(seconds);
   impl_->ProfileVoice->Update(seconds);
@@ -357,6 +392,8 @@ bool MusicPlayback::SoundPlaying(size_t logicalChannel) const {
   const auto& channel = impl_->SeChannels.at(logicalChannel);
   return channel && channel->GetState() != Audio::ACS_Stopped;
 }
+BgmStopFade MusicPlayback::BgmFadeState() const { return impl_->BgmFade; }
+float MusicPlayback::BgmOutputGain() const { return impl_->Channel->GetVolume(); }
 void MusicPlayback::BindUiSounds(SystemSoundAssets& resources, float gain) {
   if (!std::isfinite(gain) || gain < 0 || gain > 1)
     throw FormatError("UI sound gain outside supported range");
@@ -522,6 +559,11 @@ void MusicPlayback::Render(std::span<int16_t> output) {
   size_t frame = 0;
   while (frame < output.size() / 2) {
     const auto count = std::min<size_t>(480, output.size() / 2 - frame);
+    if (impl_->BgmFade.Active()) {
+      impl_->BgmFadeFrameRemainder += uint32_t(count);
+      impl_->AdvanceBgmFade(impl_->BgmFadeFrameRemainder / 48);
+      impl_->BgmFadeFrameRemainder %= 48;
+    }
     Update(float(count) / 48000);
     impl_->RenderSamples(impl_->Device, output.data() + frame * 2,
                          ALCsizei(count));
@@ -606,6 +648,52 @@ int RunUiSoundSession(const std::filesystem::path& usrdir,
     }
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Saekano UI sound: %s",
                  error.what());
+    return 1;
+  }
+}
+int RunBgmFadeSession(const std::filesystem::path& usrdir, uint32_t track,
+                       const std::filesystem::path& captureDirectory) {
+  bool created = false;
+  try {
+    CreateCaptureDirectory(usrdir, captureDirectory); created = true;
+    ArchiveBgmResources resources(usrdir); resources.Prepare(int32_t(track));
+    if (!SDL_Init(SDL_INIT_EVENTS)) throw FormatError(SDL_GetError());
+    struct Cleanup { ~Cleanup() { SDL_Quit(); } } cleanup;
+    const auto request = BgmRequest(int32_t(track), 100, 100, resources.Coefficient());
+    for (uint32_t scenario = 0; scenario < 3; ++scenario) {
+      MusicPlayback playback(resources, true);
+      GameEvent play{GameEventKind::PlayBgm, int32_t(track)}; play.Bgm = request;
+      playback.Submit(play);
+      std::vector<int16_t> samples;
+      std::ofstream trace(captureDirectory / ("fade-" + std::to_string(scenario) + ".jsonl"));
+      for (uint32_t step = 0; step < 50; ++step) {
+        if (scenario && (step == 10 || (scenario == 2 && step == 15)))
+          playback.Submit({GameEventKind::StopBgm, 0, {}, 1000});
+        if (scenario && step == 11) {
+          const auto before = playback.BgmFadeState();
+          bool rejected = false;
+          try { playback.Submit({GameEventKind::StopBgm, 0, {}, -1}); }
+          catch (const UnsupportedCommand&) { rejected = true; }
+          const auto after = playback.BgmFadeState();
+          if (!rejected || before.Elapsed != after.Elapsed || before.Phase != after.Phase || before.Weight != after.Weight)
+            throw FormatError("invalid fade request changed playback");
+        }
+        playback.Update(0.05f);
+        const auto old = samples.size(); samples.resize(old + 4800);
+        playback.Render(std::span(samples).subspan(old));
+        const auto fade = playback.BgmFadeState();
+        trace << "{\"now\":" << (step + 1) * 50 << ",\"phase\":" << fade.Phase
+              << ",\"elapsed\":" << fade.Elapsed << ",\"weight_bits\":" << std::bit_cast<uint32_t>(fade.Weight)
+              << ",\"gain_bits\":" << std::bit_cast<uint32_t>(playback.BgmOutputGain())
+              << ",\"playing\":" << (playback.Playing() ? "true" : "false") << "}\n";
+      }
+      SaveWav(captureDirectory / ("fade-" + std::to_string(scenario) + ".wav"), samples);
+      if (!trace) throw FormatError("cannot write fade trace");
+    }
+    return 0;
+  } catch (const std::exception& error) {
+    if (created) { std::ofstream out(captureDirectory / "error.txt"); out << error.what() << '\n'; }
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Saekano BGM fade: %s", error.what());
     return 1;
   }
 }

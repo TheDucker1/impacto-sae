@@ -254,6 +254,13 @@ int main(int argc, char* argv[]) {
            "Usage: --saekano-se USRDIR TRACK CHANNEL [--capture DIRECTORY]\n");
     return 1;
   }
+  if (argc == 5 && std::string_view(argv[1]) == "--saekano-bgm-fade") {
+    uint32_t track = 0;
+    const std::string_view text(argv[3]);
+    const auto parsed = std::from_chars(text.data(),text.data()+text.size(),track);
+    if (parsed.ec == std::errc{} && parsed.ptr == text.data()+text.size() && track <= INT32_MAX)
+      return Saekano::RunBgmFadeSession(argv[2],track,argv[4]);
+  }
   if (argc >= 2 && std::string_view(argv[1]) == "--saekano-audio") {
     uint32_t track = 0;
     if (argc == 4 || (argc == 6 && std::string_view(argv[4]) == "--capture")) {

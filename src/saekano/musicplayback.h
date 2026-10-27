@@ -18,6 +18,8 @@ class MusicPlayback {
   void Render(std::span<int16_t> stereoPcm);  // Offline 48kHz loopback only.
   bool Playing() const;
   bool SoundPlaying(size_t logicalChannel) const;
+  BgmStopFade BgmFadeState() const;
+  float BgmOutputGain() const;
   // Native UI channel6 is independent of SE2..5 and profile voice7.
   // Caller supplies a known effective gain and preserves the asset lifetime.
   void BindUiSounds(SystemSoundAssets& resources, float gain);
@@ -91,6 +93,8 @@ class PlaybackProfileVoice final : public ProfileVoiceOutput {
 int RunMusicSession(const std::filesystem::path& usrdir, uint32_t track,
                     const std::filesystem::path& captureDirectory = {},
                     std::optional<uint32_t> soundChannel = std::nullopt);
+int RunBgmFadeSession(const std::filesystem::path& usrdir, uint32_t track,
+                       const std::filesystem::path& captureDirectory);
 int RunProfileVoiceSession(const std::filesystem::path& usrdir,
                            uint32_t character, uint32_t entry,
                            const std::filesystem::path& captureDirectory = {});

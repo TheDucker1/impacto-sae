@@ -25,7 +25,7 @@ struct GameEvent {
   GameEventKind Kind;
   int32_t Id;
   std::array<int32_t, 2> ScreenPosition{};
-  int32_t Parameter = 0;  // StopBgm/StopSe: signed fade parameter, units unproved.
+  int32_t Parameter = 0;  // StopBgm: signed milliseconds; StopSe mapping remains unbound.
   std::optional<BgmPlayRequest> Bgm{};
   std::optional<SePlayRequest> Se{};
 };
