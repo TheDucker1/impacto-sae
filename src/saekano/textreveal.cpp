@@ -216,6 +216,59 @@ OrdinaryMessageText SplitOrdinaryMessageText(
       result.InheritedName ? normalized : normalized.substr(result.Name.size());
   return result;
 }
+OrdinaryMessageText ParseOrdinaryMessageControls(
+    std::u16string_view source, const TextFormatEnvironment& format) {
+  if (source.size() > 1024 * 1024) throw FormatError("ordinary message exceeds budget");
+  source = source.substr(0, source.find(u'\0'));
+  if (format.Tokens[2].empty() || source.find_first_of(format.Tokens[2]) == source.npos)
+    return SplitOrdinaryMessageText(source, format);
+  if (format.Following.size() < 19 || format.Following[15].empty() ||
+      format.Following[16].size() != 1 || format.Following[18].empty() ||
+      format.Tokens[0].size() != 1 || format.Tokens[1].size() != 1)
+    throw UnsupportedCommand("inline queue format tokens are missing");
+  const auto number = [](std::u16string_view word) {
+    uint32_t value = 0; bool negative = false;
+    for (const auto c : word) {
+      if (c >= u'0' && c <= u'9') value = value * 10u + uint32_t(c - u'0');
+      if (c == u'-') negative = true;
+    }
+    return std::bit_cast<int32_t>(negative ? 0u - value : value);
+  };
+  std::u16string plain;
+  std::vector<TextQueueMarker> markers;
+  for (size_t cursor = 0; cursor < source.size();) {
+    const auto ch = source[cursor];
+    if (ch == format.Tokens[1][0]) throw FormatError("unmatched inline closing delimiter");
+    if (ch != format.Tokens[0][0]) { plain.push_back(ch); ++cursor; continue; }
+    const auto end = source.find(format.Tokens[1][0], cursor + 1);
+    if (end == source.npos) throw FormatError("unterminated inline directive");
+    const auto tag = source.substr(cursor + 1, end - cursor - 1);
+    const auto space = tag.find(u' ');
+    if (space == tag.npos || tag.substr(0, space) != format.Following[15])
+      throw UnsupportedCommand("ordinary inline directive is not bound");
+    const auto command = tag.substr(space + 1);
+    const auto comma = format.Following[16][0];
+    const auto first = command.find(comma), second = command.find(comma, first == command.npos ? 0 : first + 1);
+    if (first == command.npos || second == command.npos || command.substr(0, first) != format.Following[18] ||
+        command.find(comma, second + 1) != command.npos || command.find(u' ') != command.npos)
+      throw UnsupportedCommand("inline SP command is not bound");
+    const auto lane = number(command.substr(first + 1, second - first - 1));
+    const auto time = number(command.substr(second + 1));
+    if (lane < 0 || lane >= 5 || time < 0)
+      throw UnsupportedCommand("inline queue lane/time outside supported range");
+    markers.push_back({int32_t(plain.size()) - 1, uint32_t(lane), time});
+    cursor = end + 1;
+  }
+  auto parsed = SplitOrdinaryMessageText(plain, format);
+  if (parsed.Body.size() != plain.size() - parsed.Name.size())
+    throw UnsupportedCommand("inline controls with aside name stripping are not bound");
+  for (auto& marker : markers) {
+    marker.Before -= int32_t(parsed.Name.size());
+    if (marker.Before < -1) throw UnsupportedCommand("inline control inside speaker name");
+  }
+  parsed.QueueMarkers = std::move(markers);
+  return parsed;
+}
 void VoiceTextReveal::Prepare(std::string_view cp932,
                               const TextFormatEnvironment& format,
                               uint64_t now) {

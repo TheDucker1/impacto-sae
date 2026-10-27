@@ -56,10 +56,20 @@ struct TextColorRange {
   size_t Begin = 0, End = 0;
   std::array<uint8_t, 3> Rgb{};
 };
+struct TextQueueMarker {
+  int32_t Before = -1;  // Native zero-based body index immediately before tag.
+  uint32_t Lane = 0;
+  int32_t VoiceTime = 0;
+};
 struct OrdinaryMessageText {
   std::u16string Name, Body;
   bool InheritedName = false, NameEnabled = false;
+  std::vector<TextQueueMarker> QueueMarkers;
 };
+// Shared parse-only representation. Timed reveal/lane consumption must be bound
+// before a frontend admits QueueMarkers; plain Split retains its current guard.
+OrdinaryMessageText ParseOrdinaryMessageControls(
+    std::u16string_view source, const TextFormatEnvironment& format);
 // Native16d16 ordinary name/body parsing before glyph layout. Inline directives
 // require the full control-tag parser and are rejected by this plain path.
 OrdinaryMessageText SplitOrdinaryMessageText(
