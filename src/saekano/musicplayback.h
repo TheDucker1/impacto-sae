@@ -46,7 +46,7 @@ class MusicPlayback {
 
 // On-demand voice.awb preparation on the same two channels as profile voices.
 // Text/actor actions and the frontend's update clock remain with their owner.
-class PlaybackOrdinaryVoice final : public OrdinaryVoicePreparation {
+class PlaybackOrdinaryVoice final : public OrdinaryVoiceOutput {
  public:
   PlaybackOrdinaryVoice(MusicPlayback& playback,
                         const std::filesystem::path& usrdir,
@@ -54,9 +54,10 @@ class PlaybackOrdinaryVoice final : public OrdinaryVoicePreparation {
   void Prepare(uint32_t channel, int16_t voiceId) override;
   void Start(uint32_t channel) override;
   void Stop(uint32_t channel) override;
-  bool Ready(uint32_t channel) const;
-  bool Playing(uint32_t channel) const;
-  int32_t Position(uint32_t channel) const;
+  void Update(uint64_t) override {}  // Frontend pumps the shared physical host.
+  bool Ready(uint32_t channel) const override;
+  bool Playing(uint32_t channel) const override;
+  int32_t Position(uint32_t channel) const override;
  private:
   MusicPlayback& playback_;
   std::shared_ptr<AwbBank> bank_;

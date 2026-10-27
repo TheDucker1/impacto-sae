@@ -1,5 +1,6 @@
 #include "scenemessage.h"
 #include <limits>
+#include <algorithm>
 
 namespace Impacto::Saekano {
 void InitializeFreshMessageOwner(SemanticState& owner) {
@@ -21,10 +22,10 @@ SceneMessageBackend::SceneMessageBackend(const TextFormatEnvironment& format,
 void SceneMessageBackend::BeginMessage(size_t command,
                                        const MessageCommand& message,
                                        size_t side, uint64_t now) {
-  if (side || message.Route || message.Selector || message.VoiceId >= 0 ||
+  if (side || message.Route || message.Selector ||
       message.CompletionPolicy)
     throw UnsupportedCommand(
-        "ordinary scene voice/async/selector/append/split text route is not "
+        "ordinary scene async/selector/append/split text route is not "
         "implemented");
   SceneMessageTextState next;
   next.Command = command;
@@ -32,9 +33,31 @@ void SceneMessageBackend::BeginMessage(size_t command,
     throw FormatError("ordinary message source exceeds native length");
   next.SourceUnits = uint32_t(message.Text.size());
   next.Epoch = now;
+  next.Speaker = message.SpeakerId;
   next.Parsed = SplitOrdinaryMessageText(message.Text, format_);
   next.Reveal.PrepareUtf16(next.Parsed.Body, format_, now);
-  next.Reveal.StartCharacters(interval_, now);
+  const ScriptVoiceEnvelope* envelope = nullptr;
+  if (message.VoiceId >= 0) {
+    if (!voices_) throw UnsupportedCommand("ordinary voice owner is not bound");
+    if (message.VoiceId > INT16_MAX)
+      throw FormatError("ordinary voice ID exceeds native signed16 catalog");
+    if (OrdinaryVoiceEligible(message.VoiceId, voices_->Ranges, voices_->Settings).Enabled) {
+      const auto found = std::find_if(voices_->Envelopes.begin(), voices_->Envelopes.end(),
+          [&](const auto& item) { return item.VoiceId == message.VoiceId; });
+      if (found == voices_->Envelopes.end() || found->Mouth.Duration < 0)
+        throw FormatError("ordinary voice envelope is unavailable");
+      envelope = &*found;
+      next.VoiceId = message.VoiceId;
+      next.VoiceDuration = uint32_t(envelope->Mouth.Duration);
+      (void)timing_.ForVoice(*next.VoiceDuration, textSpeed_);
+    }
+  }
+  if (envelope) {
+    voices_->Output.Update(now);
+    next.VoiceGate.Phase = 0;
+    next.VoiceGate.Slot = int32_t(PrepareOrdinaryVoice(
+        voices_->Queue, int16_t(message.VoiceId), true, voices_->Output));
+  } else next.Reveal.StartCharacters(interval_, now);
   if (AutoReveal) next.Reveal.Reveal(now);
   current_ = std::move(next);
   sample_ = now;
@@ -42,7 +65,8 @@ void SceneMessageBackend::BeginMessage(size_t command,
 }
 void SceneMessageBackend::UpdateMessage(uint64_t now) {
   if (!current_) return;
-  current_->Reveal.Update(now);
+  if (voices_) voices_->Output.Update(now);
+  if (current_->Reveal.Started) current_->Reveal.Update(now);
   sample_ = now;
 }
 bool SceneMessageBackend::MessageRevealed(size_t command, uint64_t now) {
@@ -71,7 +95,68 @@ bool SceneMessageBackend::MessageAdvanceAllowed(size_t command, uint64_t now) {
   message.Epoch = current_->Epoch;
   message.TextSpeed = textSpeed_;
   message.AutoSpeed = *autoSpeed_;
+  message.VoiceId = current_->VoiceId;
+  message.VoiceDuration = current_->VoiceDuration;
   return MessageAutoReady(timing_, message, now);
+}
+void SceneMessageBackend::BindVoiceOwner(SceneMessageVoiceOwner& owner) {
+  if (current_) throw UnsupportedCommand("cannot replace active message voice owner");
+  voices_ = &owner;
+}
+bool SceneMessageBackend::BeginMessageUpdate(size_t command, uint64_t now,
+                                             UpdateRoute route) {
+  if (!current_ || current_->Command != command)
+    throw UnsupportedCommand("scene message has not started");
+  if (current_->VoiceId < 0) return true;
+  if (route != UpdateRoute::Normal)
+    throw UnsupportedCommand("ordinary voiced skip/lane update is not bound");
+  if (!voices_) throw UnsupportedCommand("ordinary voice owner is unavailable");
+  voices_->Output.Update(now);
+  struct Gate final : OrdinaryVoiceServices {
+    SceneMessageVoiceOwner& Owner;
+    SceneMessageTextState& Message;
+    const TextFormatEnvironment& Format;
+    const TextTimingEnvironment& Timing;
+    uint8_t Speed;
+    uint64_t Now;
+    Gate(SceneMessageVoiceOwner& owner, SceneMessageTextState& message,
+         const TextFormatEnvironment& format, const TextTimingEnvironment& timing,
+         uint8_t speed, uint64_t now)
+        : Owner(owner), Message(message), Format(format), Timing(timing), Speed(speed), Now(now) {}
+    bool Ready(uint32_t c) override { return Owner.Output.Ready(c); }
+    bool Playing(uint32_t c) override { return Owner.Output.Playing(c); }
+    void Start(uint32_t c) override { Owner.Output.Start(c); }
+    int32_t Position(uint32_t c) override { return Owner.Output.Position(c); }
+    void BeginReveal(OrdinaryVoiceReveal kind) override {
+      if (kind == OrdinaryVoiceReveal::Fallback) {
+        Message.Reveal.PrepareUtf16(Message.Parsed.Body, Format, Now);
+        Message.Reveal.StartCharacters(200, Now);
+      } else if (kind == OrdinaryVoiceReveal::Voiced) {
+        Message.Reveal.Start(Timing.ForVoice(*Message.VoiceDuration, Speed), Now);
+        const auto envelope = std::find_if(Owner.Envelopes.begin(), Owner.Envelopes.end(),
+            [&](const auto& item) { return item.VoiceId == Message.VoiceId; });
+        if (envelope == Owner.Envelopes.end()) throw FormatError("ordinary voice envelope lost");
+        Message.Epoch = Now;
+        Owner.Mouth.Begin(Message.Speaker, envelope->Mouth, Now);
+      } else throw UnsupportedCommand("unexpected unvoiced gate callback");
+      Message.Epoch = Now;
+    }
+  } services(*voices_, *current_, format_, timing_, textSpeed_, now);
+  const auto update = UpdateOrdinaryVoice(current_->VoiceGate,
+                                          voices_->Queue.BaseChannel, services);
+  current_->AudioPosition = update.Position;
+  sample_ = now;
+  return !update.SkipTextUpdate;
+}
+void SceneMessageBackend::CompleteMessage(size_t command, uint64_t now) {
+  if (!current_ || current_->Command != command)
+    throw UnsupportedCommand("scene message has not started");
+  if (current_->VoiceId < 0) return;
+  if (!voices_) throw UnsupportedCommand("ordinary voice owner is unavailable");
+  voices_->Output.Update(now);
+  if (voices_->Settings.StopOnAdvance && current_->VoiceGate.Slot >= 0)
+    voices_->Output.Stop(voices_->Queue.BaseChannel + uint32_t(current_->VoiceGate.Slot));
+  voices_->Mouth.End(current_->Speaker);
 }
 void SceneMessageBackend::EndMessageUpdate(size_t command, uint64_t) {
   if (!current_ || current_->Command != command)
@@ -82,6 +167,13 @@ const SceneMessageTextState* SceneMessageBackend::CurrentMessage() const {
   return current_ ? &*current_ : nullptr;
 }
 void SceneMessageBackend::ResetMessages() {
+  if (voices_) {
+    voices_->Output.Stop(voices_->Queue.BaseChannel);
+    voices_->Output.Stop(voices_->Queue.BaseChannel + 1);
+    voices_->Queue.Prepared.clear();
+    if (current_ && current_->VoiceId >= 0) voices_->Mouth.End(current_->Speaker);
+    voices_ = nullptr;
+  }
   current_.reset();
   sample_ = 0;
   cursorVisible_ = false;

@@ -71,6 +71,13 @@ class OrdinaryVoicePreparation {
   virtual void Prepare(uint32_t channel, int16_t voiceId) = 0;
   virtual void Start(uint32_t channel) = 0;
 };
+class OrdinaryVoiceOutput : public OrdinaryVoicePreparation {
+ public:
+  virtual void Update(uint64_t now) = 0;
+  virtual bool Ready(uint32_t channel) const = 0;
+  virtual bool Playing(uint32_t channel) const = 0;
+  virtual int32_t Position(uint32_t channel) const = 0;
+};
 // Native1ad708: consume a matching prepared entry or stop/reprepare both slots,
 // start requested voice, and optionally prepare one next catalog entry.
 uint32_t PrepareOrdinaryVoice(OrdinaryVoiceQueue& state, int16_t voiceId,

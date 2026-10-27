@@ -11,8 +11,11 @@ void ClockedProfileVoice::Reset() {
   epoch_ = 0;
 }
 void ClockedProfileVoice::Prepare(Bytes encoded) {
-  auto voice = std::make_unique<HcaWaveReader>(std::move(encoded));
-  voice_ = std::move(voice);
+  Prepare(std::make_unique<HcaWaveReader>(std::move(encoded)));
+}
+void ClockedProfileVoice::Prepare(std::unique_ptr<HcaWaveReader> reader) {
+  if (!reader) throw FormatError("voice decoder is unavailable");
+  voice_ = std::move(reader);
   prepared_ = true;
   playing_ = false;
 }

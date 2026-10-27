@@ -550,6 +550,7 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
       return true;
     }
     if (command.AdvancePending) {
+      backend_.CompleteMessage(index, now);
       command.AdvancePending = false;
       messageContext_.PreviousCompletionPolicy = command.Message->CompletionPolicy;
       // Main normal84964/skip857d6 reset C1490 only on actual completion;
@@ -557,6 +558,7 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
       if (!lane) state_.FirstAsyncCommandIndex = -1;
       return true;
     }
+    if (!backend_.BeginMessageUpdate(index, now, input.Route)) return false;
     if (!backend_.MessageRevealed(index, now)) {
       if (input.Advance || input.Route == UpdateRoute::Skipping) backend_.RevealMessage(index);
       if (input.Route == UpdateRoute::Normal) backend_.EndMessageUpdate(index, now);

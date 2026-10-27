@@ -22,6 +22,7 @@ class ClockedProfileVoice final : public ProfileVoiceOutput {
  public:
   void Reset() override;
   void Prepare(Bytes encoded) override;
+  void Prepare(std::unique_ptr<HcaWaveReader> reader);
   void Start(uint64_t now) override;
   void Stop() override;
   bool Stopped() const override;

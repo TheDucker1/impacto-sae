@@ -38,6 +38,9 @@ class VmBackend {
   virtual bool MessageRevealed(size_t command, uint64_t now) = 0;
   virtual bool MessageAdvanceAllowed(size_t command, uint64_t now) = 0;
   virtual void RevealMessage(size_t command) = 0;
+  // Native prepared-voice early return precedes input/reveal/auto decisions.
+  virtual bool BeginMessageUpdate(size_t, uint64_t, UpdateRoute) { return true; }
+  virtual void CompleteMessage(size_t, uint64_t) {}
   // Normal message update tail, after reveal/input/auto decisions. Render-only
   // sampling and the next-update completion dispatch do not publish this flag.
   virtual void EndMessageUpdate(size_t, uint64_t) {}
