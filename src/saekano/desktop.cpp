@@ -969,7 +969,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         throw UnsupportedCommand("scene per-frame command budget exceeded");
     }
     for (const auto& request : vm->TakeEvents()) {
-      playback.Submit(request);
+      if (!backend.ConsumeVoiceEvent(request)) playback.Submit(request);
       if (capture)
         events << "{\"kind\":\"audio\",\"frame\":" << frame
                << ",\"now\":" << now << ",\"event\":" << int(request.Kind)

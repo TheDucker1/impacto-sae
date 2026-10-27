@@ -71,6 +71,10 @@ class OrdinaryVoicePreparation {
   virtual void Prepare(uint32_t channel, int16_t voiceId) = 0;
   virtual void Start(uint32_t channel) = 0;
 };
+// External stops invalidate lookahead entries along with their physical slot.
+// Otherwise the native queue's cache-match path starts a retired handle.
+void StopOrdinaryVoiceChannel(OrdinaryVoiceQueue& queue,
+                               OrdinaryVoicePreparation& output, uint32_t channel);
 class OrdinaryVoiceOutput : public OrdinaryVoicePreparation {
  public:
   virtual void Update(uint64_t now) = 0;

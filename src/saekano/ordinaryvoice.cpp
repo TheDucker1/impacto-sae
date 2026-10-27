@@ -141,6 +141,15 @@ OrdinaryVoiceUpdate UpdateOrdinaryVoice(OrdinaryVoiceGate& state,
   return result;
 }
 OrdinaryVoiceQueue MakeFreshOrdinaryVoiceQueue() { return {{}, 7, 0, {}}; }
+void StopOrdinaryVoiceChannel(OrdinaryVoiceQueue& queue,
+                               OrdinaryVoicePreparation& output, uint32_t channel) {
+  if (uint32_t(channel - queue.BaseChannel) > 1)
+    throw UnsupportedCommand("external stop outside ordinary voice slots");
+  output.Stop(channel);
+  std::erase_if(queue.Prepared, [&](const auto& prepared) {
+    return queue.BaseChannel + prepared.Slot == channel;
+  });
+}
 uint32_t PrepareOrdinaryVoice(OrdinaryVoiceQueue& state, int16_t voiceId,
                              bool lookahead,
                              OrdinaryVoicePreparation& services) {

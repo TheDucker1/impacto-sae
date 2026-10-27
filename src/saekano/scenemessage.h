@@ -54,6 +54,7 @@ class SceneMessageBackend : public HeadlessBackend {
   bool BeginMessageUpdate(size_t command, uint64_t now, UpdateRoute route) override;
   void CompleteMessage(size_t command, uint64_t now) override;
   void BindVoiceOwner(SceneMessageVoiceOwner& owner);
+  bool ConsumeVoiceEvent(const GameEvent& event);
   void UpdateMessage(uint64_t now);
   bool CursorVisible() const { return cursorVisible_; }
   const SceneMessageTextState* CurrentMessage() const;

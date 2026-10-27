@@ -162,7 +162,10 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         if (event.Boundary == VmBoundary::Ended) { ended = true; break; }
         if (work == 255) throw UnsupportedCommand("continuation per-frame command budget exceeded");
       }
-      audioEvents += vm->TakeEvents().size();
+      for (const auto& event : vm->TakeEvents()) {
+        ++audioEvents;
+        (void)backend.ConsumeVoiceEvent(event);
+      }
       vm->UpdateSpriteFrames(uint32_t(now));
       for (const auto& [id, actor] : vm->State().Characters)
         if (actor.Pose.Ready && actor.Tweens[size_t(CharacterTween::Opacity)].Current != 0) mouths.at(id).Update(now);

@@ -100,6 +100,8 @@ int RunProfileVoiceSession(const std::filesystem::path& usrdir,
                            const std::filesystem::path& captureDirectory = {});
 int RunOrdinaryVoiceSession(const std::filesystem::path& usrdir,
                             const std::filesystem::path& captureDirectory);
+int RunOrdinaryVoiceStopSession(const std::filesystem::path& usrdir,
+                               const std::filesystem::path& captureDirectory);
 int RunUiSoundSession(const std::filesystem::path& usrdir,
                       const std::filesystem::path& captureDirectory);
 int RunProfileServiceSession(

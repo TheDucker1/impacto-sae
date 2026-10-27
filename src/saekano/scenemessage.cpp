@@ -104,6 +104,13 @@ void SceneMessageBackend::BindVoiceOwner(SceneMessageVoiceOwner& owner) {
   if (current_) throw UnsupportedCommand("cannot replace active message voice owner");
   voices_ = &owner;
 }
+bool SceneMessageBackend::ConsumeVoiceEvent(const GameEvent& event) {
+  if (event.Kind != GameEventKind::StopChannel) return false;
+  if (!voices_ || event.Parameter != 0)
+    throw UnsupportedCommand("ordinary voice stop owner is missing or fade is unsupported");
+  StopOrdinaryVoiceChannel(voices_->Queue, voices_->Output, uint32_t(event.Id));
+  return true;
+}
 bool SceneMessageBackend::BeginMessageUpdate(size_t command, uint64_t now,
                                              UpdateRoute route) {
   if (!current_ || current_->Command != command)

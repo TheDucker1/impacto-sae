@@ -804,6 +804,64 @@ int RunMusicSession(const std::filesystem::path& usrdir, uint32_t track,
     return 1;
   }
 }
+int RunOrdinaryVoiceStopSession(const std::filesystem::path& usrdir,
+                               const std::filesystem::path& captureDirectory) {
+  bool created = false;
+  try {
+    CreateCaptureDirectory(usrdir, captureDirectory); created = true;
+    ArchiveBgmResources resources(usrdir);
+    if (!SDL_Init(SDL_INIT_EVENTS)) throw FormatError(SDL_GetError());
+    struct Cleanup { ~Cleanup() { SDL_Quit(); } } cleanup;
+    MusicPlayback playback(resources, true);
+    PlaybackOrdinaryVoice voice(playback, usrdir, 10, 1.0f);
+    auto queue = MakeFreshOrdinaryVoiceQueue();
+    queue.Catalog = {7490, 7491, 7492};
+    (void)PrepareOrdinaryVoice(queue, 7490, true, voice);
+    // Reproduce the retired-cache bug before exercising the corrected owner.
+    voice.Stop(7); voice.Stop(8);
+    const auto staleSlot = PrepareOrdinaryVoice(queue, 7491, true, voice);
+    if (voice.Playing(queue.BaseChannel + staleSlot))
+      throw FormatError("stale prepared-voice reproduction unexpectedly played");
+    voice.Stop(7); voice.Stop(8);
+    queue = MakeFreshOrdinaryVoiceQueue(); queue.Catalog = {7490, 7491, 7492};
+    (void)PrepareOrdinaryVoice(queue, 7490, true, voice);
+    StopOrdinaryVoiceChannel(queue, voice, 7);
+    StopOrdinaryVoiceChannel(queue, voice, 8);
+    if (!queue.Prepared.empty() || voice.Ready(7) || voice.Ready(8))
+      throw FormatError("external stop retained lookahead");
+    std::vector<int16_t> samples;
+    uint32_t lastChannel = 7;
+    for (const auto id : {7491, 7492}) {
+      const auto slot = PrepareOrdinaryVoice(queue, int16_t(id), true, voice);
+      const auto channel = queue.BaseChannel + slot;
+      lastChannel = channel;
+      if (!voice.Playing(channel)) throw FormatError("stopped lookahead did not reprepare");
+      const auto old = samples.size(); samples.resize(old + 9600);
+      playback.Render(std::span(samples).subspan(old));
+      if (!voice.Playing(channel) || voice.Position(channel) < 95)
+        throw FormatError("recovered voice did not advance");
+      if (id == 7491) {
+        StopOrdinaryVoiceChannel(queue, voice, queue.BaseChannel + (slot ^ 1));
+        if (!queue.Prepared.empty() || !voice.Playing(channel))
+          throw FormatError("pending-slot stop affected current voice");
+      }
+    }
+    bool rejected = false;
+    try { StopOrdinaryVoiceChannel(queue, voice, 9); }
+    catch (const UnsupportedCommand&) { rejected = true; }
+    if (!rejected || !voice.Playing(lastChannel)) throw FormatError("invalid channel stop changed playback");
+    SaveWav(captureDirectory / "recovered-voices.wav", samples);
+    std::ofstream report(captureDirectory / "result.json");
+    report << "{\"passed\":true,\"stale_cache_failure_reproduced\":true,"
+              "\"recovered_voice_ids\":[7491,7492],\"pending_stop_preserves_current\":true,"
+              "\"invalid_channel_preserves_current\":true,\"pcm_frames\":9600}\n";
+    return 0;
+  } catch (const std::exception& error) {
+    if (created) { std::ofstream out(captureDirectory / "error.txt"); out << error.what() << '\n'; }
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Saekano voice stop: %s", error.what());
+    return 1;
+  }
+}
 int RunOrdinaryVoiceSession(const std::filesystem::path& usrdir,
                             const std::filesystem::path& captureDirectory) {
   bool created = false;
