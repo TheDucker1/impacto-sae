@@ -751,6 +751,19 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   const auto drawSprite = [&](const UiSpriteBlit& sprite) {
     renderer.DrawQuad(sprite, renderer.Textures.at(sprite.Texture), false);
   };
+  backend.ActivateLane = [&](uint32_t lane, uint64_t time, int32_t position) {
+    const auto before = vm->State().LaneCommandIndex.at(lane);
+    vm->ActivateLane(lane);
+    if (capture) {
+      events << "{\"kind\":\"inline_queue\",\"now\":" << time << ",\"command\":"
+             << vm->State().CurrentCommandIndex << ",\"lane\":" << lane << ",\"voice_position\":"
+             << position << ",\"before\":" << before << ",\"after\":"
+             << vm->State().LaneCommandIndex.at(lane) << ",\"queued_commands\":[";
+      const auto queued = vm->QueuedLaneCommands(lane);
+      for (size_t i = 0; i < queued.size(); ++i) { if (i) events << ','; events << queued[i]; }
+      events << "]}\n";
+    }
+  };
   const auto upload = [&](ProfileTextureKey key, const ImagePixels& pixels) {
     if (!renderer.Textures.contains(key)) renderer.Upload(key, pixels);
   };
@@ -999,6 +1012,21 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         mouths.at(id).Update(now);
     backend.UpdateMessage(now);
     const auto& state = vm->State();
+    if (capture && captureActive) {
+      const auto* text = backend.CurrentMessage();
+      if (text && !text->Parsed.QueueMarkers.empty() && text->Reveal.Started &&
+          state.CurrentCommandIndex == int32_t(text->Command)) {
+        events << "{\"kind\":\"inline_reveal\",\"now\":" << now << ",\"command\":" << text->Command
+               << ",\"voice_position\":" << text->AudioPosition << ",\"epoch\":" << text->Epoch
+               << ",\"segment\":" << text->Reveal.SegmentIndex << ",\"revealed\":"
+               << (text->Reveal.Revealed ? "true" : "false") << ",\"glyphs\":[";
+        for (size_t i = 0; i < text->Reveal.Glyphs.size(); ++i) {
+          if (i) events << ','; const auto& glyph = text->Reveal.Glyphs[i];
+          events << '[' << int(glyph.Enabled) << ',' << glyph.Alpha.Current << ']';
+        }
+        events << "]}\n";
+      }
+    }
     if (!state.ScreenFilter.Mode || !state.ScreenFilter.Intensity)
       throw UnsupportedCommand("scene screen filter state is unknown");
     // Primary updates before command work; button widgets update every variant

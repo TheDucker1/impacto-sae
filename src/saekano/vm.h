@@ -101,6 +101,7 @@ class VirtualMachine {
                        const ScriptReadHistory* currentFileHistory) const;
   void SetGauge(bool battle, int32_t value);
   void ActivateLane(size_t lane);
+  std::span<const size_t> QueuedLaneCommands(size_t lane) const { return dispatcher_.LaneQueues.at(lane); }
   void RequestLaneFlush() { dispatcher_.FlushLanes = true; }
   void SetMessageContext(MessageRuntimeContext context);
   void SeedRandom(uint32_t seed);

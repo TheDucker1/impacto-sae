@@ -366,6 +366,25 @@ void VoiceTextReveal::Start(VoiceTextDurations durations, uint64_t now) {
   if (!Prepared || Started)
     throw UnsupportedCommand(
         "text requires fresh preparation before reveal start");
+  std::vector<Segment> segments;
+  int32_t previousGlyph = 0, previousTime = 0;
+  for (const auto& marker : QueueMarkers) {
+    if (durations.Selected && uint32_t(marker.VoiceTime) > durations.Selected)
+      throw UnsupportedCommand("queue threshold exceeds selected text duration");
+    const auto glyphs = marker.Before - previousGlyph;
+    const auto duration = marker.VoiceTime - previousTime;
+    if (durations.Selected && !duration && glyphs)
+      throw UnsupportedCommand("zero-time queued glyph segment is not verified");
+    segments.push_back({0, glyphs, duration, previousTime});
+    previousGlyph = marker.Before; previousTime = marker.VoiceTime;
+  }
+  if (!QueueMarkers.empty()) {
+    segments.push_back({0, int32_t(Glyphs.size()) - previousGlyph,
+        std::bit_cast<int32_t>(durations.Selected - uint32_t(previousTime)), previousTime});
+    if (durations.Selected && !segments.back().Duration && segments.back().GlyphCount)
+      throw UnsupportedCommand("zero-time queued tail is not verified");
+  }
+  Segments = std::move(segments);
   Durations = durations;
   Ratio = durations.Selected
               ? float(durations.Reference) / float(durations.Selected)
@@ -373,22 +392,51 @@ void VoiceTextReveal::Start(VoiceTextDurations durations, uint64_t now) {
   Epoch = now;
   Started = true;
 }
+void VoiceTextReveal::ConfigureQueueMarkers(std::span<const TextQueueMarker> markers) {
+  if (!Prepared || Started) throw UnsupportedCommand("queue markers need fresh prepared text");
+  int32_t before = 0, time = 0;
+  for (const auto& marker : markers) {
+    if (marker.Before < before || size_t(marker.Before) >= Glyphs.size() ||
+        marker.VoiceTime < time || marker.Lane >= 5)
+      throw UnsupportedCommand("invalid or nonmonotonic text queue marker");
+    before = marker.Before; time = marker.VoiceTime;
+  }
+  if (!markers.empty() && Lines.size() != 1)
+    throw UnsupportedCommand("queued explicit line breaks require source-index mapping");
+  QueueMarkers.assign(markers.begin(), markers.end());
+  QueueFired.assign(markers.size(), false);
+  SegmentIndex = 0;
+}
 void VoiceTextReveal::StartCharacters(uint32_t interval, uint64_t now) {
   Start({interval, interval}, now);
   PerCharacter = true;
   Ratio = 1.0f;
 }
-void VoiceTextReveal::Update(uint64_t now) {
+void VoiceTextReveal::Update(uint64_t now, int32_t voicePosition) {
   if (!Started) throw UnsupportedCommand("text reveal has not started");
   if (Revealed) return;
   int32_t count = int32_t(Glyphs.size());
   const bool instant = Durations.Selected == 0;
+  const auto elapsed = voicePosition >= 0 ? uint32_t(voicePosition) : uint32_t(now - Epoch);
   if (!instant && PerCharacter) {
     count = std::bit_cast<int32_t>(uint32_t(now - Epoch) / Durations.Selected);
   } else if (!instant) {
-    if (Ratio != 0) {
+    if (!Segments.empty()) {
+      if (SegmentIndex >= Segments.size()) throw FormatError("text queue segment outside vector");
+      auto& segment = Segments[SegmentIndex];
+      const auto delta = elapsed >= uint32_t(segment.Offset) ? elapsed - uint32_t(segment.Offset) : 0u;
+      if (Ratio == 0) segment.Current = segment.GlyphCount;
+      else if (segment.Duration == 0) segment.Current = 0;
+      else {
+        const float quotient = float(delta * uint32_t(segment.GlyphCount)) / (float(segment.Duration) * Ratio);
+        segment.Current = quotient >= 2147483648.0f ? std::numeric_limits<int32_t>::max() : int32_t(quotient);
+      }
+      uint32_t sum = 0;
+      for (size_t i = 0; i <= SegmentIndex; ++i) sum += uint32_t(Segments[i].Current);
+      count = std::bit_cast<int32_t>(sum);
+    } else if (Ratio != 0) {
       // Preserve native low32 multiplication before conversion to float.
-      const auto product = uint32_t(now - Epoch) * uint32_t(Glyphs.size());
+      const auto product = elapsed * uint32_t(Glyphs.size());
       const float quotient =
           float(product) / (float(Durations.Selected) * Ratio);
       count = quotient >= 2147483648.0f ? std::numeric_limits<int32_t>::max()
@@ -410,6 +458,18 @@ void VoiceTextReveal::Update(uint64_t now) {
     finished = finished && glyph.Alpha.Finished();
   }
   Revealed = reached && finished;
+}
+std::vector<uint32_t> VoiceTextReveal::ConsumeVoiceQueue(int32_t voicePosition) {
+  std::vector<uint32_t> lanes;
+  if (!Started || voicePosition < 0) return lanes;
+  for (size_t i = 0; i < QueueMarkers.size(); ++i) {
+    if (!QueueFired[i] && voicePosition >= QueueMarkers[i].VoiceTime) {
+      QueueFired[i] = true;
+      ++SegmentIndex;
+      lanes.push_back(QueueMarkers[i].Lane);
+    }
+  }
+  return lanes;
 }
 void VoiceTextReveal::Reveal(uint64_t now) {
   if (!Prepared) throw UnsupportedCommand("text has not been prepared");

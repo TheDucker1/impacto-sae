@@ -107,6 +107,16 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   std::set<uint16_t> opcodes;
   size_t messages = 0, completedMessages = 0, boundaries = 0, audioEvents = 0, spriteSubmissions = 0;
   uint64_t now = 0;
+  std::map<uint32_t, int32_t> inlineLanes;
+  backend.ActivateLane = [&](uint32_t lane, uint64_t time, int32_t position) {
+    const auto before = vm->State().LaneCommandIndex.at(lane);
+    vm->ActivateLane(lane);
+    const auto after = vm->State().LaneCommandIndex.at(lane);
+    inlineLanes[lane] = after;
+    out << "{\"kind\":\"inline_queue\",\"now\":" << time << ",\"command\":"
+        << vm->State().CurrentCommandIndex << ",\"lane\":" << lane << ",\"voice_position\":"
+        << position << ",\"before\":" << before << ",\"after\":" << after << "}\n";
+  };
   std::optional<std::pair<int32_t, uint32_t>> previousFilter;
   const auto finish = [&](std::string_view reason, bool success) {
     out << "{\"kind\":\"result\",\"success\":" << (success ? "true" : "false") << ",\"reason\":";
@@ -172,6 +182,14 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
       for (const auto& event : vm->TakeEvents()) {
         ++audioEvents;
         (void)backend.ConsumeVoiceEvent(event);
+      }
+      for (auto& [lane, previous] : inlineLanes) {
+        const auto cursor = vm->State().LaneCommandIndex.at(lane);
+        if (cursor != previous) {
+          out << "{\"kind\":\"inline_lane_progress\",\"now\":" << now << ",\"lane\":"
+              << lane << ",\"cursor\":" << cursor << "}\n";
+          previous = cursor;
+        }
       }
       vm->UpdateSpriteFrames(uint32_t(now));
       for (const auto& [id, actor] : vm->State().Characters)

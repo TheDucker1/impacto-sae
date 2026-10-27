@@ -79,12 +79,19 @@ OrdinaryMessageText SplitOrdinaryMessageText(
 // Original profile responses use plain text and the authored line-break marker.
 // Font metrics/wrapping are separate; they do not alter this glyph count/order.
 struct VoiceTextReveal {
+  struct Segment {
+    int32_t Current = 0, GlyphCount = 0, Duration = 0, Offset = 0;
+  };
   bool Prepared = false, Started = false, Revealed = false,
        PerCharacter = false;
   std::u16string Text;
   std::vector<std::u16string> Lines;
   std::vector<TextGlyphReveal> Glyphs;
   std::vector<TextColorRange> Colors;
+  std::vector<TextQueueMarker> QueueMarkers;
+  std::vector<bool> QueueFired;
+  std::vector<Segment> Segments;
+  size_t SegmentIndex = 0;
   VoiceTextDurations Durations;
   float Ratio = 0;
   uint64_t Epoch = 0;
@@ -95,7 +102,10 @@ struct VoiceTextReveal {
                     bool fontTags = false);
   void Start(VoiceTextDurations durations, uint64_t now);
   void StartCharacters(uint32_t interval, uint64_t now);
-  void Update(uint64_t now);
+  void ConfigureQueueMarkers(std::span<const TextQueueMarker> markers);
+  void Update(uint64_t now, int32_t voicePosition = -1);
+  // Called after Update, including when text has been manually revealed.
+  std::vector<uint32_t> ConsumeVoiceQueue(int32_t voicePosition);
   void Reveal(uint64_t now);
 };
 // Prepared mode0/mode1 glyphs, per-glyph alpha and FONT RGB ranges. Layout and

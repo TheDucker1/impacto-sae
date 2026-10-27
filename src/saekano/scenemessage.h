@@ -3,6 +3,7 @@
 #include "headlessbackend.h"
 #include "ordinaryvoice.h"
 #include "resources.h"
+#include <functional>
 
 namespace Impacto::Saekano {
 // Explicit fresh settings7350 only. Never apply on manager reset or restore.
@@ -35,6 +36,7 @@ struct SceneMessageTextState {
   std::optional<uint32_t> VoiceDuration;
   OrdinaryVoiceGate VoiceGate{-2, -1};
   int32_t AudioPosition = -1;
+  std::optional<uint64_t> LastRevealSample;
 };
 // Shared frontend text lifecycle. This first ordinary route is primary,
 // selector0, completion-policy0. Voiced normal updates require an explicitly
@@ -42,6 +44,7 @@ struct SceneMessageTextState {
 // Font/layout, input polling and audio services belong to the owning frontend.
 class SceneMessageBackend : public HeadlessBackend {
  public:
+  std::function<void(uint32_t, uint64_t, int32_t)> ActivateLane;
   SceneMessageBackend(const TextFormatEnvironment& format,
                       const TextTimingEnvironment& timing, uint8_t textSpeed,
                       std::optional<uint8_t> autoSpeed = std::nullopt);

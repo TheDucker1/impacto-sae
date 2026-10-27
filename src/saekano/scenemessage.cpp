@@ -34,8 +34,11 @@ void SceneMessageBackend::BeginMessage(size_t command,
   next.SourceUnits = uint32_t(message.Text.size());
   next.Epoch = now;
   next.Speaker = message.SpeakerId;
-  next.Parsed = SplitOrdinaryMessageText(message.Text, format_);
+  next.Parsed = ParseOrdinaryMessageControls(message.Text, format_);
   next.Reveal.PrepareUtf16(next.Parsed.Body, format_, now);
+  next.Reveal.ConfigureQueueMarkers(next.Parsed.QueueMarkers);
+  if (!next.Parsed.QueueMarkers.empty() && !ActivateLane)
+    throw UnsupportedCommand("inline queue lane consumer is not bound");
   const ScriptVoiceEnvelope* envelope = nullptr;
   if (message.VoiceId >= 0) {
     if (!voices_) throw UnsupportedCommand("ordinary voice owner is not bound");
@@ -52,6 +55,8 @@ void SceneMessageBackend::BeginMessage(size_t command,
       (void)timing_.ForVoice(*next.VoiceDuration, textSpeed_);
     }
   }
+  if (!next.Parsed.QueueMarkers.empty() && !envelope)
+    throw UnsupportedCommand("timed inline queue requires an enabled ordinary voice");
   if (envelope) {
     voices_->Output.Update(now);
     voices_->Mouth.End(message.SpeakerId);  // Native setup843d4, before audio replacement.
@@ -67,13 +72,20 @@ void SceneMessageBackend::BeginMessage(size_t command,
 void SceneMessageBackend::UpdateMessage(uint64_t now) {
   if (!current_) return;
   if (voices_) voices_->Output.Update(now);
-  if (current_->Reveal.Started) current_->Reveal.Update(now);
+  if (current_->Reveal.Started && current_->LastRevealSample != now) {
+    current_->Reveal.Update(now, current_->AudioPosition);
+    current_->LastRevealSample = now;
+  }
   sample_ = now;
 }
 bool SceneMessageBackend::MessageRevealed(size_t command, uint64_t now) {
   if (!current_ || current_->Command != command)
     throw UnsupportedCommand("scene message has not started");
   UpdateMessage(now);
+  for (const auto lane : current_->Reveal.ConsumeVoiceQueue(current_->AudioPosition)) {
+    if (!ActivateLane) throw UnsupportedCommand("inline queue lane consumer was lost");
+    ActivateLane(lane, now, current_->AudioPosition);
+  }
   if (current_->Reveal.Revealed) cursorVisible_ = true;
   return current_->Reveal.Revealed;
 }
@@ -137,6 +149,8 @@ bool SceneMessageBackend::BeginMessageUpdate(size_t command, uint64_t now,
     int32_t Position(uint32_t c) override { return Owner.Output.Position(c); }
     void BeginReveal(OrdinaryVoiceReveal kind) override {
       if (kind == OrdinaryVoiceReveal::Fallback) {
+        if (!Message.Parsed.QueueMarkers.empty())
+          throw UnsupportedCommand("voiced inline queue fallback is not bound");
         Message.Reveal.PrepareUtf16(Message.Parsed.Body, Format, Now);
         Message.Reveal.StartCharacters(200, Now);
       } else if (kind == OrdinaryVoiceReveal::Voiced) {
