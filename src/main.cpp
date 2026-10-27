@@ -217,6 +217,13 @@ int main(int argc, char* argv[]) {
         "Usage: --saekano-profile-service USRDIR SCENE ORDINAL VOLUME [--capture DIRECTORY]\n");
     return 1;
   }
+  if (argc >= 2 && std::string_view(argv[1]) == "--saekano-ordinary-voice") {
+    if (argc == 5 && std::string_view(argv[3]) == "--capture")
+      return Saekano::RunOrdinaryVoiceSession(argv[2], argv[4]);
+    ImpLog(LogLevel::Error, LogChannel::General,
+           "Usage: --saekano-ordinary-voice USRDIR --capture DIRECTORY\n");
+    return 1;
+  }
   if (argc >= 2 && std::string_view(argv[1]) == "--saekano-profile-voice") {
     uint32_t character = 0, entry = 0;
     if (argc == 5 || (argc == 7 && std::string_view(argv[5]) == "--capture")) {

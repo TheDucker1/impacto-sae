@@ -2,6 +2,7 @@
 
 #include "commands.h"
 #include "profilevoiceoutput.h"
+#include "ordinaryvoice.h"
 
 namespace Impacto::Saekano {
 class SystemSoundAssets;
@@ -30,10 +31,36 @@ class MusicPlayback {
   void ResetProfileVoice();
   bool ProfileVoiceStopped() const;
   std::optional<float> ProfileVoicePosition() const;
+  void PrepareOrdinaryVoice(uint32_t channel, uint32_t voiceId,
+                            std::unique_ptr<HcaWaveReader> reader, float gain);
+  void StartOrdinaryVoice(uint32_t channel);
+  void StopOrdinaryVoice(uint32_t channel);
+  bool OrdinaryVoiceReady(uint32_t channel) const;
+  bool OrdinaryVoicePlaying(uint32_t channel) const;
+  int32_t OrdinaryVoicePosition(uint32_t channel) const;  // Milliseconds, or-1.
 
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
+};
+
+// On-demand voice.awb preparation on the same two channels as profile voices.
+// Text/actor actions and the frontend's update clock remain with their owner.
+class PlaybackOrdinaryVoice final : public OrdinaryVoicePreparation {
+ public:
+  PlaybackOrdinaryVoice(MusicPlayback& playback,
+                        const std::filesystem::path& usrdir,
+                        uint8_t volume, float coefficient);
+  void Prepare(uint32_t channel, int16_t voiceId) override;
+  void Start(uint32_t channel) override;
+  void Stop(uint32_t channel) override;
+  bool Ready(uint32_t channel) const;
+  bool Playing(uint32_t channel) const;
+  int32_t Position(uint32_t channel) const;
+ private:
+  MusicPlayback& playback_;
+  std::shared_ptr<AwbBank> bank_;
+  float gain_;
 };
 
 // Uses the same device/channel as BGM/SE and the existing PC HCA stream.
@@ -66,6 +93,8 @@ int RunMusicSession(const std::filesystem::path& usrdir, uint32_t track,
 int RunProfileVoiceSession(const std::filesystem::path& usrdir,
                            uint32_t character, uint32_t entry,
                            const std::filesystem::path& captureDirectory = {});
+int RunOrdinaryVoiceSession(const std::filesystem::path& usrdir,
+                            const std::filesystem::path& captureDirectory);
 int RunUiSoundSession(const std::filesystem::path& usrdir,
                       const std::filesystem::path& captureDirectory);
 int RunProfileServiceSession(

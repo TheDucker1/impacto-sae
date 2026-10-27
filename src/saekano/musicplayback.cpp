@@ -179,6 +179,8 @@ struct MusicPlayback::Impl {
   SystemSoundAssets* UiSounds = nullptr;
   float UiSoundGain = 0;
   std::unique_ptr<HcaPlaybackStream> PreparedProfileVoice;
+  std::array<std::unique_ptr<HcaPlaybackStream>, 2> PreparedOrdinaryVoices;
+  std::array<bool, 2> HasOrdinaryVoice{};
   bool HasProfileVoice = false;
   float OldMaster = Audio::MasterVolume;
   float OldGroup = Audio::GroupVolumes[Audio::ACG_BGM];
@@ -327,7 +329,7 @@ void MusicPlayback::Submit(const GameEvent& event) {
     if (event.Parameter || (event.Id != 7 && event.Id != 8))
       throw UnsupportedCommand(
           "native channel stop outside bound voice7/8 or nonzero fade");
-    (event.Id == 7 ? impl_->ProfileVoice : impl_->SecondaryVoice)->Stop(0);
+    StopOrdinaryVoice(uint32_t(event.Id));
   } else
     throw UnsupportedCommand("Saekano audio host cannot consume event kind " +
                              std::to_string(int(event.Kind)) + " id " +
@@ -368,6 +370,8 @@ void MusicPlayback::PrepareProfileVoice(Bytes encoded, float gain) {
   if (!std::isfinite(gain) || gain < 0 || gain > 1)
     throw FormatError("profile voice gain outside supported range");
   auto stream = std::make_unique<HcaPlaybackStream>(std::move(encoded));
+  impl_->PreparedOrdinaryVoices[0].reset();
+  impl_->HasOrdinaryVoice[0] = false;
   impl_->ProfileVoice->Stop(0);
   impl_->ProfileVoice->SetVolume(gain);
   impl_->PreparedProfileVoice = std::move(stream);
@@ -397,6 +401,92 @@ bool MusicPlayback::ProfileVoiceStopped() const {
 std::optional<float> MusicPlayback::ProfileVoicePosition() const {
   if (!impl_->HasProfileVoice) return std::nullopt;
   return impl_->ProfileVoice->PositionInSeconds();
+}
+namespace {
+size_t OrdinaryVoiceSlot(uint32_t channel) {
+  if (channel != 7 && channel != 8)
+    throw UnsupportedCommand("ordinary voice channel outside7/8");
+  return size_t(channel - 7);
+}
+}  // namespace
+void MusicPlayback::PrepareOrdinaryVoice(
+    uint32_t channel, uint32_t voiceId,
+    std::unique_ptr<HcaWaveReader> reader, float gain) {
+  const auto slot = OrdinaryVoiceSlot(channel);
+  if (!reader || !std::isfinite(gain) || gain < 0 || gain > 1)
+    throw FormatError("invalid ordinary voice preparation");
+  if (voiceId > uint32_t(INT16_MAX)) throw FormatError("ordinary voice ID exceeds slot catalog");
+  auto stream = std::make_unique<HcaPlaybackStream>(std::move(reader), int32_t(voiceId), "voice.awb");
+  auto& output = slot ? impl_->SecondaryVoice : impl_->ProfileVoice;
+  output->Stop(0);
+  output->SetVolume(gain);
+  if (!slot) {
+    impl_->PreparedProfileVoice.reset();
+    impl_->HasProfileVoice = false;
+  }
+  impl_->PreparedOrdinaryVoices[slot] = std::move(stream);
+  impl_->HasOrdinaryVoice[slot] = true;
+  AlCheck("ordinary voice preparation");
+}
+void MusicPlayback::StartOrdinaryVoice(uint32_t channel) {
+  const auto slot = OrdinaryVoiceSlot(channel);
+  auto& output = slot ? impl_->SecondaryVoice : impl_->ProfileVoice;
+  if (impl_->PreparedOrdinaryVoices[slot])
+    output->Play(std::move(impl_->PreparedOrdinaryVoices[slot]), false, 0);
+  else if (impl_->HasOrdinaryVoice[slot]) output->Resume();
+  AlCheck("ordinary voice start");
+}
+void MusicPlayback::StopOrdinaryVoice(uint32_t channel) {
+  const auto slot = OrdinaryVoiceSlot(channel);
+  (slot ? impl_->SecondaryVoice : impl_->ProfileVoice)->Stop(0);
+  impl_->PreparedOrdinaryVoices[slot].reset();
+  impl_->HasOrdinaryVoice[slot] = false;
+  if (!slot) impl_->PreparedProfileVoice.reset();
+  AlCheck("ordinary voice stop");
+}
+bool MusicPlayback::OrdinaryVoiceReady(uint32_t channel) const {
+  return bool(impl_->PreparedOrdinaryVoices[OrdinaryVoiceSlot(channel)]);
+}
+bool MusicPlayback::OrdinaryVoicePlaying(uint32_t channel) const {
+  const auto slot = OrdinaryVoiceSlot(channel);
+  return impl_->HasOrdinaryVoice[slot] &&
+         (slot ? impl_->SecondaryVoice : impl_->ProfileVoice)->GetState() == Audio::ACS_Playing;
+}
+int32_t MusicPlayback::OrdinaryVoicePosition(uint32_t channel) const {
+  const auto slot = OrdinaryVoiceSlot(channel);
+  if (!OrdinaryVoicePlaying(channel)) return -1;
+  const auto seconds =
+      (slot ? impl_->SecondaryVoice : impl_->ProfileVoice)->PositionInSeconds();
+  if (!std::isfinite(seconds) || seconds < 0 || seconds >= 2147483.0f)
+    throw FormatError("ordinary voice position outside supported range");
+  return int32_t(seconds * 1000.0f);
+}
+PlaybackOrdinaryVoice::PlaybackOrdinaryVoice(MusicPlayback& playback,
+    const std::filesystem::path& usrdir, uint8_t volume, float coefficient)
+    : playback_(playback), bank_(std::make_shared<AwbBank>(usrdir / "voice.awb")),
+      gain_(ProfileVoiceGain(volume, coefficient)) {
+  if (!std::isfinite(gain_) || gain_ < 0 || gain_ > 1)
+    throw FormatError("ordinary voice gain outside supported range");
+}
+void PlaybackOrdinaryVoice::Prepare(uint32_t channel, int16_t voiceId) {
+  if (voiceId < 0) throw FormatError("negative ordinary voice ID");
+  auto reader = std::make_unique<HcaWaveReader>(bank_, uint32_t(voiceId));
+  playback_.PrepareOrdinaryVoice(channel, uint32_t(voiceId), std::move(reader), gain_);
+}
+void PlaybackOrdinaryVoice::Start(uint32_t channel) {
+  playback_.StartOrdinaryVoice(channel);
+}
+void PlaybackOrdinaryVoice::Stop(uint32_t channel) {
+  playback_.StopOrdinaryVoice(channel);
+}
+bool PlaybackOrdinaryVoice::Ready(uint32_t channel) const {
+  return playback_.OrdinaryVoiceReady(channel);
+}
+bool PlaybackOrdinaryVoice::Playing(uint32_t channel) const {
+  return playback_.OrdinaryVoicePlaying(channel);
+}
+int32_t PlaybackOrdinaryVoice::Position(uint32_t channel) const {
+  return playback_.OrdinaryVoicePosition(channel);
 }
 PlaybackProfileVoice::PlaybackProfileVoice(MusicPlayback& playback,
                                            uint8_t option,
@@ -626,6 +716,121 @@ int RunMusicSession(const std::filesystem::path& usrdir, uint32_t track,
     return 1;
   }
 }
+int RunOrdinaryVoiceSession(const std::filesystem::path& usrdir,
+                            const std::filesystem::path& captureDirectory) {
+  bool created = false;
+  try {
+    CreateCaptureDirectory(usrdir, captureDirectory);
+    created = true;
+    std::ifstream file(usrdir / "resource.dat", std::ios::binary);
+    if (!file) throw FormatError("cannot open script voice resources");
+    Bytes raw{std::istreambuf_iterator<char>(file), {}};
+    if (file.bad()) throw FormatError("cannot read script voice resources");
+    GameResources resources(std::move(raw));
+    const auto envelopes = resources.LoadScriptVoiceEnvelopes(21);
+    if (envelopes.size() < 3) throw FormatError("insufficient script voice catalog");
+    auto queue = MakeFreshOrdinaryVoiceQueue();
+    for (const auto& envelope : envelopes)
+      queue.Catalog.push_back(int16_t(envelope.VoiceId));
+    const auto first = queue.Catalog[0], second = queue.Catalog[1];
+    ArchiveBgmResources music(usrdir);
+    if (!SDL_Init(SDL_INIT_EVENTS)) throw FormatError(SDL_GetError());
+    struct Cleanup { ~Cleanup() { SDL_Quit(); } } cleanup;
+    MusicPlayback playback(music, true);
+    const auto settings = MakeFreshOrdinaryVoiceSettings();
+    PlaybackOrdinaryVoice voice(playback, usrdir, settings.Volume, 1.0f);
+    voice.Start(7);  // Missing native handle: harmless, without playback.
+    if (voice.Ready(7) || voice.Playing(7) || voice.Position(7) != -1)
+      throw FormatError("missing ordinary voice acknowledged");
+    const auto firstSlot = PrepareOrdinaryVoice(queue, first, true, voice);
+    if (firstSlot != 0 || !voice.Playing(7) || !voice.Ready(8) || voice.Playing(8))
+      throw FormatError("ordinary initial/lookahead state mismatch");
+    std::vector<int16_t> early(4800 * 2);
+    playback.Render(std::span(early).first(4800));
+    const auto before = voice.Position(7);
+    voice.Start(7);  // Must not restart at the beginning.
+    playback.Render(std::span(early).subspan(4800));
+    const auto after = voice.Position(7);
+    if (before < 45 || after < 95 || after <= before)
+      throw FormatError("repeated ordinary start reset position");
+    bool invalidPrepare = false;
+    try { voice.Prepare(8, INT16_MAX); }
+    catch (const FormatError&) { invalidPrepare = true; }
+    if (!invalidPrepare || !voice.Playing(7) || !voice.Ready(8))
+      throw FormatError("invalid preparation interrupted ordinary voices");
+    SaveWav(captureDirectory / "early.wav", early);
+    const auto secondSlot = PrepareOrdinaryVoice(queue, second, true, voice);
+    if (secondSlot != 1 || !voice.Playing(8) || !voice.Ready(7) || voice.Playing(7))
+      throw FormatError("ordinary cached-slot reuse mismatch");
+    auto bank = std::make_shared<AwbBank>(usrdir / "voice.awb");
+    const auto secondInfo = HcaWaveReader(bank, uint32_t(second)).Info();
+    if (!secondInfo.SampleRate || secondInfo.Frames / secondInfo.SampleRate > 30)
+      throw FormatError("ordinary voice diagnostic duration budget");
+    std::vector<int16_t> output(4800 * 2);
+    playback.Render(output);
+    voice.Start(7);  // Independently start the lookahead for a bounded overlap.
+    const auto offset = output.size();
+    output.resize(offset + 4800 * 2);
+    playback.Render(std::span(output).subspan(offset));
+    const auto pos7 = voice.Position(7), pos8 = voice.Position(8);
+    if (pos7 < 95 || pos8 < 195 || pos8 - pos7 < 90)
+      throw FormatError("ordinary voice positions are not independent");
+    voice.Stop(7);
+    if (voice.Ready(7) || voice.Playing(7) || !voice.Playing(8))
+      throw FormatError("ordinary stop affected the other slot");
+    const auto expectedFrames =
+        (secondInfo.Frames * 48000 + secondInfo.SampleRate - 1) / secondInfo.SampleRate;
+    while (voice.Playing(8)) {
+      if (output.size() / 2 > expectedFrames + 48000)
+        throw FormatError("ordinary voice failed to reach EOF");
+      const auto next = output.size();
+      output.resize(next + 1600);
+      playback.Render(std::span(output).subspan(next));
+    }
+    if (voice.Ready(8) || voice.Position(8) != -1)
+      throw FormatError("ordinary natural EOF state mismatch");
+    voice.Prepare(7, queue.Catalog[2]);
+    if (!voice.Ready(7)) throw FormatError("ordinary stop fixture not prepared");
+    GameEvent stop;
+    stop.Kind = GameEventKind::StopChannel;
+    stop.Id = 7;
+    stop.Parameter = 0;
+    playback.Submit(stop);
+    voice.Start(7);
+    voice.Stop(8);
+    if (voice.Ready(7) || voice.Playing(7) || playback.Playing())
+      throw FormatError("common channel stop retained prepared ordinary voice");
+    std::vector<int16_t> silence(4800 * 2);
+    playback.Render(silence);
+    int peak = 0;
+    for (auto sample : std::span(silence).last(512))
+      peak = std::max(peak, std::abs(int(sample)));
+    if (peak > 1) throw FormatError("ordinary stop output did not settle");
+    SaveWav(captureDirectory / "audio.wav", output);
+    SaveWav(captureDirectory / "stopped.wav", silence);
+    std::ofstream report(captureDirectory / "summary.json");
+    report << "{\"first_id\":" << first << ",\"second_id\":" << second
+           << ",\"source_frames\":" << secondInfo.Frames
+           << ",\"source_rate\":" << secondInfo.SampleRate
+           << ",\"expected_frames\":" << expectedFrames
+           << ",\"rendered_frames\":" << output.size()/2
+           << ",\"positions_ms\":[" << before << ',' << after << ',' << pos7 << ',' << pos8
+           << "],\"settled_stop_peak\":" << peak
+           << ",\"invalid_prepare_preserves_both\":true,\"lookahead_reused\":true"
+              ",\"repeated_start_retains_position\":true,\"independent_stop\":true"
+              ",\"common_stop_clears_prepared\":true,\"natural_end\":true}\n";
+    if (!report) throw FormatError("cannot write ordinary voice report");
+    return 0;
+  } catch (const std::exception& error) {
+    if (created) {
+      std::ofstream report(captureDirectory / "error.txt");
+      report << error.what() << '\n';
+    }
+    ImpLog(LogLevel::Error, LogChannel::General, "ordinary voice: %s\n", error.what());
+    return 1;
+  }
+}
+
 int RunProfileVoiceSession(const std::filesystem::path& usrdir,
                            uint32_t character, uint32_t entry,
                            const std::filesystem::path& captureDirectory) {
