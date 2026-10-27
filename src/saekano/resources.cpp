@@ -171,6 +171,26 @@ ProfileMenuAsset GameResources::LoadProfileTexture(ProfileTextureKey key) const 
     return load(*mainUi_);
   throw FormatError("profile texture section is unavailable");
 }
+std::vector<ResourceAsset> GameResources::LoadApproachTextures(size_t id) const {
+  if (!profileCharacterUi_ || id >= profileCharacterUi_->Entries().size())
+    throw FormatError("approach resource ID outside original archive");
+  const GpdaArchive pack(RawEntry(*profileCharacterUi_, id));
+  std::vector<ResourceAsset> result;
+  for (size_t i = 0; i < pack.Entries().size(); ++i)
+    result.push_back({pack.Entries()[i].Name, CompressedEntry(pack, i, 1)});
+  return result;
+}
+void ArchiveApproachResources::Begin(int32_t id) {
+  if (id < 0) throw FormatError("negative approach resource ID");
+  std::vector<PreparedProfileTexture> prepared;
+  for (auto& asset : resources_.LoadApproachTextures(size_t(id))) {
+    auto pixels = DecodeSceneImage(asset.Data);
+    prepared.push_back({{ProfileTextureSection::Character, id, uint32_t(prepared.size())},
+                        std::move(asset.Name), std::move(pixels)});
+  }
+  textures_ = std::move(prepared);
+  id_ = id;
+}
 ProfileVoiceAssets GameResources::LoadProfileVoice(size_t characterId,
                                                    size_t entry) const {
   if (!profileVoices_ || characterId >= 4)

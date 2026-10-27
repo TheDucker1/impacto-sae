@@ -47,6 +47,7 @@ class VmBackend {
   virtual Live2dDriver* Models() { return nullptr; }
   virtual SceneImageDriver* Images() { return nullptr; }
   virtual CharacterPoseDriver* Poses() { return nullptr; }
+  virtual ApproachResources* ApproachAssets() { return nullptr; }
   virtual BgmResources* Music() { return nullptr; }
   virtual SeResources* SoundEffects() { return nullptr; }
   virtual const BattleGaugeEnvironment* BattleEnvironment() const { return nullptr; }

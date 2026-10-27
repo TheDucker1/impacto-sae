@@ -88,6 +88,7 @@ class GameResources final : public ScriptSource {
   ProfileScene LoadProfileScene(size_t sceneId) const;
   std::vector<ProfileMenuAsset> LoadProfileMenu() const;
   ProfileMenuAsset LoadProfileTexture(ProfileTextureKey key) const;
+  std::vector<ResourceAsset> LoadApproachTextures(size_t id) const;
   ProfileVoiceAssets LoadProfileVoice(size_t characterId, size_t entry) const;
   std::vector<ScriptVoiceEnvelope> LoadScriptVoiceEnvelopes(int32_t scriptId) const;
   ResourceAsset LoadImage(ImageSection section, size_t imageId) const;
@@ -108,4 +109,18 @@ class GameResources final : public ScriptSource {
   std::map<ImageSection, GpdaArchive> images_;
 };
 
+// Native140f2->9dfc8 prepares the root3/child2 character UI bank.
+class ArchiveApproachResources final : public ApproachResources {
+ public:
+  explicit ArchiveApproachResources(GameResources& resources) : resources_(resources) {}
+  void Begin(int32_t id) override;
+  ApproachResourceStatus Status() const override { return {}; }
+  void Reset() override { id_.reset(); textures_.clear(); }
+  std::optional<int32_t> Id() const { return id_; }
+  const std::vector<PreparedProfileTexture>& Textures() const { return textures_; }
+ private:
+  GameResources& resources_;
+  std::optional<int32_t> id_;
+  std::vector<PreparedProfileTexture> textures_;
+};
 }  // namespace Impacto::Saekano

@@ -63,12 +63,15 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   if (mode.CurrentStage() != ProfileMode::Stage::Complete)
     throw FormatError("scene continuation profile entry did not complete");
   ArchiveSceneImages images(resources);
+  ArchiveApproachResources approachAssets(resources);
   ArchiveCharacterPoses poses(resources);
   ArchiveBgmResources music(root);
   ArchiveSeResources sounds(root);
   SceneMessageBackend backend(format, timing, *owner.TextSpeed, owner.AutoSpeed);
   backend.AutoReveal = backend.AutoAdvance = false;
   backend.SceneImages = &images; backend.CharacterPoses = &poses;
+  backend.ApproachResourceBank = &approachAssets;
+  backend.ApproachConfig = ApproachGaugeEnvironment::Decode(Read(root / "env/env_approach.dat"));
   backend.MusicResources = &music; backend.SeArchives = &sounds;
   auto vm = VirtualMachine::FromCompletedProfile(resources, backend, std::move(owner), mode);
   vm->SeedRandom(0);
@@ -86,6 +89,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   int32_t voiceScript = -1;
   const auto sync = [&] {
     if (voiceScript != vm->State().ScriptFileId) {
+      if (!vm->State().Random.Known()) vm->SeedRandom(0);
       backend.ResetMessages(); mouths.clear(); controls = MakeFreshOrdinaryMouthControl();
       voiceOwner = std::make_unique<SceneMessageVoiceOwner>(SceneMessageVoiceOwner{
           voices, spriteMouth, MakeFreshOrdinaryVoiceQueue(),
@@ -155,6 +159,17 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
             out << "{\"kind\":\"filter_command\",\"opcode\":" << event.Opcode
                 << ",\"script\":" << event.Script << ",\"command\":" << event.Command
                 << ",\"boundary\":" << int(event.Boundary) << ",\"now\":" << now << "}\n";
+        }
+        if (event.Opcode == 0x3ee && (event.Boundary == VmBoundary::CommandStarted ||
+                                     event.Boundary == VmBoundary::CommandCompletedBeforeDispatch)) {
+          const auto& s = vm->State();
+          out << "{\"kind\":\"approach_entry\",\"script\":" << event.Script
+              << ",\"command\":" << event.Command << ",\"boundary\":" << int(event.Boundary)
+              << ",\"now\":" << now << ",\"id\":" << s.ApproachMode.Id.value_or(-1)
+              << ",\"enabled\":" << s.ApproachMode.Enabled.value_or(false)
+              << ",\"gauge\":" << s.ApproachGauge << ",\"day\":" << s.DayEnabled
+              << ",\"phase\":" << s.SkipPhase << ",\"textures\":" << approachAssets.Textures().size()
+              << ",\"resource_idle\":" << approachAssets.Status().Idle() << "}\n";
         }
         if (event.Opcode == 0x64 && (event.Boundary == VmBoundary::CommandStarted ||
                                     event.Boundary == VmBoundary::CommandCompletedBeforeDispatch)) {

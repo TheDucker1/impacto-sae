@@ -182,6 +182,8 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     state_.Live2d = {};
     if (auto* models = backend_.Models()) models->Reset();
     state_.ApproachGauge = 0;
+    state_.ApproachMode = {};
+    if (auto* resources = backend_.ApproachAssets()) resources->Reset();
     state_.BattleGauge = 50;
     state_.Battle = {};  // Mode entry must initialize its display and sides.
     state_.BgmTrack.reset();
@@ -341,6 +343,11 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
   }
   if (opcode == 0x64) {
     if (lane || !command.Routing.QueueForLane) SetupMessage(index, now);
+  } else if (opcode == 0x3ee && !lane) {
+    auto* resources = backend_.ApproachAssets();
+    if (!resources) throw UnsupportedCommand("approach entry resource backend is unavailable");
+    PayloadReader reader(script_->Payload(index));
+    StartApproachEntry(state_, reader.I32(), *resources);
   } else if (opcode == 0x3ed && !lane) {
     PayloadReader reader(script_->Payload(index));
     state_.OtakuMode = reader.I32();
@@ -496,6 +503,12 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
     if (lane) return true;
     return UpdateFillRect(state_, command.FillAnimation, *command.FillRect,
                           input.Route == UpdateRoute::Skipping, now);
+  }
+  if (opcode == 0x3ee) {
+    if (lane) return true;
+    const auto* resources = backend_.ApproachAssets();
+    if (!resources) throw UnsupportedCommand("approach entry resource backend is unavailable");
+    return UpdateApproachEntry(state_, *resources, input.Route == UpdateRoute::Skipping);
   }
   if (opcode == 0xc8 || opcode == 0xc9) {
     if (lane) return true;
@@ -691,7 +704,11 @@ VmEvent VirtualMachine::Step(uint64_t now, const CommandInput& input) {
       boundary_ = VmBoundary::WaitingInput;
       return Event(boundary_);
     }
-    if (Update(index, now, input, false)) boundary_ = VmBoundary::CommandCompletedBeforeDispatch;
+    auto routedInput = input;
+    // Native7417a selects vslot28 whenever C1ba8 is nonzero. Resource commands
+    // can set this phase independently of a user skip request.
+    if (state_.SkipPhase != 0) routedInput.Route = UpdateRoute::Skipping;
+    if (Update(index, now, routedInput, false)) boundary_ = VmBoundary::CommandCompletedBeforeDispatch;
     else {
       boundary_ = (Opcode() == 0x65 || Opcode() == 0x3f2 || Opcode() == 0x3f6)
           ? VmBoundary::WaitingInput : VmBoundary::WaitingBackend;

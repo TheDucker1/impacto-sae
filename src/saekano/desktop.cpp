@@ -685,9 +685,12 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       GameUtilityFont::Decode(SceneRead(root / "env/env_game_utility.dat"));
   ArchiveSceneImages images(resources);
   ArchiveCharacterPoses poses(resources);
+  ArchiveApproachResources approachAssets(resources);
   SceneMessageBackend backend(format, timing, *owner.TextSpeed, owner.AutoSpeed);
   backend.SceneImages = &images;
   backend.CharacterPoses = &poses;
+  backend.ApproachResourceBank = &approachAssets;
+  backend.ApproachConfig = ApproachGaugeEnvironment::Decode(SceneRead(root / "env/env_approach.dat"));
   backend.MusicResources = &music;
   backend.SeArchives = &sounds;
   auto vm = VirtualMachine::FromCompletedProfile(resources, backend,
@@ -1058,6 +1061,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     }
     if (!state.ScreenFade)
       throw UnsupportedCommand("scene screen-fade state is unknown");
+    if (state.ApproachMode.Enabled.value_or(false))
+      throw UnsupportedCommand("approach mode renderer is not bound");
     if (!state.Quake[0] || !state.Quake[1] || !state.Quake[2])
       throw UnsupportedCommand("scene quake inputs are missing");
     if (!laidOut || layoutCommand != message->Command) {
