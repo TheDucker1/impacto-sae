@@ -1168,6 +1168,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         std::to_string(message->Reveal.Revealed) + ':' + std::to_string(message->VoiceGate.Phase);
     signature += ':' + std::to_string(state.RuleWipe.Active) + ':' +
         std::to_string(state.RuleWipe.Auxiliary) + ':' + std::to_string(state.RuleWipe.Progress.value_or(0) / 25);
+    signature += ':' + std::to_string(*state.ScreenFilter.Mode) + ':' +
+        std::to_string(int32_t(std::clamp(*state.ScreenFilter.Intensity, 0.0f, 1.0f) * 16));
     for (const auto& [id, actor] : state.Characters) {
       if (!captureVoiced) signature += ':' + std::to_string(vm->SpriteBlink(id)->Phase);
       if (captureUntilMessage) signature += ':' + std::to_string(actor.Pose.Current) + ':' +

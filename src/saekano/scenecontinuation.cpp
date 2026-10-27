@@ -141,6 +141,10 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
           if (opcodes.insert(event.Opcode).second)
             out << "{\"kind\":\"opcode\",\"opcode\":" << event.Opcode << ",\"script\":" << event.Script
                 << ",\"command\":" << event.Command << ",\"now\":" << now << "}\n";
+          if (event.Opcode == 0x3fd || event.Opcode == 0x400)
+            out << "{\"kind\":\"filter_command\",\"opcode\":" << event.Opcode
+                << ",\"script\":" << event.Script << ",\"command\":" << event.Command
+                << ",\"boundary\":" << int(event.Boundary) << ",\"now\":" << now << "}\n";
         }
         if (event.Opcode == 0x64 && (event.Boundary == VmBoundary::CommandStarted ||
                                     event.Boundary == VmBoundary::CommandCompletedBeforeDispatch)) {
