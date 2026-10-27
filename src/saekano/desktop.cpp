@@ -32,6 +32,7 @@
 #include <iterator>
 #include <string>
 #include <map>
+#include <cmath>
 
 namespace Impacto::Saekano {
 namespace {
@@ -291,6 +292,7 @@ void WriteDescription(std::ostream& out, int32_t row, const UiTextBlit& line) {
 struct UiBlitRenderer {
   GLuint Program = 0, Vertex = 0, Fragment = 0, Vao = 0, Buffer = 0;
   GLint Tint = -1, Solid = -1, AlphaMode = -1;
+  GLint FilterMode = -1, FilterValue = -1, Glyph = -1;
   struct BoundTexture {
     GLuint Handle;
     uint32_t Width, Height;
@@ -310,7 +312,7 @@ struct UiBlitRenderer {
     }
     return shader;
   }
-  UiBlitRenderer() {
+  explicit UiBlitRenderer(const char* referenceFragment = nullptr) {
     try {
       Vertex = Compile(GL_VERTEX_SHADER, R"GLSL(#version 330
 layout(location=0) in vec2 position;
@@ -318,15 +320,30 @@ layout(location=1) in vec2 uv;
 out vec2 texturePosition;
 void main(){texturePosition=uv;gl_Position=vec4(position.x/480.0-1.0,1.0-position.y/272.0,0.0,1.0);}
 )GLSL");
-      Fragment = Compile(GL_FRAGMENT_SHADER, R"GLSL(#version 330
+      Fragment = Compile(GL_FRAGMENT_SHADER, referenceFragment ? referenceFragment : R"GLSL(#version 330
+#extension GL_ARB_shading_language_packing : require
+#extension GL_ARB_gpu_shader5 : require
 in vec2 texturePosition;
 uniform sampler2D image;
 uniform vec4 tint;
 uniform bool solid;
 uniform int alphaMode;
+uniform int filterMode;
+uniform float filterValue;
+uniform bool glyph;
 out vec4 outputColor;
 void main(){
   outputColor=solid?tint:texture(image,texturePosition)*tint;
+  // Native rectangles and glyphs use independent fragment programs.
+  if(filterMode==1 && !solid && !glyph){
+    float value=clamp(filterValue,0.0,1.0);
+    float luminance=dot(vec3(0.298911988735199,0.5866109728813171,0.11447799950838089),outputColor.rgb);
+    float weighted=value*luminance;
+    vec3 base=outputColor.rgb*(1.0-value);
+    vec3 rgb=fma(vec3(weighted),vec3(0.9411764740943909,0.7843137383460999,0.5686274766921997),base);
+    vec4 result=tint*vec4(rgb,outputColor.a);
+    outputColor=vec4(unpackHalf2x16(packHalf2x16(result.xy)),unpackHalf2x16(packHalf2x16(result.zw)));
+  }
   if((alphaMode==6 && outputColor.a<=0.0)||(alphaMode==3 && outputColor.a==0.0))discard;
 }
 )GLSL");
@@ -358,11 +375,21 @@ void main(){
       Tint = glGetUniformLocation(Program, "tint");
       Solid = glGetUniformLocation(Program, "solid");
       AlphaMode = glGetUniformLocation(Program, "alphaMode");
+      FilterMode = glGetUniformLocation(Program, "filterMode");
+      FilterValue = glGetUniformLocation(Program, "filterValue");
+      Glyph = glGetUniformLocation(Program, "glyph");
       GlCheck("UI renderer initialization");
     } catch (...) {
       Release();
       throw;
     }
+  }
+  void SetFilter(int32_t mode, float value) {
+    if (mode != 0 && mode != 1)
+      throw UnsupportedCommand("scene screen filter mode is not bound");
+    if (!std::isfinite(value)) throw FormatError("nonfinite scene filter intensity");
+    glUniform1i(FilterMode, mode);
+    glUniform1f(FilterValue, std::clamp(value, 0.0f, 1.0f));
   }
   void Upload(ProfileTextureKey key, const ImagePixels& pixels) {
     if (Textures.contains(key))
@@ -408,6 +435,7 @@ void main(){
     glBindBuffer(GL_ARRAY_BUFFER, Buffer);
     glActiveTexture(GL_TEXTURE0);
     glUniform1i(AlphaMode, 0);
+    SetFilter(0, 0.0f);
     for (const auto& blit : blits)
       DrawQuad(blit, Textures.at(blit.Texture), false);
     Execute(commands);
@@ -466,8 +494,9 @@ void main(){
     GlCheck("profile UI drawing");
   }
   void DrawQuad(const UiSpriteBlit& blit, const BoundTexture& texture,
-                bool solid) {
+                bool solid, bool glyph = false) {
     glUniform1i(Solid, solid ? 1 : 0);
+    glUniform1i(Glyph, glyph ? 1 : 0);
     const auto quad = ResolveUiQuad(blit, texture.Width, texture.Height);
     std::array<float, 24> vertices;
     constexpr std::array<size_t, 6> corners{0, 1, 2, 2, 1, 3};
@@ -542,7 +571,7 @@ struct FontTextures {
         blit.Source = {0, 0, int32_t(pixels->Width), int32_t(pixels->Height)};
       }
       if (pixels) {
-        renderer.DrawQuad(blit, Get(bitmap, id, *pixels), false);
+        renderer.DrawQuad(blit, Get(bitmap, id, *pixels), false, true);
         if (report) {
           *report << "{\"character\":" << uint16_t(character)
                   << ",\"bitmap\":" << (bitmap ? "true" : "false")
@@ -610,7 +639,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                       const std::filesystem::path& captureDirectory = {},
                       bool captureAuto = false, bool captureButtonAuto = false,
                       bool captureVoiced = false,
-                      std::optional<size_t> captureUntilMessage = {}) {
+                      std::optional<size_t> captureUntilMessage = {},
+                      std::optional<size_t> captureFromCommand = {}) {
   const bool capture = !captureDirectory.empty();
   if (!owner.WindowOpacity || !owner.ReadColorEnabled || !owner.TextSpeed ||
       !owner.AutoSpeed)
@@ -649,6 +679,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   auto vm = VirtualMachine::FromCompletedProfile(resources, backend,
                                                  std::move(owner), completed);
   const auto captureScript = vm->State().ScriptFileId;
+  if (captureFromCommand && (!captureUntilMessage || *captureFromCommand > *captureUntilMessage))
+    throw FormatError("capture range requires a start before its target message");
   if (captureUntilMessage) {
     const ScriptObject script(resources.Load(captureScript));
     if (*captureUntilMessage >= script.Records().size() ||
@@ -658,6 +690,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       throw FormatError("capture target requires automatic capture mode");
   }
   bool targetCompleted = false;
+  bool captureActive = !captureFromCommand;
+  std::optional<uint64_t> pcmEpoch;
   auto mouthControl = MakeFreshOrdinaryMouthControl();
   std::map<uint16_t, ProfileMouthPlayback> mouths;
   SpriteMessageMouth spriteMouth(vm->State(), mouthControl, mouths);
@@ -728,7 +762,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   std::string previousSignature;
   size_t saved = 0;
   std::map<uint16_t, bool> actorEligibility;
-  for (uint32_t frame = 0; !quit && (!capture || frame < 2000); ++frame) {
+  const uint32_t frameBudget = captureFromCommand ? 20000 : 2000;
+  for (uint32_t frame = 0; !quit && (!capture || frame < frameBudget); ++frame) {
     const uint64_t now =
         capture ? uint64_t(frame) * 16 : SDL_GetTicks() - epoch;
     messageCursor.Update(now);
@@ -875,14 +910,19 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     if (capture && now > previous) {
       std::vector<int16_t> samples(size_t(now - previous) * 96);
       playback.Render(samples);
-      pcm.write(reinterpret_cast<const char*>(samples.data()),
-                samples.size() * sizeof(int16_t));
+      if (captureActive) {
+        if (!pcmEpoch) pcmEpoch = previous;
+        pcm.write(reinterpret_cast<const char*>(samples.data()),
+                  samples.size() * sizeof(int16_t));
+      }
     }
     previous = now;
     for (size_t work = 0; work < 256; ++work) {
       bindScriptVoices();
       syncMouths();
       const auto step = vm->Step(now, input);
+      if (captureFromCommand && step.Script == captureScript &&
+          size_t(step.Command) >= *captureFromCommand) captureActive = true;
       input.Advance = false;
       syncMouths();
       if (capture && (step.Boundary == VmBoundary::CommandStarted ||
@@ -947,8 +987,6 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     const auto& state = vm->State();
     if (!state.ScreenFilter.Mode || !state.ScreenFilter.Intensity)
       throw UnsupportedCommand("scene screen filter state is unknown");
-    if (*state.ScreenFilter.Mode != 0)
-      throw UnsupportedCommand("scene screen filter rendering is not bound");
     // Primary updates before command work; button widgets update every variant
     // afterwards, using the new frame's slide/quake offset.
     if (!state.Quake[2])
@@ -966,6 +1004,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     SdlCheck(SDL_GetWindowSizeInPixels(window.Window, &width, &height),
              "scene frame size");
     renderer.Draw({}, width, height);
+    renderer.SetFilter(*state.ScreenFilter.Mode, *state.ScreenFilter.Intensity);
     const auto* message = backend.CurrentMessage();
     if (!message) {
       UiSpriteBlit white;
@@ -1048,6 +1087,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         windowState.MessageCommand = true;
         windowState.CursorVisible = backend.CursorVisible();
         windowState.CursorOffset = messageCursor.Current;
+        windowState.RendererMode = uint32_t(*state.ScreenFilter.Mode);
+        windowState.RendererParameter = std::bit_cast<uint32_t>(*state.ScreenFilter.Intensity);
         if (state.SpeakerId >= 0) uploadMain(uint32_t(state.SpeakerId) + 41);
         for (const auto& draw :
              BuildOrdinaryMessageWindow(visual.Window, windowState)) {
@@ -1067,9 +1108,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
             }
           } else if (draw.Kind == MessageWindowDrawKind::AlphaTest)
             glUniform1i(renderer.AlphaMode, draw.Index);
-          else if (draw.Kind == MessageWindowDrawKind::RendererState &&
-                   draw.Index)
-            throw UnsupportedCommand("scene renderer effect is not bound");
+          else if (draw.Kind == MessageWindowDrawKind::RendererState)
+            renderer.SetFilter(int32_t(draw.Index), std::bit_cast<float>(draw.Parameter));
         }
       } else if (pass.Kind == SceneDrawKind::MessageText) {
         // This entry is an explicitly fresh owner with no loaded read history.
@@ -1083,6 +1123,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       } else if (pass.Kind == SceneDrawKind::Fill)
         throw UnsupportedCommand("first-scene fill drawing is not bound");
     }
+    renderer.SetFilter(0, 0.0f);  // Native resets after queued callbacks, before later HUD.
     GlCheck("first scene composition");
     std::string signature = std::to_string(message->Reveal.Revealed) + ':' +
                             std::to_string(backend.CursorVisible()) + ':' +
@@ -1095,7 +1136,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       if (captureUntilMessage) signature += ':' + std::to_string(actor.Pose.Current) + ':' +
           std::to_string(actor.Tweens[size_t(CharacterTween::PreviousPose)].Current / 64);
     }
-    if (capture && (saved == 0 || signature != previousSignature ||
+    if (capture && captureActive && (saved == 0 || signature != previousSignature ||
                     now - lastSaved >= 1500 || quit)) {
       const auto file = "scene-" + std::to_string(saved++) + ".bmp";
       Capture(captureDirectory / file, width, height);
@@ -1105,6 +1146,9 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
              << (message->Reveal.Revealed ? "true" : "false")
              << ",\"frame\":" << frame
              << ",\"message_command\":" << message->Command
+             << ",\"pcm_epoch_ms\":";
+      if (pcmEpoch) report << *pcmEpoch; else report << "null";
+      report
              << ",\"completed\":" << (quit ? "true" : "false")
              << ",\"bgm\":" << state.BgmTrack.value_or(-1)
              << ",\"window_opacity_setting\":" << int(opacity)
@@ -1273,6 +1317,78 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
 }
 }  // namespace
 
+int RunScreenFilterProbe(const std::filesystem::path& fixtureDirectory,
+                         const std::filesystem::path& output) {
+  try {
+    if (std::filesystem::exists(output)) throw FormatError("choose a fresh filter probe output");
+    const auto bytes = SceneRead(fixtureDirectory / "cases.bin");
+    PayloadReader reader(bytes);
+    if (reader.U32() != 0x31504653) throw FormatError("invalid filter probe fixture");
+    const auto count = reader.U32();
+    if (!count || count > 256) throw FormatError("filter probe case budget exceeded");
+    reader.CheckCount(count, 20);
+    const auto fragmentBytes = SceneRead(fixtureDirectory / "reference.frag");
+    const std::string fragment(fragmentBytes.begin(), fragmentBytes.end());
+    ViewerWindow window(true);
+    UiBlitRenderer actual, reference(fragment.c_str());
+    struct Target {
+      GLuint Framebuffer = 0, Texture = 0;
+      ~Target() {
+        if (Framebuffer) glDeleteFramebuffers(1, &Framebuffer);
+        if (Texture) glDeleteTextures(1, &Texture);
+      }
+    } target;
+    glGenFramebuffers(1, &target.Framebuffer);
+    glGenTextures(1, &target.Texture);
+    glBindTexture(GL_TEXTURE_2D, target.Texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 1, 1, 0, GL_RGBA, GL_FLOAT, nullptr);
+    glBindFramebuffer(GL_FRAMEBUFFER, target.Framebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target.Texture, 0);
+    glDrawBuffer(GL_COLOR_ATTACHMENT0); glReadBuffer(GL_COLOR_ATTACHMENT0);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+      throw FormatError("filter probe float framebuffer is incomplete");
+    std::ofstream report(output);
+    if (!report) throw FormatError("cannot create filter probe output");
+    for (uint32_t i = 0; i < count; ++i) {
+      const auto pixel = reader.U32(), color = reader.U32(), mode = reader.U32();
+      const auto value = std::bit_cast<float>(reader.U32());
+      const auto kind = reader.U32();
+      if (kind > 2) throw FormatError("invalid filter probe primitive");
+      const ProfileTextureKey key{ProfileTextureSection::MainUi, -1, i};
+      const ImagePixels pixels{1, 1, {uint8_t(pixel), uint8_t(pixel >> 8), uint8_t(pixel >> 16), uint8_t(pixel >> 24)}};
+      UiSpriteBlit draw;
+      draw.Texture = key; draw.Destination = {0,0,960,544}; draw.Source = {0,0,1,1};
+      draw.Color = {uint8_t(color), uint8_t(color >> 8), uint8_t(color >> 16), uint8_t(color >> 24)};
+      const auto sample = [&](UiBlitRenderer& renderer) {
+        renderer.Upload(key, pixels);
+        renderer.Draw({}, 960, 544);
+        glViewport(0,0,1,1); glDisable(GL_BLEND);
+        renderer.SetFilter(1, 1.0f);  // Also exercise a real reset to Normal.
+        renderer.SetFilter(int32_t(mode), value);
+        renderer.DrawQuad(draw, renderer.Textures.at(key), kind == 2, kind == 1);
+        std::array<float,4> result;
+        glReadPixels(0,0,1,1,GL_RGBA,GL_FLOAT,result.data());
+        GlCheck("offscreen filter sample");
+        return result;
+      };
+      const auto obtained = sample(actual), expected = sample(reference);
+      report << "{\"case\":" << i << ",\"actual_bits\":[";
+      for (size_t c = 0; c < 4; ++c) { if (c) report << ','; report << std::bit_cast<uint32_t>(obtained[c]); }
+      report << "],\"reference_bits\":[";
+      for (size_t c = 0; c < 4; ++c) { if (c) report << ','; report << std::bit_cast<uint32_t>(expected[c]); }
+      report << "]}\n";
+    }
+    return 0;
+  } catch (const std::exception& error) {
+    const auto diagnostic = output.string() + ".error.txt";
+    if (!std::filesystem::exists(diagnostic)) {
+      std::ofstream failure(diagnostic);
+      failure << std::string(error.what()).substr(0, 2048) << '\n';
+    }
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Saekano filter probe: %s", error.what());
+    return 1;
+  }
+}
 int RunFontSample(const std::filesystem::path& usrdir,
                   const std::filesystem::path& captureDirectory) {
   try {
@@ -2449,7 +2565,8 @@ int RunProfileItemsViewer(const std::filesystem::path& usrdir, size_t scene,
 int RunFirstSceneViewer(const std::filesystem::path& usrdir,
                         const std::filesystem::path& captureDirectory,
                         bool captureAuto, bool captureButtonAuto, bool captureVoiced,
-                        std::optional<size_t> captureUntilMessage) {
+                        std::optional<size_t> captureUntilMessage,
+                        std::optional<size_t> captureFromCommand) {
   bool created = false;
   try {
     const bool capture = !captureDirectory.empty();
@@ -2510,7 +2627,7 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
     return RunCompletedScene(window, renderer, fontTextures, font, resources,
                              playback, music, sounds, std::move(owner), mode,
                              usrdir, captureDirectory, captureAuto, captureButtonAuto, captureVoiced,
-                             captureUntilMessage);
+                             captureUntilMessage, captureFromCommand);
   } catch (const std::exception& error) {
     if (created) {
       std::ofstream out(captureDirectory / "error.txt");
