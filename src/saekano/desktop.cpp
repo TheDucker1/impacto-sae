@@ -694,12 +694,12 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                                                  std::move(owner), completed);
   const auto captureScript = vm->State().ScriptFileId;
   if (captureFromCommand && (!captureUntilMessage || *captureFromCommand > *captureUntilMessage))
-    throw FormatError("capture range requires a start before its target message");
+    throw FormatError("capture range requires a start before its target command");
   if (captureUntilMessage) {
     const ScriptObject script(resources.Load(captureScript));
     if (*captureUntilMessage >= script.Records().size() ||
-        script.Records()[*captureUntilMessage].Opcode != 0x64)
-      throw FormatError("capture target is not a message in the entry script");
+        (!captureFromCommand && script.Records()[*captureUntilMessage].Opcode != 0x64))
+      throw FormatError("capture target is not a valid entry-script command/message");
     if (!capture || !captureAuto)
       throw FormatError("capture target requires automatic capture mode");
   }
@@ -963,11 +963,10 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         capturePointerStage = 0;
         break;
       }
-      if (step.Opcode == 0x64 &&
-          step.Boundary == VmBoundary::CommandCompletedBeforeDispatch && capture &&
+      if (step.Boundary == VmBoundary::CommandCompletedBeforeDispatch && capture &&
           (captureUntilMessage
                ? step.Script == captureScript && size_t(step.Command) == *captureUntilMessage
-               : (!captureVoiced || step.Command >= 67))) {
+               : step.Opcode == 0x64 && (!captureVoiced || step.Command >= 67))) {
         targetCompleted = true;
         quit = true;
         break;
@@ -1057,9 +1056,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       if (!capture) SDL_Delay(16);
       continue;
     }
-    if (state.ScreenFade != 0)
-      throw UnsupportedCommand(
-          "first-scene active screen-fade rendering is not bound");
+    if (!state.ScreenFade)
+      throw UnsupportedCommand("scene screen-fade state is unknown");
     if (!state.Quake[0] || !state.Quake[1] || !state.Quake[2])
       throw UnsupportedCommand("scene quake inputs are missing");
     if (!laidOut || layoutCommand != message->Command) {
@@ -1183,10 +1181,20 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         for (const auto& text : textDraws)
           fontTextures.DrawString(renderer, font, text.Text, text.Position[0],
                                   text.Position[1], text.Size, text.Color);
-      } else if (pass.Kind == SceneDrawKind::Fill)
-        throw UnsupportedCommand("first-scene fill drawing is not bound");
+      } else if (pass.Kind == SceneDrawKind::Fill) {
+        const auto sprite = BuildSceneFill(state.SceneImages.Slots.FillRects.at(pass.Index));
+        glUniform1i(renderer.AlphaMode, 1);
+        renderer.DrawQuad(sprite, {0, 1, 1}, true);
+        spriteDraws.push_back(sprite);
+      }
     }
     renderer.SetFilter(0, 0.0f);  // Native resets after queued callbacks, before later HUD.
+    // Native HUD tail8007708c draws white after queued presentation/HUD.
+    if (const auto fade = BuildScreenFade(*state.ScreenFade)) {
+      glUniform1i(renderer.AlphaMode, 1);
+      renderer.DrawQuad(*fade, {0, 1, 1}, true);
+      spriteDraws.push_back(*fade);
+    }
     GlCheck("first scene composition");
     std::string signature = std::to_string(message->Reveal.Revealed) + ':' +
                             std::to_string(backend.CursorVisible()) + ':' +
@@ -1198,6 +1206,9 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         std::to_string(state.RuleWipe.Auxiliary) + ':' + std::to_string(state.RuleWipe.Progress.value_or(0) / 25);
     signature += ':' + std::to_string(*state.ScreenFilter.Mode) + ':' +
         std::to_string(int32_t(std::clamp(*state.ScreenFilter.Intensity, 0.0f, 1.0f) * 16));
+    signature += ':' + std::to_string(*state.ScreenFade / 16);
+    for (const auto& fill : state.SceneImages.Slots.FillRects)
+      signature += ':' + std::to_string(fill.Opacity / 16);
     for (const auto& [id, actor] : state.Characters) {
       if (!captureVoiced) signature += ':' + std::to_string(vm->SpriteBlink(id)->Phase);
       if (captureUntilMessage) signature += ':' + std::to_string(actor.Pose.Current) + ':' +

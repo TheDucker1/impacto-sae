@@ -22,6 +22,10 @@ SceneImageState RestoreSceneImages(const NativeImageSavePrefix& saved,
 // Fresh constructor/reset plus owner binding: inactive slots, zero counters,
 // extents from the actual BG/CG/free resource pools. Never apply to restores.
 SceneImageState FreshSceneImages(SceneImageDriver& images);
+// Native801a9024 queued fill and8007708c final white screen fade.
+// Render as solid quads with alpha mode1; caller preserves their distinct order.
+UiSpriteBlit BuildSceneFill(const NativeSavedFillRect& slot);
+std::optional<UiSpriteBlit> BuildScreenFade(int32_t value);
 // Native8008b4d4 float-slot draw primitive. Caller owns native scheduling,
 // resource readiness, bucket ordering and the actual runtime quake sample.
 UiSpriteBlit BuildFloatSceneImage(const NativeSavedFloatImageSlot& slot,

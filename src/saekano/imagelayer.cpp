@@ -5,6 +5,18 @@
 #include <bit>
 
 namespace Impacto::Saekano {
+UiSpriteBlit BuildSceneFill(const NativeSavedFillRect& slot) {
+  UiSpriteBlit result{};
+  result.Destination = {0, 0, 960, 544};
+  result.Color = {uint8_t(slot.PackedColor), uint8_t(slot.PackedColor >> 8),
+                  uint8_t(slot.PackedColor >> 16), uint8_t(slot.Opacity)};
+  return result;
+}
+std::optional<UiSpriteBlit> BuildScreenFade(int32_t value) {
+  if (!value) return {};
+  auto result = BuildSceneFill({0xffffff, value, 0});
+  return result;
+}
 UiSpriteBlit BuildFloatSceneImage(const NativeSavedFloatImageSlot& slot,
                                   uint32_t category,
                                   std::array<int32_t, 2> quake) {

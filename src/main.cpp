@@ -304,7 +304,7 @@ int main(int argc, char* argv[]) {
           argc == 5 && std::string_view(argv[3]) == "--capture-auto-button",
           argc == 5 && std::string_view(argv[3]) == "--capture-voiced");
     ImpLog(LogLevel::Error, LogChannel::General,
-           "Usage: --saekano-first-scene USRDIR [--capture DIRECTORY | --capture-auto DIRECTORY | --capture-auto-button DIRECTORY | --capture-voiced DIRECTORY | --capture-until MESSAGE_COMMAND DIRECTORY | --capture-range FIRST_COMMAND LAST_MESSAGE DIRECTORY]\n");
+           "Usage: --saekano-first-scene USRDIR [--capture DIRECTORY | --capture-auto DIRECTORY | --capture-auto-button DIRECTORY | --capture-voiced DIRECTORY | --capture-until MESSAGE_COMMAND DIRECTORY | --capture-range FIRST_COMMAND LAST_COMMAND DIRECTORY]\n");
     return 1;
   }
   if (argc >= 2 && std::string_view(argv[1]) == "--saekano-profile-items") {
