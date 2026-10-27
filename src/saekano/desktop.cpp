@@ -609,7 +609,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                       const std::filesystem::path& root,
                       const std::filesystem::path& captureDirectory = {},
                       bool captureAuto = false, bool captureButtonAuto = false,
-                      bool captureVoiced = false) {
+                      bool captureVoiced = false,
+                      std::optional<size_t> captureUntilMessage = {}) {
   const bool capture = !captureDirectory.empty();
   if (!owner.WindowOpacity || !owner.ReadColorEnabled || !owner.TextSpeed ||
       !owner.AutoSpeed)
@@ -647,6 +648,16 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   backend.SeArchives = &sounds;
   auto vm = VirtualMachine::FromCompletedProfile(resources, backend,
                                                  std::move(owner), completed);
+  const auto captureScript = vm->State().ScriptFileId;
+  if (captureUntilMessage) {
+    const ScriptObject script(resources.Load(captureScript));
+    if (*captureUntilMessage >= script.Records().size() ||
+        script.Records()[*captureUntilMessage].Opcode != 0x64)
+      throw FormatError("capture target is not a message in the entry script");
+    if (!capture || !captureAuto)
+      throw FormatError("capture target requires automatic capture mode");
+  }
+  bool targetCompleted = false;
   auto mouthControl = MakeFreshOrdinaryMouthControl();
   std::map<uint16_t, ProfileMouthPlayback> mouths;
   SpriteMessageMouth spriteMouth(vm->State(), mouthControl, mouths);
@@ -887,7 +898,10 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       }
       if (step.Opcode == 0x64 &&
           step.Boundary == VmBoundary::CommandCompletedBeforeDispatch && capture &&
-          (!captureVoiced || step.Command >= 67)) {
+          (captureUntilMessage
+               ? step.Script == captureScript && size_t(step.Command) == *captureUntilMessage
+               : (!captureVoiced || step.Command >= 67))) {
+        targetCompleted = true;
         quit = true;
         break;
       }
@@ -1073,8 +1087,9 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     if (captureVoiced) signature = std::to_string(message->Command) + ':' +
         std::to_string(message->Reveal.Revealed) + ':' + std::to_string(message->VoiceGate.Phase);
     for (const auto& [id, actor] : state.Characters) {
-      (void)actor;
       if (!captureVoiced) signature += ':' + std::to_string(vm->SpriteBlink(id)->Phase);
+      if (captureUntilMessage) signature += ':' + std::to_string(actor.Pose.Current) + ':' +
+          std::to_string(actor.Tweens[size_t(CharacterTween::PreviousPose)].Current / 64);
     }
     if (capture && (saved == 0 || signature != previousSignature ||
                     now - lastSaved >= 1500 || quit)) {
@@ -1085,6 +1100,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
              << ",\"command\":" << state.CurrentCommandIndex << ",\"revealed\":"
              << (message->Reveal.Revealed ? "true" : "false")
              << ",\"frame\":" << frame
+             << ",\"message_command\":" << message->Command
              << ",\"completed\":" << (quit ? "true" : "false")
              << ",\"bgm\":" << state.BgmTrack.value_or(-1)
              << ",\"window_opacity_setting\":" << int(opacity)
@@ -1195,6 +1211,36 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                << poseInput.Position[1] << ',' << rgba << ','
                << poseInput.Visible << ']';
       }
+      report << "],\"voice_queue\":{\"next_slot\":" << voiceOwner->Queue.NextSlot
+             << ",\"prepared\":[";
+      for (size_t i = 0; i < voiceOwner->Queue.Prepared.size(); ++i) {
+        if (i) report << ',';
+        const auto& prepared = voiceOwner->Queue.Prepared[i];
+        report << '[' << prepared.VoiceId << ',' << prepared.Slot << ']';
+      }
+      report << "]},\"scene_pose_inputs\":[";
+      firstInput = true;
+      for (auto id : SceneCharacterDrawOrder(state)) {
+        const auto& actor = state.Characters.at(id);
+        const auto poseInput = CurrentSceneCharacterPoseState(
+            actor, vm->SpriteBlink(id)->Phase, mouths.at(id).Frame, *state.Quake[1]);
+        if (!firstInput) report << ',';
+        firstInput = false;
+        const auto* retained = actor.Pose.PreviousResourceSlot
+            ? poses.Get(*actor.Pose.PreviousResourceSlot) : nullptr;
+        const auto* prepared = actor.Pose.ResourceSlot
+            ? poses.Get(*actor.Pose.ResourceSlot) : nullptr;
+        const uint32_t rgb = uint32_t(poseInput.Color[0]) |
+            (uint32_t(poseInput.Color[1]) << 8) | (uint32_t(poseInput.Color[2]) << 16);
+        // The requested pose tag changes one update before its resource installs.
+        report << '[' << (prepared ? prepared->Pose : -1) << ',' << (retained ? retained->Pose : -1)
+               << ',' << poseInput.Face << ',' << actor.Pose.PreviousFace << ','
+               << poseInput.EyePhase << ',' << poseInput.MouthFrame << ',' << poseInput.ScalePercent
+               << ',' << poseInput.Position[0] << ',' << poseInput.Position[1] << ',' << rgb
+               << ',' << actor.Tweens[size_t(CharacterTween::Opacity)].Current
+               << ',' << actor.Tweens[size_t(CharacterTween::PreviousPose)].Current
+               << ',' << poseInput.Visible << ']';
+      }
       report << "],\"blink\":[";
       bool first = true;
       for (const auto& [id, actor] : state.Characters) {
@@ -1216,7 +1262,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     report.close();
     pcm.close();
     events.close();
-    if (!quit || firstMessage == UINT64_MAX)
+    if (!quit || firstMessage == UINT64_MAX || (captureUntilMessage && !targetCompleted))
       throw UnsupportedCommand("scene preview budget exhausted");
   }
   return 0;
@@ -2398,7 +2444,8 @@ int RunProfileItemsViewer(const std::filesystem::path& usrdir, size_t scene,
 }
 int RunFirstSceneViewer(const std::filesystem::path& usrdir,
                         const std::filesystem::path& captureDirectory,
-                        bool captureAuto, bool captureButtonAuto, bool captureVoiced) {
+                        bool captureAuto, bool captureButtonAuto, bool captureVoiced,
+                        std::optional<size_t> captureUntilMessage) {
   bool created = false;
   try {
     const bool capture = !captureDirectory.empty();
@@ -2458,7 +2505,8 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
     MusicPlayback playback(music, capture, &sounds);
     return RunCompletedScene(window, renderer, fontTextures, font, resources,
                              playback, music, sounds, std::move(owner), mode,
-                             usrdir, captureDirectory, captureAuto, captureButtonAuto, captureVoiced);
+                             usrdir, captureDirectory, captureAuto, captureButtonAuto, captureVoiced,
+                             captureUntilMessage);
   } catch (const std::exception& error) {
     if (created) {
       std::ofstream out(captureDirectory / "error.txt");

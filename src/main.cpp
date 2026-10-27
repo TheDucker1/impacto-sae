@@ -267,6 +267,13 @@ int main(int argc, char* argv[]) {
     return 1;
   }
   if (argc >= 2 && std::string_view(argv[1]) == "--saekano-first-scene") {
+    if (argc == 6 && std::string_view(argv[3]) == "--capture-until") {
+      size_t target = 0;
+      const std::string_view text(argv[4]);
+      const auto parsed = std::from_chars(text.data(), text.data()+text.size(), target);
+      if (parsed.ec == std::errc{} && parsed.ptr == text.data()+text.size())
+        return Saekano::RunFirstSceneViewer(argv[2], argv[5], true, false, true, target);
+    }
     if (argc == 3 || (argc == 5 && (std::string_view(argv[3]) == "--capture" ||
                                    std::string_view(argv[3]) == "--capture-auto" ||
                                    std::string_view(argv[3]) == "--capture-auto-button" ||
@@ -277,7 +284,7 @@ int main(int argc, char* argv[]) {
           argc == 5 && std::string_view(argv[3]) == "--capture-auto-button",
           argc == 5 && std::string_view(argv[3]) == "--capture-voiced");
     ImpLog(LogLevel::Error, LogChannel::General,
-           "Usage: --saekano-first-scene USRDIR [--capture DIRECTORY | --capture-auto DIRECTORY | --capture-auto-button DIRECTORY | --capture-voiced DIRECTORY]\n");
+           "Usage: --saekano-first-scene USRDIR [--capture DIRECTORY | --capture-auto DIRECTORY | --capture-auto-button DIRECTORY | --capture-voiced DIRECTORY | --capture-until MESSAGE_COMMAND DIRECTORY]\n");
     return 1;
   }
   if (argc >= 2 && std::string_view(argv[1]) == "--saekano-profile-items") {
