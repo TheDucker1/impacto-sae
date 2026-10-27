@@ -8,6 +8,24 @@
 
 namespace Impacto::Saekano {
 struct SemanticState;
+struct ScreenFilterState {
+  std::optional<int32_t> Mode;  // C1cf4; unknown on portable restores.
+  std::optional<float> Intensity;  // C1cf8; StartSepia does not initialize it.
+};
+ScreenFilterState FreshScreenFilter();
+struct ScreenFilterCommand {
+  bool Normal = false;
+  int32_t Duration = 0;
+  static ScreenFilterCommand Decode(std::span<const uint8_t> payload, bool normal);
+};
+struct ScreenFilterAnimation {
+  bool Started = false;
+  ScriptLinearTween Value;
+};
+void StartScreenFilter(ScreenFilterState& state, ScreenFilterAnimation& animation,
+                       const ScreenFilterCommand& command, uint64_t now);
+bool UpdateScreenFilter(ScreenFilterState& state, ScreenFilterAnimation& animation,
+                        const ScreenFilterCommand& command, bool skipping, uint64_t now);
 struct ScreenFadeCommand {
   bool Out = false;
   int32_t Duration = 0;

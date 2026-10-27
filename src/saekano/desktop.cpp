@@ -945,6 +945,10 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         mouths.at(id).Update(now);
     backend.UpdateMessage(now);
     const auto& state = vm->State();
+    if (!state.ScreenFilter.Mode || !state.ScreenFilter.Intensity)
+      throw UnsupportedCommand("scene screen filter state is unknown");
+    if (*state.ScreenFilter.Mode != 0)
+      throw UnsupportedCommand("scene screen filter rendering is not bound");
     // Primary updates before command work; button widgets update every variant
     // afterwards, using the new frame's slide/quake offset.
     if (!state.Quake[2])

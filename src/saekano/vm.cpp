@@ -97,6 +97,8 @@ void VirtualMachine::Load(bool preserveOwnerState) {
       command.StopSe = StopSeCommand::Decode(script_->Payload(i));
     } else if (opcode == 0xc8 || opcode == 0xc9) {
       command.ScreenFade = ScreenFadeCommand::Decode(script_->Payload(i), opcode == 0xc9);
+    } else if (opcode == 0x3fd || opcode == 0x400) {
+      command.ScreenFilter = ScreenFilterCommand::Decode(script_->Payload(i), opcode == 0x400);
     } else if (opcode == 0x191) {
       command.RuleWipe = RuleWipeCommand::Decode(script_->Payload(i));
     } else if (opcode == 0x190) {
@@ -208,6 +210,7 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     state_.Effects = {true, 7, 0, 0};
     state_.RuleWipe.Known = true;
     state_.ScreenFade = 255;
+    state_.ScreenFilter = FreshScreenFilter();
     state_.TitleDisplay = false;
     state_.Approach = {};
     state_.Random = {};  // Native creates a freshly seeded manager. Host supplies its clock seed.
@@ -354,6 +357,8 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
     StartChapterTitle(state_, command.ChapterAnimation, *command.Chapter, *environment, now);
   } else if ((opcode == 0xc8 || opcode == 0xc9) && !lane) {
     StartScreenFade(state_, command.FadeAnimation, *command.ScreenFade, now);
+  } else if ((opcode == 0x3fd || opcode == 0x400) && !lane) {
+    StartScreenFilter(state_.ScreenFilter, command.FilterAnimation, *command.ScreenFilter, now);
   } else if (opcode == 0xcb) {
     auto* images = backend_.Images();
     if (!images) throw UnsupportedCommand("scene image resource backend is unavailable");
@@ -496,6 +501,11 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
     if (lane) return true;
     return UpdateScreenFade(state_, command.FadeAnimation, *command.ScreenFade,
         input.Route == UpdateRoute::Skipping, now);
+  }
+  if (opcode == 0x3fd || opcode == 0x400) {
+    if (lane) return true;
+    return UpdateScreenFilter(state_.ScreenFilter, command.FilterAnimation, *command.ScreenFilter,
+                               input.Route == UpdateRoute::Skipping, now);
   }
   if (opcode == 0x3ec) {
     if (lane) return true;

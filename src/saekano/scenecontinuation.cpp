@@ -7,6 +7,7 @@
 #include "skipauto.h"
 
 #include <fstream>
+#include <bit>
 #include <iterator>
 #include <ostream>
 #include <set>
@@ -103,6 +104,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   std::set<uint16_t> opcodes;
   size_t messages = 0, completedMessages = 0, boundaries = 0, audioEvents = 0, spriteSubmissions = 0;
   uint64_t now = 0;
+  std::optional<std::pair<int32_t, uint32_t>> previousFilter;
   const auto finish = [&](std::string_view reason, bool success) {
     out << "{\"kind\":\"result\",\"success\":" << (success ? "true" : "false") << ",\"reason\":";
     String(out, reason);
@@ -165,6 +167,16 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
       for (const auto& [id, actor] : vm->State().Characters)
         if (actor.Pose.Ready && actor.Tweens[size_t(CharacterTween::Opacity)].Current != 0) mouths.at(id).Update(now);
       backend.UpdateMessage(now);
+      const auto& filter = vm->State().ScreenFilter;
+      if (!filter.Mode || !filter.Intensity)
+        throw UnsupportedCommand("continuation screen filter state is unknown");
+      const auto filterSample = std::pair(*filter.Mode, std::bit_cast<uint32_t>(*filter.Intensity));
+      if (previousFilter != filterSample) {
+        out << "{\"kind\":\"screen_filter\",\"now\":" << now
+            << ",\"script\":" << vm->State().ScriptFileId << ",\"command\":" << vm->State().CurrentCommandIndex
+            << ",\"mode\":" << filterSample.first << ",\"intensity_bits\":" << filterSample.second << "}\n";
+        previousFilter = filterSample;
+      }
       if (firstMessage) {
         if (!vm->State().Quake[1]) throw UnsupportedCommand("continuation actor quake is unknown");
         for (auto id : SceneCharacterDrawOrder(vm->State()))

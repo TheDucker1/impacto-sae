@@ -140,6 +140,8 @@ class VirtualMachine {
     QuakeAnimation QuakeRuntime;
     std::optional<ScreenFadeCommand> ScreenFade;
     ScreenFadeAnimation FadeAnimation;
+    std::optional<ScreenFilterCommand> ScreenFilter;
+    ScreenFilterAnimation FilterAnimation;
     std::optional<DrawImageCommand> DrawImage;
     std::optional<FillRectCommand> FillRect;
     FillRectAnimation FillAnimation;

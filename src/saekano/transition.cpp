@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 
 namespace Impacto::Saekano {
 namespace {
@@ -110,6 +111,43 @@ void MarkCgViewed(SemanticState& state, int32_t id) {
   ApplyCgView(state.CgHistory, id);
   if (*CgComplete(state.CgHistory))
     state.PendingEvents.push_back({GameEventKind::Trophy, 29});
+}
+ScreenFilterState FreshScreenFilter() { return {0, 0.0f}; }
+ScreenFilterCommand ScreenFilterCommand::Decode(std::span<const uint8_t> payload, bool normal) {
+  PayloadReader reader(payload);
+  return {normal, reader.I32()};
+}
+void StartScreenFilter(ScreenFilterState& state, ScreenFilterAnimation& animation,
+                       const ScreenFilterCommand& command, uint64_t now) {
+  int32_t from = 0;
+  if (command.Normal) {
+    if (!state.Intensity)
+      throw UnsupportedCommand("restored screen filter intensity is unknown");
+    const float value = *state.Intensity * 100.0f;
+    if (!std::isfinite(value) || value >= 2147483648.0f || value < -2147483648.0f)
+      throw FormatError("screen filter intensity exceeds integer range");
+    from = int32_t(value);  // Native82ab0 vcvt.s32.f32, toward zero.
+  }
+  ScreenFilterAnimation next;
+  next.Value.Start(from, command.Normal ? 0 : 100, command.Duration, now);
+  next.Started = true;
+  if (!command.Normal) state.Mode = 1;
+  animation = next;
+}
+bool UpdateScreenFilter(ScreenFilterState& state, ScreenFilterAnimation& animation,
+                        const ScreenFilterCommand& command, bool skipping, uint64_t now) {
+  if (skipping) {
+    state.Intensity = command.Normal ? 0.0f : 1.0f;
+    if (command.Normal) state.Mode = 0;
+    return true;
+  }
+  if (!animation.Started)
+    throw UnsupportedCommand("screen filter Start was suppressed");
+  animation.Value.Tick(now);
+  const bool finished = animation.Value.Finished();
+  if (finished && command.Normal) state.Mode = 0;
+  state.Intensity = float(animation.Value.Current) / 100.0f;
+  return finished;
 }
 ScreenFadeCommand ScreenFadeCommand::Decode(std::span<const uint8_t> payload,
                                             bool out) {

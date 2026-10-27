@@ -83,6 +83,7 @@ struct SemanticState {
   RuleWipeState RuleWipe;
   QuakeOffsets Quake;
   std::optional<int32_t> ScreenFade;  // C1504, omitted from portable restored inputs.
+  ScreenFilterState ScreenFilter;
   CgHistoryState CgHistory;  // Owner state; survives file/context replacement.
   SceneImageState SceneImages;
   std::optional<int32_t> LastBackgroundId;  // Owner S+5e830, outside Bank0.
