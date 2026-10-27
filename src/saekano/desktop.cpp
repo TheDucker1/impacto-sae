@@ -14,6 +14,7 @@
 #include "profilearchive.h"
 #include "profilemode.h"
 #include "musicplayback.h"
+#include "album.h"
 #include "scenemessage.h"
 #include "messagedraw.h"
 #include "scenequeue.h"
@@ -1895,6 +1896,8 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
       flowOwner = std::make_unique<SemanticState>();
       InitializeFreshAudioOwner(*flowOwner);
       InitializeFreshMessageOwner(*flowOwner);
+      InitializeFreshCgHistory(*flowOwner, LoadAlbumConfiguration(read(root / "first.dat"),
+          read(root / "env/env_omake.dat")).RequiredImages);
       InitializeFreshProfileEntry(
           *flowOwner, ProfileInitialStats::Decode(read(environmentDat)),
           catalog);
@@ -2639,6 +2642,8 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
     SemanticState owner;
     InitializeFreshAudioOwner(owner);
     InitializeFreshMessageOwner(owner);
+    InitializeFreshCgHistory(owner, LoadAlbumConfiguration(SceneRead(usrdir / "first.dat"),
+        SceneRead(usrdir / "env/env_omake.dat")).RequiredImages);
     InitializeFreshProfileEntry(
         owner, ProfileInitialStats::Decode(profileRaw),
         LoadProfileItemCatalog(SceneRead(usrdir / "first.dat")));

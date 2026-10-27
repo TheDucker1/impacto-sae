@@ -65,6 +65,14 @@ ImageSection BackgroundSection(int32_t kind) {
   throw UnsupportedCommand("unsupported rule-wipe background kind");
 }
 }  // namespace
+void InitializeFreshCgHistory(SemanticState& state, std::vector<int32_t> required) {
+  const auto& old = state.CgHistory;
+  if (old.Known || !old.Values.empty() || !old.Required.empty() || old.Default != 0 || old.Partial)
+    throw UnsupportedCommand("cannot overwrite existing or partial CG history");
+  for (const auto id : required)
+    if (id < 0 || id > 1000000) throw FormatError("CG requirement outside host budget");
+  state.CgHistory = {true, {}, std::move(required), 0, {}};
+}
 size_t CgHistoryExtent(const CgHistoryState& history) {
   CheckCgMetadata(history);
   return history.Partial ? history.Partial->Extent : history.Values.size();

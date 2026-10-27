@@ -88,6 +88,8 @@ struct CgHistoryState {
   int32_t Default = 0;
   std::optional<CgPartialHistory> Partial;
 };
+// Explicit fresh global owner, never a manager/file reset or saved-state restore.
+void InitializeFreshCgHistory(SemanticState& state, std::vector<int32_t> required);
 size_t CgHistoryExtent(const CgHistoryState& history);
 CgHistoryValue CgHistoryStatus(const CgHistoryState& history, int32_t id);
 CgHistoryState RestorePartialCgHistory(uint32_t extent, int32_t fallback,

@@ -5,6 +5,7 @@
 #include "profilearchive.h"
 #include "scenemessage.h"
 #include "skipauto.h"
+#include "album.h"
 
 #include <fstream>
 #include <bit>
@@ -46,6 +47,8 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   SemanticState owner;
   InitializeFreshAudioOwner(owner);
   InitializeFreshMessageOwner(owner);
+  InitializeFreshCgHistory(owner, LoadAlbumConfiguration(Read(root / "first.dat"),
+      Read(root / "env/env_omake.dat")).RequiredImages);
   InitializeFreshProfileEntry(owner, ProfileInitialStats::Decode(profileRaw),
                               LoadProfileItemCatalog(Read(root / "first.dat")));
   ProfileMode mode(owner, services, profile, shared);
