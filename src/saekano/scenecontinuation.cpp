@@ -6,6 +6,7 @@
 #include "scenemessage.h"
 #include "skipauto.h"
 #include "album.h"
+#include "missionvoice.h"
 #ifdef SAEKANO_SCENE_CUBISM2
 #include "live2ddriver.h"
 #endif
@@ -15,6 +16,7 @@
 #include <iterator>
 #include <ostream>
 #include <set>
+#include <tuple>
 
 namespace Impacto::Saekano {
 namespace {
@@ -67,6 +69,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
     throw FormatError("scene continuation profile entry did not complete");
   ArchiveSceneImages images(resources);
   ArchiveApproachResources approachAssets(resources);
+  ClockedMissionVoice missionVoice(root);
 #ifdef SAEKANO_SCENE_CUBISM2
   SdkLive2dDriver models(resources, Live2dEnvironment::Decode(Read(root / "env/env_live2d.dat")));
 #endif
@@ -77,6 +80,8 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   backend.AutoReveal = backend.AutoAdvance = false;
   backend.SceneImages = &images; backend.CharacterPoses = &poses;
   backend.ApproachResourceBank = &approachAssets;
+  backend.MissionVoiceBank=&missionVoice;
+  backend.MissionSettings=ApproachMissionEnvironment::Decode(Read(root/"env/env_approach.dat"));
   backend.ApproachConfig = ApproachGaugeEnvironment::Decode(Read(root / "env/env_approach.dat"));
   backend.MusicResources = &music; backend.SeArchives = &sounds;
 #ifdef SAEKANO_SCENE_CUBISM2
@@ -131,6 +136,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         << position << ",\"before\":" << before << ",\"after\":" << after << "}\n";
   };
   std::optional<std::pair<int32_t, uint32_t>> previousFilter;
+  std::optional<std::tuple<int32_t,int32_t,int32_t>> previousMission;
   const auto finish = [&](std::string_view reason, bool success) {
     out << "{\"kind\":\"result\",\"success\":" << (success ? "true" : "false") << ",\"reason\":";
     String(out, reason);
@@ -139,6 +145,8 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         << ",\"messages_started\":" << messages << ",\"messages_completed\":" << completedMessages
         << ",\"command_boundaries\":" << boundaries << ",\"audio_events\":" << audioEvents
         << ",\"sprite_submissions\":" << spriteSubmissions
+        << ",\"mission_voice_id\":" << missionVoice.CurrentId()
+        << ",\"mission_voice_frames\":" << missionVoice.FramesConsumed().value_or(0)
         << ",\"clock_step_ms\":16,\"seed\":0,\"voice_pcm_decoded\":true,\"bgm_se_playback\":false,"
            "\"fresh_unread_controls\":true,\"history_bound\":false,\"gpu_pixels\":false}\n";
   };
@@ -154,7 +162,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
       vm->UpdateSkipAuto(policy, policyInput, policyConfig.AutoKeyDuration, now);
       backend.AutoAdvance = policy.Auto;
       voices.Update(now);
-      bool ended = false, reached = false;
+      bool ended = false, reached = false, waitingMission=false;
       for (size_t work = 0; work < 256; ++work) {
         sync();
         const auto event = vm->Step(now);
@@ -216,6 +224,8 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
             reached = true; break;
           }
         }
+        if(event.Boundary==VmBoundary::WaitingInput && event.Opcode==0x3f7 &&
+            vm->State().ApproachMission.Stage==2)waitingMission=true;
         if (event.Boundary == VmBoundary::WaitingInput || event.Boundary == VmBoundary::WaitingBackend) break;
         if (event.Boundary == VmBoundary::Ended) { ended = true; break; }
         if (work == 255) throw UnsupportedCommand("continuation per-frame command budget exceeded");
@@ -233,9 +243,23 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         }
       }
       vm->UpdateSpriteFrames(uint32_t(now));
+      missionVoice.Update(now);
 #ifdef SAEKANO_SCENE_CUBISM2
       models.Frame(vm->State().Live2d, now);
 #endif
+      const auto& mission=vm->State().ApproachMission;
+      if(mission.Started) {
+        const auto sample=std::tuple(mission.Mission,mission.Stage,mission.PendingStage.value_or(-1));
+        if(previousMission!=sample) {
+          out << "{\"kind\":\"mission_start\",\"script\":" << vm->State().ScriptFileId
+              << ",\"command\":" << vm->State().CurrentCommandIndex << ",\"now\":" << now
+              << ",\"id\":" << mission.Mission << ",\"stage\":" << mission.Stage
+              << ",\"pending\":" << mission.PendingStage.value_or(-1) << ",\"values\":[";
+          for(size_t i=0;i<6;++i){if(i)out << ',';out << mission.Tweens[i].Current;}
+          out << "]}\n";previousMission=sample;
+        }
+      }
+      if(waitingMission){finish("approach_mission_confirmation_required",false);return 1;}
       for (const auto& [id, actor] : vm->State().Characters)
         if (actor.Pose.Ready && actor.Tweens[size_t(CharacterTween::Opacity)].Current != 0) mouths.at(id).Update(now);
       backend.UpdateMessage(now);

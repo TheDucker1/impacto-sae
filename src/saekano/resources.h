@@ -58,6 +58,9 @@ struct ScriptVoiceEnvelope {
 // sizing drops the last sample). Unknown IDs are never aliased through int16.
 std::vector<ScriptVoiceEnvelope> DecodeScriptVoiceEnvelopes(
     std::span<const int32_t> voiceIds, Bytes envelopeArchive);
+// Load-order registrations include ordinary messages and approach mission cues.
+// Duplicate filtering belongs to the shared catalog parser, not this traversal.
+std::vector<int32_t> CollectScriptVoiceIds(const ScriptObject& script);
 CharacterPoseAssets DecodeCharacterPoseArchive(Bytes archive);
 
 // These are native archive section indexes, not alphabetical filename order.

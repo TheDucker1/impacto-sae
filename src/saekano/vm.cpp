@@ -1,6 +1,7 @@
 #include "vm.h"
 #include "messagekeywords.h"
 #include "skipauto.h"
+#include "resources.h"
 
 #include <algorithm>
 #include <bit>
@@ -183,6 +184,7 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     if (auto* models = backend_.Models()) models->Reset();
     state_.ApproachGauge = 0;
     state_.ApproachMode = {};
+    state_.ApproachMission = {};
     if (auto* resources = backend_.ApproachAssets()) resources->Reset();
     state_.BattleGauge = 50;
     state_.Battle = {};  // Mode entry must initialize its display and sides.
@@ -227,6 +229,9 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     dispatcher_ = {};
   }
   messageKeywords_ = {};
+  if(auto* audio=backend_.MissionVoices()) {
+    audio->Reset();audio->Register(CollectScriptVoiceIds(*script_));
+  }
   for (size_t side = 0; side < 2; ++side)
     for (const auto& text : state_.Messages[side]) {
       const auto keywords = OriginalMessageKeywords(text);
@@ -348,6 +353,14 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
     if (!resources) throw UnsupportedCommand("approach entry resource backend is unavailable");
     PayloadReader reader(script_->Payload(index));
     StartApproachEntry(state_, reader.I32(), *resources);
+  } else if (opcode == 0x3f7 && !lane) {
+    auto* audio=backend_.MissionVoices();const auto* environment=backend_.MissionConfig();
+    if(!audio || !environment)throw UnsupportedCommand("approach mission resources/environment are unavailable");
+    PayloadReader reader(script_->Payload(index));const auto id=reader.I32();
+    ApproachMissionState next;StartApproachMission(next,*environment,id,now);
+    if(id!=-1)audio->Begin(id,now);
+    state_.ApproachMission=std::move(next);
+    state_.ApproachMission.Requests.clear();
   } else if (opcode == 0x3ed && !lane) {
     PayloadReader reader(script_->Payload(index));
     state_.OtakuMode = reader.I32();
@@ -503,6 +516,19 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
     if (lane) return true;
     return UpdateFillRect(state_, command.FillAnimation, *command.FillRect,
                           input.Route == UpdateRoute::Skipping, now);
+  }
+  if (opcode == 0x3f7) {
+    if(lane)return true;
+    auto* audio=backend_.MissionVoices();const auto* environment=backend_.MissionConfig();
+    if(!audio || !environment)throw UnsupportedCommand("approach mission resources/environment are unavailable");
+    const bool done=UpdateApproachMission(state_.ApproachMission,*environment,input.Advance,now);
+    for(const auto& request:state_.ApproachMission.Requests) {
+      if(request.Kind==ApproachMissionAction::ConfirmSound)
+        state_.PendingEvents.push_back({GameEventKind::Sound,request.Id});
+      else if(request.Kind==ApproachMissionAction::DisableVoice)audio->Disable();
+      else throw FormatError("unexpected approach mission update request");
+    }
+    state_.ApproachMission.Requests.clear();return done;
   }
   if (opcode == 0x3ee) {
     if (lane) return true;
@@ -710,7 +736,8 @@ VmEvent VirtualMachine::Step(uint64_t now, const CommandInput& input) {
     if (state_.SkipPhase != 0) routedInput.Route = UpdateRoute::Skipping;
     if (Update(index, now, routedInput, false)) boundary_ = VmBoundary::CommandCompletedBeforeDispatch;
     else {
-      boundary_ = (Opcode() == 0x65 || Opcode() == 0x3f2 || Opcode() == 0x3f6)
+      boundary_ = (Opcode() == 0x65 || Opcode() == 0x3f2 || Opcode() == 0x3f6 ||
+                   (Opcode()==0x3f7 && state_.ApproachMission.Stage==2))
           ? VmBoundary::WaitingInput : VmBoundary::WaitingBackend;
       UpdateLanes(now);
     }

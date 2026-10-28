@@ -48,6 +48,8 @@ class VmBackend {
   virtual SceneImageDriver* Images() { return nullptr; }
   virtual CharacterPoseDriver* Poses() { return nullptr; }
   virtual ApproachResources* ApproachAssets() { return nullptr; }
+  virtual ApproachMissionAudio* MissionVoices() { return nullptr; }
+  virtual const ApproachMissionEnvironment* MissionConfig() const { return nullptr; }
   virtual BgmResources* Music() { return nullptr; }
   virtual SeResources* SoundEffects() { return nullptr; }
   virtual const BattleGaugeEnvironment* BattleEnvironment() const { return nullptr; }

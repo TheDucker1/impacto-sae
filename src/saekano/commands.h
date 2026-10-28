@@ -13,6 +13,7 @@
 #include "chapter.h"
 #include "profile.h"
 #include "approachentry.h"
+#include "approachmission.h"
 
 #include <array>
 #include <map>
@@ -74,6 +75,7 @@ struct SemanticState {
   GameRandom Random;
   ApproachGaugeState Approach;
   ApproachEntryState ApproachMode;
+  ApproachMissionState ApproachMission;
   std::optional<int32_t> BgmTrack;  // C+15a4; absent from the portable restore schema.
   std::optional<int32_t> BgmCommandVolume;  // C+15a8.
   std::optional<int32_t> BgmMasterVolume;  // Service master setting, percentage.

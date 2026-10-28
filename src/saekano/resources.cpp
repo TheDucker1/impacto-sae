@@ -273,6 +273,26 @@ Bytes GameResources::Load(int32_t scriptId) {
   // The native script loader inflates explicitly rather than testing that word.
   return CompressedEntry(object, 0, 0);
 }
+std::vector<int32_t> CollectScriptVoiceIds(const ScriptObject& script) {
+  std::vector<int32_t> ids;
+  const auto mission=[&](int32_t id) {
+    if(id < -1)throw FormatError("invalid mission voice ID");
+    ids.push_back(id);
+  };
+  for(size_t i=0;i<script.Records().size();++i) {
+    const auto opcode=script.Records()[i].Opcode;
+    if(opcode==0x64)ids.push_back(DecodeMessage(script.Payload(i)).VoiceId);
+    else if(opcode==0x3f7) {
+      PayloadReader reader(script.Payload(i));mission(reader.I32());
+    } else if(opcode==0x3f8) {
+      PayloadReader reader(script.Payload(i));(void)reader.I32();
+      for(size_t result=0;result<2;++result) {
+        (void)reader.I32();(void)reader.String();mission(reader.I32());
+      }
+    }
+  }
+  return ids;
+}
 std::vector<ScriptVoiceEnvelope> GameResources::LoadScriptVoiceEnvelopes(
     int32_t scriptId) const {
   if (scriptId < 0 || size_t(scriptId) >= ScriptCount())
@@ -280,10 +300,7 @@ std::vector<ScriptVoiceEnvelope> GameResources::LoadScriptVoiceEnvelopes(
   const GpdaArchive script(RawEntry(scripts_, size_t(scriptId)));
   const GpdaArchive object(RawEntry(script, 0));
   const ScriptObject commands(CompressedEntry(object, 0, 0));
-  std::vector<int32_t> voiceIds;
-  for (size_t i = 0; i < commands.Records().size(); ++i)
-    if (commands.Records()[i].Opcode == 0x64)
-      voiceIds.push_back(DecodeMessage(commands.Payload(i)).VoiceId);
+  const auto voiceIds=CollectScriptVoiceIds(commands);
   return DecodeScriptVoiceEnvelopes(voiceIds, CompressedEntry(object, 1, 0));
 }
 

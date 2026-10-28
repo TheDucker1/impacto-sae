@@ -2,6 +2,7 @@
 
 #include "commands.h"
 #include "uisprite.h"
+#include "approachmission.h"
 
 #include <algorithm>
 #include <bit>
@@ -261,11 +262,14 @@ bool UpdateBattleGauge(SemanticState& state, BattleGaugeAnimation& animation,
 
 namespace {
 ApproachGaugeEnvironment ReadApproachGauge(
-    EnvironmentReader& reader, ModeResultVisualEnvironment* visuals = nullptr) {
+    EnvironmentReader& reader, ModeResultVisualEnvironment* visuals = nullptr,
+    ApproachMissionEnvironment* mission = nullptr) {
   ApproachGaugeEnvironment result;
   reader.Skip(3 + 3 * 4);
   for (size_t i = 0; i < 6; ++i) {
     const auto sprite = reader.Sprite();
+    if(mission && i==1){mission->LeftX=sprite.Words[1];mission->LeftWidth=sprite.Words[5];}
+    if(mission && i==2)mission->RightX=sprite.Words[1];
     if (i == 0 && visuals) {
       const auto color = uint32_t(sprite.Words[7]);
       visuals->Banner = {sprite.Resource, sprite.Words[0], sprite.Words[1],
@@ -325,6 +329,17 @@ ApproachGaugeEnvironment ApproachGaugeEnvironment::Decode(
     std::span<const uint8_t> bytes) {
   EnvironmentReader reader(bytes);
   return ReadApproachGauge(reader);
+}
+ApproachMissionEnvironment ApproachMissionEnvironment::Decode(std::span<const uint8_t> bytes) {
+  EnvironmentReader reader(bytes);ApproachMissionEnvironment result;
+  ReadApproachGauge(reader,nullptr,&result);
+  result.EntranceAlpha=reader.Word();result.LeftSlide=reader.Word();result.RightSlide=reader.Word();
+  result.Hold=reader.Word();result.Exit=reader.Word();result.ExitDistance=reader.Word();
+  result.PrefixBytes=reader.Position();
+  if(result.LeftWidth<0 || result.EntranceAlpha<0 || result.LeftSlide<0 ||
+      result.RightSlide<0 || result.Hold<0 || result.Exit<0)
+    throw FormatError("invalid approach mission environment");
+  return result;
 }
 ModeResultEnvironment ModeResultEnvironment::DecodeApproach(
     std::span<const uint8_t> bytes) {
