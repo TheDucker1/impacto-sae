@@ -3,10 +3,11 @@
 
 #include <bit>
 #include <cmath>
+#include <algorithm>
 
 namespace Impacto::Saekano {
 OrdinaryTextEnvironment OrdinaryTextEnvironment::Decode(
-    std::span<const uint8_t> message) {
+    std::span<const uint8_t> message,bool keywords) {
   OrdinaryTextEnvironment result;
   result.Window = OrdinaryMessageEnvironment::Decode(message);
   PayloadReader reader(message.subspan(result.Window.PrefixBytes));
@@ -39,6 +40,10 @@ OrdinaryTextEnvironment OrdinaryTextEnvironment::Decode(
       !std::isfinite(result.NameScale) || result.NameScale <= 0)
     throw FormatError("invalid ordinary text font scale");
   result.PrefixBytes = message.size() - reader.Remaining();
+  if(keywords) {
+    result.KeywordColors=std::array<std::array<uint8_t,4>,2>{color(),color()};
+    result.PrefixBytes=message.size()-reader.Remaining();
+  }
   return result;
 }
 std::vector<UiTextBlit> BuildOrdinaryMessageTextDraws(
@@ -78,7 +83,20 @@ std::vector<UiTextBlit> BuildOrdinaryMessageTextDraws(
   }
   auto glyphs = BuildRevealingTextDraws(body, reveal, format, bodyOrigin,
                                         utilitySize, primaryColor, 255, true);
-  draws.insert(draws.end(), glyphs.begin(), glyphs.end());
+  if(!text.Keywords.empty() && !environment.KeywordColors)
+    throw UnsupportedCommand("ordinary keyword drawing colors are not bound");
+  for(const auto& range:text.Keywords)
+    if(range.Begin>range.End || range.End>body.Glyphs.size())throw FormatError("ordinary keyword exceeds body glyphs");
+  for(size_t i=0;i<body.Glyphs.size();++i) {
+    auto shadow=glyphs[i*2],foreground=glyphs[i*2+1];bool keyword=false;
+    for(const auto& range:text.Keywords)if(range.Begin<=i && i<range.End){keyword=true;break;}
+    if(keyword)std::copy_n((*environment.KeywordColors)[0].begin(),3,foreground.Color.begin());
+    draws.push_back(shadow);draws.push_back(foreground);
+    if(keyword) {
+      shadow.Text=foreground.Text=format.Following[3];
+      draws.push_back(std::move(shadow));draws.push_back(std::move(foreground));
+    }
+  }
   return draws;
 }
 }  // namespace Impacto::Saekano

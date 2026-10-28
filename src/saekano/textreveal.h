@@ -62,9 +62,11 @@ struct TextQueueMarker {
   int32_t VoiceTime = 0;
 };
 struct OrdinaryMessageText {
+  struct Keyword {size_t Begin=0,End=0;int32_t Id=-1;};
   std::u16string Name, Body;
   bool InheritedName = false, NameEnabled = false;
   std::vector<TextQueueMarker> QueueMarkers;
+  std::vector<Keyword> Keywords;
 };
 // Shared parse-only representation. Timed reveal/lane consumption must be bound
 // before a frontend admits QueueMarkers; plain Split retains its current guard.

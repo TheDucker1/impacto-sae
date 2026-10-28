@@ -10,8 +10,9 @@ struct OrdinaryTextEnvironment {
   std::vector<float> Scales;
   float BodyScale = 0, NameScale = 0;
   std::array<uint8_t, 4> NameColor{}, UnreadColor{}, ReadColor{};
+  std::optional<std::array<std::array<uint8_t,4>,2>> KeywordColors;
   size_t PrefixBytes = 0;
-  static OrdinaryTextEnvironment Decode(std::span<const uint8_t> message);
+  static OrdinaryTextEnvironment Decode(std::span<const uint8_t> message,bool keywords=false);
 };
 // Current ordinary record's name pass followed by its revealed body glyphs.
 // Primary color is supplied by the owning read-state policy, not guessed here.

@@ -731,7 +731,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   const auto timing = TextTimingEnvironment::Decode(
       SceneRead(root / "env/env_config.dat"), true, true);
   const auto visual = OrdinaryTextEnvironment::Decode(
-      SceneRead(root / "env/env_message_window.dat"));
+      SceneRead(root / "env/env_message_window.dat"),true);
   const auto inputEnvironment = WidgetInputEnvironment::DecodeUtility(
       SceneRead(root / "env/env_game_utility.dat"));
   OrdinaryWidgetInput sceneInput(visual.Window, inputEnvironment.HoldFrames);
@@ -880,7 +880,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   std::vector<WidgetEventHistory> menuParents,menuChildren,menuArrows;
   std::pair<int32_t,int32_t> menuIdentity{-1,-1};
   int32_t menuChildParent=-1;
-  const uint32_t frameBudget = captureFromCommand ? (captureBranch?22000:20000) : 2000;
+  const uint32_t frameBudget = captureFromCommand ? (captureBranch?40000:20000) : 2000;
   for (uint32_t frame = 0; !quit && (!capture || frame < frameBudget); ++frame) {
     const uint64_t now =
         capture ? uint64_t(frame) * 16 : SDL_GetTicks() - epoch;
@@ -1591,6 +1591,11 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       for (size_t i = 0; i < textDraws.size(); ++i) {
         if (i) report << ',';
         WriteDescription(report, -1, textDraws[i]);
+      }
+      report << "],\"keyword_ranges\":[";
+      for(size_t i=0;i<message->Parsed.Keywords.size();++i) {
+        if(i)report << ',';const auto& k=message->Parsed.Keywords[i];
+        report << '[' << k.Begin << ',' << k.End << ',' << k.Id << ',' << state.Bank0.at(size_t(k.Id)) << ']';
       }
       report << "],\"actor_inputs\":[";
       bool firstInput = true;

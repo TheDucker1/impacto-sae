@@ -1,6 +1,7 @@
 #include "textreveal.h"
 
 #include "commands.h"
+#include "messagekeywords.h"
 
 #include <algorithm>
 #include <bit>
@@ -236,13 +237,26 @@ OrdinaryMessageText ParseOrdinaryMessageControls(
   };
   std::u16string plain;
   std::vector<TextQueueMarker> markers;
+  const auto ids=OriginalMessageKeywords(std::u16string(source));
+  std::vector<OrdinaryMessageText::Keyword> keywords;
+  std::optional<OrdinaryMessageText::Keyword> keyword;
+  const auto glyphCount=[&](){return plain.size()-size_t(std::count(plain.begin(),plain.end(),format.Following[3][0]));};
   for (size_t cursor = 0; cursor < source.size();) {
     const auto ch = source[cursor];
     if (ch == format.Tokens[1][0]) throw FormatError("unmatched inline closing delimiter");
     if (ch != format.Tokens[0][0]) { plain.push_back(ch); ++cursor; continue; }
     const auto end = source.find(format.Tokens[1][0], cursor + 1);
     if (end == source.npos) throw FormatError("unterminated inline directive");
-    const auto tag = source.substr(cursor + 1, end - cursor - 1);
+    auto tag = std::u16string(source.substr(cursor + 1, end - cursor - 1));
+    for(auto& value:tag)if(value>=u'a' && value<=u'z')value-=u'a'-u'A';
+    if(tag.starts_with(format.Following[11]+u" ")) {
+      if(keyword || keywords.size()>=ids.size())throw FormatError("invalid ordinary keyword range");
+      keyword=OrdinaryMessageText::Keyword{glyphCount(),0,ids[keywords.size()]};cursor=end+1;continue;
+    }
+    if(tag==format.Following[12]) {
+      if(!keyword)throw FormatError("ordinary keyword close without start");
+      keyword->End=glyphCount();keywords.push_back(*keyword);keyword.reset();cursor=end+1;continue;
+    }
     const auto space = tag.find(u' ');
     if (space == tag.npos || tag.substr(0, space) != format.Following[15])
       throw UnsupportedCommand("ordinary inline directive is not bound");
@@ -267,6 +281,12 @@ OrdinaryMessageText ParseOrdinaryMessageControls(
     if (marker.Before < -1) throw UnsupportedCommand("inline control inside speaker name");
   }
   parsed.QueueMarkers = std::move(markers);
+  if(keyword || keywords.size()!=ids.size())throw FormatError("unclosed ordinary keyword range");
+  for(auto& range:keywords) {
+    if(range.Begin<parsed.Name.size() || range.End<range.Begin)throw FormatError("keyword overlaps ordinary name");
+    range.Begin-=parsed.Name.size();range.End-=parsed.Name.size();
+  }
+  parsed.Keywords=std::move(keywords);
   return parsed;
 }
 void VoiceTextReveal::Prepare(std::string_view cp932,
