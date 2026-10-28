@@ -47,6 +47,8 @@ struct SdkLive2dDriver::Item {
   bool MouthActive = false;
   uint64_t MouthEpoch = 0;
   float Mouth = 0;
+  bool MouthEnvelopeBound=false;
+  ModelMouthEnvelope Envelope;
 
   Item(Cubism2Sdk& sdk, Live2dModelAssets assets) : Assets(std::move(assets)) {
     const auto& mocs = Assets.Get(Live2dSection::Moc);
@@ -139,6 +141,9 @@ struct SdkLive2dDriver::Item {
     if (!OneShotActive && Loop) model.ApplyBlink();
     const auto left = model.Parameter("PARAM_EYE_L_OPEN");
     const auto right = model.Parameter("PARAM_EYE_R_OPEN");
+    if(MouthEnvelopeBound) {
+      Envelope.Update(now);MouthActive=Envelope.Active;MouthEpoch=Envelope.ActiveEpoch;
+    }
     Mouth = 0;
     if (MouthActive) {
       if (now < MouthEpoch) MouthEpoch = now;
@@ -380,8 +385,15 @@ void SdkLive2dDriver::Frame(const Live2dState& state, uint64_t now) {
 }
 void SdkLive2dDriver::SetMouth(int32_t resource, bool enabled, uint64_t now) {
   auto& item = Get(resource);
+  item.MouthEnvelopeBound=false;
   if (enabled && !item.MouthActive) item.MouthEpoch = now;
   item.MouthActive = enabled;
+}
+void SdkLive2dDriver::BeginMouthEnvelope(int32_t resource,const ProfileMouthAnimation& envelope,uint64_t now) {
+  auto& item=Get(resource);item.Envelope.Begin(envelope,now);item.MouthEnvelopeBound=true;
+}
+void SdkLive2dDriver::EndMouthEnvelope(int32_t resource) {
+  auto& item=Get(resource);item.Envelope.Stop();item.MouthEnvelopeBound=true;
 }
 Cubism2Model& SdkLive2dDriver::Model(int32_t resource) {
   return *Get(resource).Model;

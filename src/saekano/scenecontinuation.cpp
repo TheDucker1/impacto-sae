@@ -53,8 +53,8 @@ void String(std::ostream& out, std::string_view value) {
 }
 }
 int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
-                         std::optional<size_t> untilMessage, std::ostream& report,bool confirmFirstMission) {
-  DiscoveryBuffer output(report.rdbuf(),!confirmFirstMission);std::ostream out(&output);
+                         std::optional<size_t> untilMessage, std::ostream& report,bool confirmFirstMission,bool chooseFirstApproach) {
+  DiscoveryBuffer output(report.rdbuf(),!confirmFirstMission && !chooseFirstApproach);std::ostream out(&output);
   if (!frameBudget || frameBudget > 1000000)
     throw FormatError("scene continuation frame budget outside1..1000000");
   GameResources resources(Read(root / "resource.dat"));
@@ -114,7 +114,11 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   ClockedOrdinaryVoice voices(root);
   auto controls = MakeFreshOrdinaryMouthControl();
   std::map<uint16_t, ProfileMouthPlayback> mouths;
-  SpriteMessageMouth spriteMouth(vm->State(), controls, mouths);
+  SpriteMessageMouth spriteMouth(vm->State(), controls, mouths
+#ifdef SAEKANO_SCENE_CUBISM2
+      ,&models
+#endif
+  );
   std::unique_ptr<SceneMessageVoiceOwner> voiceOwner;
   int32_t voiceScript = -1;
   const auto sync = [&] {
@@ -168,6 +172,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
            "\"fresh_unread_controls\":true,\"history_bound\":false,\"gpu_pixels\":false}\n";
   };
   bool confirmationDue=false,confirmationSent=false;
+  uint32_t choiceStep=0;bool choiceCompleted=false;
   try {
     for (size_t frame = 0; frame < frameBudget; ++frame) {
       now = uint64_t(frame) * 16;
@@ -182,6 +187,19 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
       voices.Update(now);
       bool ended = false, reached = false, waitingMission=false,waitingSelection=false;
       CommandInput commandInput;
+      if(chooseFirstApproach && !choiceCompleted) {
+        const auto& menu=vm->State().ApproachSelection;
+        if(menu.Visible && !menu.PendingPhase) {
+          if(choiceStep==0 && menu.Phase==4){commandInput.Approach.Next=true;++choiceStep;}
+          else if(choiceStep==1 && menu.Phase==4 && !menu.ParentUnselected){commandInput.Approach.Accept=true;++choiceStep;}
+          else if(choiceStep==2 && menu.Phase==7){commandInput.Approach.Next=true;++choiceStep;}
+          else if(choiceStep==3 && menu.Phase==7 && !menu.ChildUnselected){commandInput.Approach.Accept=true;++choiceStep;}
+          if(commandInput.Approach.Next || commandInput.Approach.Accept) {
+            out << "{\"kind\":\"approach_selection_input\",\"step\":" << choiceStep << ",\"now\":" << now
+                << ",\"source\":\"explicit_probe_controller_input\"}\n";
+          }
+        }
+      }
       if(confirmationDue) {
         commandInput.Advance=true;confirmationDue=false;confirmationSent=true;
         out << "{\"kind\":\"mission_confirmation\",\"now\":" << now
@@ -190,7 +208,12 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
       }
       for (size_t work = 0; work < 256; ++work) {
         sync();
-        const auto event = vm->Step(now,commandInput);commandInput.Advance=false;
+        const auto event = vm->Step(now,commandInput);commandInput.Advance=false;commandInput.Approach={};
+        if(chooseFirstApproach && event.Opcode==0x3f6 && event.Boundary==VmBoundary::CommandCompletedBeforeDispatch) {
+          choiceCompleted=true;output.Enabled=true;
+          out << "{\"kind\":\"approach_selection_committed\",\"script\":" << event.Script
+              << ",\"command\":" << event.Command << ",\"now\":" << now << ",\"choice_step\":" << choiceStep << "}\n";
+        }
         sync();
         if (event.Boundary == VmBoundary::CommandStarted || event.Boundary == VmBoundary::CommandCompletedBeforeDispatch) {
           ++boundaries;
@@ -287,8 +310,8 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         }
       }
       if(waitingMission) {
-        if(confirmFirstMission && !confirmationSent) {
-          output.Enabled=true;confirmationDue=true;
+        if((confirmFirstMission || chooseFirstApproach) && !confirmationSent) {
+          output.Enabled=!chooseFirstApproach;confirmationDue=true;
           out << "{\"kind\":\"mission_confirmation_wait\",\"now\":" << now
               << ",\"script\":" << vm->State().ScriptFileId << ",\"command\":"
               << vm->State().CurrentCommandIndex << "}\n";
@@ -308,7 +331,9 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
           for(size_t i=0;i<selection.ChildCounts.size();++i){if(i)out << ',';out << selection.ChildCounts[i];}
           out << "]}\n";
         }
-        finish("explicit_choice_required",false);return 1;
+        if(!(chooseFirstApproach && !choiceCompleted && vm->Opcode()==0x3f6)) {
+          finish("explicit_choice_required",false);return 1;
+        }
       }
       for (const auto& [id, actor] : vm->State().Characters)
         if (actor.Pose.Ready && actor.Tweens[size_t(CharacterTween::Opacity)].Current != 0) mouths.at(id).Update(now);

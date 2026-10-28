@@ -45,28 +45,46 @@ std::vector<MouthTarget> SelectOrdinaryMouthTargets(
   }
   return result;
 }
-std::vector<uint16_t> SpriteMessageMouth::Targets(int32_t speaker, bool cleanup) const {
+int32_t SpriteMessageMouth::Resource(int32_t logical) const {
+  const auto found=std::find_if(state_.Live2d.Records.begin(),state_.Live2d.Records.end(),
+      [&](const auto& record){return record.LogicalId==logical;});
+  if(found==state_.Live2d.Records.end() || !found->ResourceId)
+    throw UnsupportedCommand("selected model mouth resource is unavailable");
+  return *found->ResourceId;
+}
+std::vector<MouthTarget> SpriteMessageMouth::Targets(int32_t speaker, bool cleanup) const {
   if (!state_.Live2d.Known || !state_.CharacterRuntimeState.Known)
     throw UnsupportedCommand("ordinary mouth actor extent is unknown");
-  if (!control_.OverrideEnabled && !state_.Live2d.Records.empty())
+  if (!models_ && !control_.OverrideEnabled && !state_.Live2d.Records.empty())
     throw UnsupportedCommand("ordinary Live2D mouth service is not bound");
   std::vector<uint16_t> keys;
   for (const auto& [id, actor] : state_.Characters) keys.push_back(id);
-  const auto selected = SelectOrdinaryMouthTargets(control_, speaker, keys, {}, cleanup);
-  std::vector<uint16_t> result;
+  std::vector<MouthModelRecord> records;
+  for(const auto& record:state_.Live2d.Records)records.push_back({record.LogicalId,record.ResourceId.has_value()});
+  const auto selected = SelectOrdinaryMouthTargets(control_, speaker, keys, records, cleanup);
   for (const auto& target : selected) {
-    const auto id = uint16_t(target.Id);
-    if (!state_.Characters.at(id).RuntimeKnown || !channels_.contains(id))
-      throw UnsupportedCommand("selected actor mouth state is unknown");
-    result.push_back(id);
+    if(target.Kind==MouthTargetKind::Model) {
+      if(!models_ || !models_->MouthResourceReady(Resource(target.Id)))
+        throw UnsupportedCommand("selected model mouth resource is not ready");
+    } else {
+      const auto id = uint16_t(target.Id);
+      if (!state_.Characters.at(id).RuntimeKnown || !channels_.contains(id))
+        throw UnsupportedCommand("selected actor mouth state is unknown");
+    }
   }
-  return result;
+  return selected;
 }
 void SpriteMessageMouth::Begin(int32_t speaker,
     const ProfileMouthAnimation& envelope, uint64_t now) {
-  for (const auto id : Targets(speaker, false)) channels_.at(id).Begin(envelope, now);
+  for (const auto target : Targets(speaker, false)) {
+    if(target.Kind==MouthTargetKind::Model)models_->BeginMouthEnvelope(Resource(target.Id),envelope,now);
+    else channels_.at(uint16_t(target.Id)).Begin(envelope,now);
+  }
 }
 void SpriteMessageMouth::End(int32_t speaker) {
-  for (const auto id : Targets(speaker, true)) channels_.at(id).Stop();
+  for (const auto target : Targets(speaker, true)) {
+    if(target.Kind==MouthTargetKind::Model)models_->EndMouthEnvelope(Resource(target.Id));
+    else channels_.at(uint16_t(target.Id)).Stop();
+  }
 }
 }  // namespace Impacto::Saekano

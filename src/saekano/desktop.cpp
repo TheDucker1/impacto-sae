@@ -719,9 +719,9 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                       std::optional<size_t> captureUntilMessage = {},
                       std::optional<size_t> captureFromCommand = {},
                       std::optional<int32_t> captureScriptOverride = {},
-                      bool captureWaitingInput = false,bool captureConfirmInput = false,bool captureMenuInput = false,
-                      bool captureMenuPointer = false) {
+                      bool captureWaitingInput = false,bool captureConfirmInput = false,int32_t captureMenuInput = 0) {
   const bool capture = !captureDirectory.empty();
+  const bool captureMenuPointer=captureMenuInput==2,captureBranch=captureMenuInput==3;
   if (!owner.WindowOpacity || !owner.ReadColorEnabled || !owner.TextSpeed ||
       !owner.AutoSpeed)
     throw UnsupportedCommand("scene owner display settings are missing");
@@ -782,7 +782,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       throw FormatError("capture target is not a valid entry-script command/message");
     if (!capture || !captureAuto)
       throw FormatError("capture target requires automatic capture mode");
-    if(captureMenuInput && script.Records()[*captureUntilMessage].Opcode!=0x3f6)
+    if(captureMenuInput && script.Records()[*captureUntilMessage].Opcode!=(captureBranch?0x64:0x3f6))
       throw FormatError("menu capture target requires approach selection");
   }
   bool targetCompleted = false, targetWaitingReached = false;
@@ -793,7 +793,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   std::optional<uint64_t> pcmEpoch;
   auto mouthControl = MakeFreshOrdinaryMouthControl();
   std::map<uint16_t, ProfileMouthPlayback> mouths;
-  SpriteMessageMouth spriteMouth(vm->State(), mouthControl, mouths);
+  SpriteMessageMouth spriteMouth(vm->State(), mouthControl, mouths,&models);
   PlaybackOrdinaryVoice voices(playback, root, voiceSettings.Volume, 1.0f);
   std::unique_ptr<SceneMessageVoiceOwner> voiceOwner;
   int32_t voiceScript = -1;
@@ -880,7 +880,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   std::vector<WidgetEventHistory> menuParents,menuChildren,menuArrows;
   std::pair<int32_t,int32_t> menuIdentity{-1,-1};
   int32_t menuChildParent=-1;
-  const uint32_t frameBudget = captureFromCommand ? 20000 : 2000;
+  const uint32_t frameBudget = captureFromCommand ? (captureBranch?22000:20000) : 2000;
   for (uint32_t frame = 0; !quit && (!capture || frame < frameBudget); ++frame) {
     const uint64_t now =
         capture ? uint64_t(frame) * 16 : SDL_GetTicks() - epoch;
@@ -893,7 +893,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       SDL_Keycode key=0;
       if(menuMissionDue){key=SDLK_RETURN;menuMissionDue=false;menuMissionSent=true;}
       else if(!captureMenuPointer && menu.Visible && vm->State().ScriptFileId==captureScript &&
-          size_t(vm->State().CurrentCommandIndex)==*captureUntilMessage && !menu.PendingPhase) {
+          (captureBranch || size_t(vm->State().CurrentCommandIndex)==*captureUntilMessage) && !menu.PendingPhase) {
         if(menuCaptureStep==0 && menu.Phase==4){key=SDLK_DOWN;++menuCaptureStep;}
         else if(menuCaptureStep==1 && menu.Phase==4 && !menu.ParentUnselected){key=SDLK_RETURN;++menuCaptureStep;}
         else if(menuCaptureStep==2 && menu.Phase==7){key=SDLK_DOWN;++menuCaptureStep;}
@@ -1445,6 +1445,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       const auto& menu=state.ApproachSelection;
       signature+=':'+std::to_string(menu.Visible)+':'+std::to_string(menu.Phase)+':'+std::to_string(menu.Parent)+':'+std::to_string(menu.Child);
       signature+=':'+std::to_string(menu.Scroll.Current);
+      if(captureBranch)for(const auto& record:state.Live2d.Records)
+        if(record.ResourceId)signature+=':'+std::to_string(models.Observe(*record.ResourceId).MouthActive);
     }
     for (const auto& fill : state.SceneImages.Slots.FillRects)
       signature += ':' + std::to_string(fill.Opacity / 16);
@@ -1571,7 +1573,9 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                << ',' << int(observation.Color[2]) << ',' << int(observation.Color[3]) << "],\"matrix\":[";
         const auto matrix=models.Matrix(id);
         for(size_t i=0;i<matrix.size();++i){if(i)report << ',';report << matrix[i];}
-        report << "],\"textures\":" << modelTextures.at(id)->Handles.size() << ",\"ui_gl_state_restored\":true}";
+        report << "],\"textures\":" << modelTextures.at(id)->Handles.size()
+               << ",\"mouth_active\":" << observation.MouthActive << ",\"mouth_bits\":" << std::bit_cast<uint32_t>(observation.Mouth)
+               << ",\"ui_gl_state_restored\":true}";
       }
       report << "],\"widget_inputs\":[";
       for (size_t i = 0; i < widgetInputs.size(); ++i) {
@@ -2973,7 +2977,7 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
                         bool captureAuto, bool captureButtonAuto, bool captureVoiced,
                         std::optional<size_t> captureUntilMessage,
                         std::optional<size_t> captureFromCommand,
-                        std::optional<int32_t> captureScriptOverride,bool captureWaitingInput,bool captureConfirmInput,bool captureMenuInput,bool captureMenuPointer) {
+                        std::optional<int32_t> captureScriptOverride,bool captureWaitingInput,bool captureConfirmInput,int32_t captureMenuInput) {
   bool created = false;
   try {
     const bool capture = !captureDirectory.empty();
@@ -3039,7 +3043,7 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
     return RunCompletedScene(window, renderer, fontTextures, font, resources,
                              playback, music, sounds, std::move(owner), mode,
                              usrdir, captureDirectory, captureAuto, captureButtonAuto, captureVoiced,
-                             captureUntilMessage, captureFromCommand,captureScriptOverride,captureWaitingInput,captureConfirmInput,captureMenuInput,captureMenuPointer);
+                             captureUntilMessage, captureFromCommand,captureScriptOverride,captureWaitingInput,captureConfirmInput,captureMenuInput);
   } catch (const std::exception& error) {
     if (created) {
       std::ofstream out(captureDirectory / "error.txt");

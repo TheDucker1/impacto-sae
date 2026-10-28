@@ -3,6 +3,7 @@
 #include "live2denv.h"
 #include "live2dsdk.h"
 #include "resources.h"
+#include "modelmouth.h"
 
 #include <map>
 
@@ -25,7 +26,7 @@ struct Live2dDriverObservation {
 // Saekano's game wrapper around the original Cubism2 SDK/framework. Resource
 // preparation is synchronous on the owning thread; successful ResourceReady
 // means parsing has actually completed, not merely that a request was queued.
-class SdkLive2dDriver final : public Live2dDriver {
+class SdkLive2dDriver final : public Live2dDriver,public OrdinaryModelMouthServices {
  public:
   SdkLive2dDriver(GameResources& resources, Live2dEnvironment environment);
   ~SdkLive2dDriver();
@@ -53,6 +54,9 @@ class SdkLive2dDriver final : public Live2dDriver {
   // Invisible attached models still animate. No OpenGL context is needed here.
   void Frame(const Live2dState& state, uint64_t now);
   void SetMouth(int32_t resource, bool enabled, uint64_t now);
+  bool MouthResourceReady(int32_t resource) const override { return ResourceReady(resource); }
+  void BeginMouthEnvelope(int32_t resource,const ProfileMouthAnimation& envelope,uint64_t now) override;
+  void EndMouthEnvelope(int32_t resource) override;
   Cubism2Model& Model(int32_t resource);
   const Live2dModelAssets& Assets(int32_t resource) const;
   Live2dDriverObservation Observe(int32_t resource) const;

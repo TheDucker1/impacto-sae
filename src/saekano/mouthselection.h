@@ -2,6 +2,7 @@
 
 #include "scenemessage.h"
 #include "profilemouth.h"
+#include "modelmouth.h"
 #include <map>
 
 namespace Impacto::Saekano {
@@ -22,13 +23,14 @@ std::vector<MouthTarget> SelectOrdinaryMouthTargets(
     std::span<const uint16_t> spriteIds,
     std::span<const MouthModelRecord> models, bool cleanup);
 
-// Sprite path only. The caller supplies actual known mouth channels and owns
-// their eligible per-actor updates. Live2D envelope/SDK binding remains separate.
+// The caller owns sprite update eligibility and supplies model envelope services
+// when attached model records participate in the native target-selection path.
 class SpriteMessageMouth final : public OrdinaryMessageMouth {
  public:
   SpriteMessageMouth(const SemanticState& state, const OrdinaryMouthControl& control,
-                     std::map<uint16_t, ProfileMouthPlayback>& channels)
-      : state_(state), control_(control), channels_(channels) {}
+                     std::map<uint16_t, ProfileMouthPlayback>& channels,
+                     OrdinaryModelMouthServices* models=nullptr)
+      : state_(state), control_(control), channels_(channels),models_(models) {}
   void Begin(int32_t speaker, const ProfileMouthAnimation& envelope,
              uint64_t now) override;
   void End(int32_t speaker) override;
@@ -36,6 +38,8 @@ class SpriteMessageMouth final : public OrdinaryMessageMouth {
   const SemanticState& state_;
   const OrdinaryMouthControl& control_;
   std::map<uint16_t, ProfileMouthPlayback>& channels_;
-  std::vector<uint16_t> Targets(int32_t speaker, bool cleanup) const;
+  OrdinaryModelMouthServices* models_;
+  std::vector<MouthTarget> Targets(int32_t speaker, bool cleanup) const;
+  int32_t Resource(int32_t logical) const;
 };
 }  // namespace Impacto::Saekano
