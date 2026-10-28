@@ -20,6 +20,20 @@
 
 namespace Impacto::Saekano {
 namespace {
+class DiscoveryBuffer final : public std::streambuf {
+ public:
+  std::streambuf* Target;
+  bool Enabled;
+  DiscoveryBuffer(std::streambuf* target,bool enabled):Target(target),Enabled(enabled){}
+ protected:
+  std::streamsize xsputn(const char* data,std::streamsize size) override {
+    return Enabled?Target->sputn(data,size):size;
+  }
+  int_type overflow(int_type value) override {
+    if(traits_type::eq_int_type(value,traits_type::eof()))return traits_type::not_eof(value);
+    return Enabled?Target->sputc(traits_type::to_char_type(value)):value;
+  }
+};
 Bytes Read(const std::filesystem::path& path) {
   std::ifstream stream(path, std::ios::binary);
   if (!stream) throw FormatError("cannot open scene continuation input");
@@ -39,7 +53,8 @@ void String(std::ostream& out, std::string_view value) {
 }
 }
 int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
-                         std::optional<size_t> untilMessage, std::ostream& out) {
+                         std::optional<size_t> untilMessage, std::ostream& report,bool confirmFirstMission) {
+  DiscoveryBuffer output(report.rdbuf(),!confirmFirstMission);std::ostream out(&output);
   if (!frameBudget || frameBudget > 1000000)
     throw FormatError("scene continuation frame budget outside1..1000000");
   GameResources resources(Read(root / "resource.dat"));
@@ -138,6 +153,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   std::optional<std::pair<int32_t, uint32_t>> previousFilter;
   std::optional<std::tuple<int32_t,int32_t,int32_t>> previousMission;
   const auto finish = [&](std::string_view reason, bool success) {
+    output.Enabled=true;  // A failure before the requested gate still reports its exact boundary.
     out << "{\"kind\":\"result\",\"success\":" << (success ? "true" : "false") << ",\"reason\":";
     String(out, reason);
     out << ",\"now\":" << now << ",\"script\":" << vm->State().ScriptFileId
@@ -150,6 +166,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         << ",\"clock_step_ms\":16,\"seed\":0,\"voice_pcm_decoded\":true,\"bgm_se_playback\":false,"
            "\"fresh_unread_controls\":true,\"history_bound\":false,\"gpu_pixels\":false}\n";
   };
+  bool confirmationDue=false,confirmationSent=false;
   try {
     for (size_t frame = 0; frame < frameBudget; ++frame) {
       now = uint64_t(frame) * 16;
@@ -162,10 +179,17 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
       vm->UpdateSkipAuto(policy, policyInput, policyConfig.AutoKeyDuration, now);
       backend.AutoAdvance = policy.Auto;
       voices.Update(now);
-      bool ended = false, reached = false, waitingMission=false;
+      bool ended = false, reached = false, waitingMission=false,waitingSelection=false;
+      CommandInput commandInput;
+      if(confirmationDue) {
+        commandInput.Advance=true;confirmationDue=false;confirmationSent=true;
+        out << "{\"kind\":\"mission_confirmation\",\"now\":" << now
+            << ",\"source\":\"explicit_probe_Advance\",\"script\":" << vm->State().ScriptFileId
+            << ",\"command\":" << vm->State().CurrentCommandIndex << "}\n";
+      }
       for (size_t work = 0; work < 256; ++work) {
         sync();
-        const auto event = vm->Step(now);
+        const auto event = vm->Step(now,commandInput);commandInput.Advance=false;
         sync();
         if (event.Boundary == VmBoundary::CommandStarted || event.Boundary == VmBoundary::CommandCompletedBeforeDispatch) {
           ++boundaries;
@@ -225,7 +249,9 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
           }
         }
         if(event.Boundary==VmBoundary::WaitingInput && event.Opcode==0x3f7 &&
-            vm->State().ApproachMission.Stage==2)waitingMission=true;
+            vm->State().ApproachMission.Stage==2 && !vm->State().ApproachMission.PendingStage)waitingMission=true;
+        if(event.Boundary==VmBoundary::WaitingInput && (event.Opcode==0x65 || event.Opcode==0x3f6))
+          waitingSelection=true;
         if (event.Boundary == VmBoundary::WaitingInput || event.Boundary == VmBoundary::WaitingBackend) break;
         if (event.Boundary == VmBoundary::Ended) { ended = true; break; }
         if (work == 255) throw UnsupportedCommand("continuation per-frame command budget exceeded");
@@ -259,7 +285,15 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
           out << "]}\n";previousMission=sample;
         }
       }
-      if(waitingMission){finish("approach_mission_confirmation_required",false);return 1;}
+      if(waitingMission) {
+        if(confirmFirstMission && !confirmationSent) {
+          output.Enabled=true;confirmationDue=true;
+          out << "{\"kind\":\"mission_confirmation_wait\",\"now\":" << now
+              << ",\"script\":" << vm->State().ScriptFileId << ",\"command\":"
+              << vm->State().CurrentCommandIndex << "}\n";
+        } else {finish("approach_mission_confirmation_required",false);return 1;}
+      }
+      if(waitingSelection){finish("explicit_choice_required",false);return 1;}
       for (const auto& [id, actor] : vm->State().Characters)
         if (actor.Pose.Ready && actor.Tweens[size_t(CharacterTween::Opacity)].Current != 0) mouths.at(id).Update(now);
       backend.UpdateMessage(now);

@@ -284,14 +284,15 @@ int main(int argc, char* argv[]) {
   if (argc == 4 && std::string_view(argv[1]) == "--saekano-sdk-ui-check")
     return Saekano::RunSceneSdkUiProbe(argv[2],argv[3]);
   if (argc >= 2 && std::string_view(argv[1]) == "--saekano-first-scene") {
-    if ((argc==8 || (argc==9 && std::string_view(argv[8])=="--wait")) &&
+    if ((argc==8 || (argc==9 && (std::string_view(argv[8])=="--wait" || std::string_view(argv[8])=="--confirm"))) &&
         std::string_view(argv[3])=="--capture-script-range") {
       int32_t script=0;size_t first=0,last=0;
       const auto parse=[](const char* value,auto& output){const std::string_view text(value);
         const auto r=std::from_chars(text.data(),text.data()+text.size(),output);
         return r.ec==std::errc{} && r.ptr==text.data()+text.size();};
       if(parse(argv[4],script) && script>=0 && parse(argv[5],first) && parse(argv[6],last))
-        return Saekano::RunFirstSceneViewer(argv[2],argv[7],true,false,true,last,first,script,argc==9);
+        return Saekano::RunFirstSceneViewer(argv[2],argv[7],true,false,true,last,first,script,
+            argc==9 && std::string_view(argv[8])=="--wait",argc==9 && std::string_view(argv[8])=="--confirm");
     }
     if (argc == 7 && std::string_view(argv[3]) == "--capture-range") {
       size_t first = 0, last = 0;
@@ -319,7 +320,7 @@ int main(int argc, char* argv[]) {
           argc == 5 && std::string_view(argv[3]) == "--capture-auto-button",
           argc == 5 && std::string_view(argv[3]) == "--capture-voiced");
     ImpLog(LogLevel::Error, LogChannel::General,
-           "Usage: --saekano-first-scene USRDIR [--capture DIRECTORY | --capture-auto DIRECTORY | --capture-auto-button DIRECTORY | --capture-voiced DIRECTORY | --capture-until MESSAGE_COMMAND DIRECTORY | --capture-range FIRST_COMMAND LAST_COMMAND DIRECTORY | --capture-script-range SCRIPT FIRST LAST DIRECTORY [--wait]]\n");
+           "Usage: --saekano-first-scene USRDIR [--capture DIRECTORY | --capture-auto DIRECTORY | --capture-auto-button DIRECTORY | --capture-voiced DIRECTORY | --capture-until MESSAGE_COMMAND DIRECTORY | --capture-range FIRST_COMMAND LAST_COMMAND DIRECTORY | --capture-script-range SCRIPT FIRST LAST DIRECTORY [--wait|--confirm]]\n");
     return 1;
   }
   if (argc >= 2 && std::string_view(argv[1]) == "--saekano-profile-items") {

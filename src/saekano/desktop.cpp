@@ -719,7 +719,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                       std::optional<size_t> captureUntilMessage = {},
                       std::optional<size_t> captureFromCommand = {},
                       std::optional<int32_t> captureScriptOverride = {},
-                      bool captureWaitingInput = false) {
+                      bool captureWaitingInput = false,bool captureConfirmInput = false) {
   const bool capture = !captureDirectory.empty();
   if (!owner.WindowOpacity || !owner.ReadColorEnabled || !owner.TextSpeed ||
       !owner.AutoSpeed)
@@ -780,7 +780,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       throw FormatError("capture target requires automatic capture mode");
   }
   bool targetCompleted = false, targetWaitingReached = false;
-  bool captureActive = !captureFromCommand;
+  bool captureActive = !captureFromCommand && !captureConfirmInput;
+  bool confirmDue=false,confirmSent=false;
   std::optional<uint64_t> pcmEpoch;
   auto mouthControl = MakeFreshOrdinaryMouthControl();
   std::map<uint16_t, ProfileMouthPlayback> mouths;
@@ -875,6 +876,18 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     CommandInput input;
     SkipAutoInput policyInput;
     SDL_Event event;
+    if(capture && confirmDue) {
+      // Explicit capture input, delivered through the same SDL key handler as
+      // a user's Enter press. Normal gameplay never fabricates confirmation.
+      for(const auto type:{SDL_EVENT_KEY_DOWN,SDL_EVENT_KEY_UP}) {
+        SDL_Event key{};key.type=type;key.key.windowID=SDL_GetWindowID(window.Window);
+        key.key.key=SDLK_RETURN;key.key.down=type==SDL_EVENT_KEY_DOWN;
+        SdlCheck(SDL_PushEvent(&key),"capture confirmation key");
+      }
+      confirmDue=false;confirmSent=true;
+      events << "{\"kind\":\"explicit_confirmation\",\"source\":\"SDL_Enter\",\"now\":"
+             << now << ",\"script\":" << captureScript << ",\"command\":" << *captureUntilMessage << "}\n";
+    }
     if (capture && !captureAuto && firstMessage != UINT64_MAX &&
         capturePointerStage < (captureButtonAuto ? 2u : 4u)) {
       constexpr std::array<uint64_t, 4> Delays{96, 112, 512, 528};
@@ -1026,7 +1039,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       bindScriptVoices();
       syncMouths();
       const auto step = vm->Step(now, input);
-      if (captureFromCommand && step.Script == captureScript &&
+      if (!captureConfirmInput && captureFromCommand && step.Script == captureScript &&
           size_t(step.Command) >= *captureFromCommand) captureActive = true;
       input.Advance = false;
       syncMouths();
@@ -1051,10 +1064,12 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       }
       if (step.Boundary == VmBoundary::WaitingInput ||
           step.Boundary == VmBoundary::WaitingBackend) {
-        if(capture && captureWaitingInput && captureUntilMessage &&
+        if(capture && (captureWaitingInput || captureConfirmInput) && captureUntilMessage &&
             step.Script==captureScript && size_t(step.Command)==*captureUntilMessage &&
             step.Boundary==VmBoundary::WaitingInput) {
-          targetCompleted=true;targetWaitingReached=true;quit=true;
+          targetWaitingReached=true;
+          if(captureWaitingInput){targetCompleted=true;quit=true;}
+          else if(!confirmSent){captureActive=true;confirmDue=true;}
         }
         break;
       }
@@ -1343,6 +1358,9 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       if (pcmEpoch) report << *pcmEpoch; else report << "null";
       report
              << ",\"completed\":" << (quit ? "true" : "false")
+             << ",\"capture_confirmation_sent\":" << (confirmSent?"true":"false")
+             << ",\"capture_wait_reached\":" << (targetWaitingReached?"true":"false")
+             << ",\"mission_voice_playing\":" << (playback.MissionVoicePlaying()?"true":"false")
              << ",\"bgm\":" << state.BgmTrack.value_or(-1)
              << ",\"screen_fade\":" << state.ScreenFade.value_or(-1)
              << ",\"screen_filter\":[" << *state.ScreenFilter.Mode << ',' << *state.ScreenFilter.Intensity << ']'
@@ -1521,7 +1539,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     pcm.close();
     events.close();
     if (!quit || firstMessage == UINT64_MAX || (captureUntilMessage && !targetCompleted) ||
-        (captureWaitingInput && !targetWaitingReached))
+        ((captureWaitingInput || captureConfirmInput) && !targetWaitingReached) ||
+        (captureConfirmInput && !confirmSent))
       throw UnsupportedCommand("scene preview budget exhausted");
   }
   return 0;
@@ -2833,7 +2852,7 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
                         bool captureAuto, bool captureButtonAuto, bool captureVoiced,
                         std::optional<size_t> captureUntilMessage,
                         std::optional<size_t> captureFromCommand,
-                        std::optional<int32_t> captureScriptOverride,bool captureWaitingInput) {
+                        std::optional<int32_t> captureScriptOverride,bool captureWaitingInput,bool captureConfirmInput) {
   bool created = false;
   try {
     const bool capture = !captureDirectory.empty();
@@ -2892,11 +2911,14 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
                     GsfFont::Decode(SceneRead(usrdir / "Font.gsf")));
     ArchiveBgmResources music(usrdir);
     ArchiveSeResources sounds(usrdir);
+    SystemSoundAssets systemSounds(SceneRead(usrdir/"first.dat"));
     MusicPlayback playback(music, capture, &sounds);
+    // Fresh standalone viewer has the same native S60235 option8 as profile flow.
+    playback.BindUiSounds(systemSounds,ProfileVoiceGain(8,1.0f));
     return RunCompletedScene(window, renderer, fontTextures, font, resources,
                              playback, music, sounds, std::move(owner), mode,
                              usrdir, captureDirectory, captureAuto, captureButtonAuto, captureVoiced,
-                             captureUntilMessage, captureFromCommand,captureScriptOverride,captureWaitingInput);
+                             captureUntilMessage, captureFromCommand,captureScriptOverride,captureWaitingInput,captureConfirmInput);
   } catch (const std::exception& error) {
     if (created) {
       std::ofstream out(captureDirectory / "error.txt");
