@@ -2,6 +2,12 @@
 #include "commands.h"
 
 namespace Impacto::Saekano {
+void ApproachMissionAudio::Prepare(int32_t) {
+  throw UnsupportedCommand("mission voice preparation is unavailable");
+}
+void ApproachMissionAudio::Start(uint64_t) {
+  throw UnsupportedCommand("mission voice start is unavailable");
+}
 namespace {
 void Restart(ApproachMissionState& s,size_t i,uint64_t now) {
   auto& t=s.Tweens[i];t.StartUnsigned(t.From,t.To,t.Duration,now);s.Enabled[i]=true;

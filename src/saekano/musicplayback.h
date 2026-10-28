@@ -42,6 +42,9 @@ class MusicPlayback {
   bool OrdinaryVoicePlaying(uint32_t channel) const;
   int32_t OrdinaryVoicePosition(uint32_t channel) const;  // Milliseconds, or-1.
   void PlayMissionVoice(uint32_t voiceId,std::unique_ptr<HcaWaveReader> reader,float gain);
+  void PrepareMissionVoice(uint32_t voiceId,std::unique_ptr<HcaWaveReader> reader,float gain);
+  void StartMissionVoice();
+  bool MissionVoiceReady() const;
   void ResetMissionVoice();
   bool MissionVoicePlaying() const;
   int32_t MissionVoicePosition() const;
@@ -79,6 +82,8 @@ class PlaybackMissionVoice final : public ApproachMissionAudio {
                        uint8_t volume,float coefficient);
   void Register(std::span<const int32_t> ids) override;
   void Begin(int32_t id,uint64_t now) override;
+  void Prepare(int32_t id) override;
+  void Start(uint64_t now) override;
   void Update(uint64_t) override {}  // The physical host owns the clock.
   void Disable() override;
   void Reset() override { Disable();catalog_.clear(); }
@@ -124,6 +129,8 @@ int RunOrdinaryVoiceSession(const std::filesystem::path& usrdir,
                             const std::filesystem::path& captureDirectory);
 int RunMissionVoiceSession(const std::filesystem::path& usrdir,
                            const std::filesystem::path& captureDirectory,bool lifecycleOnly=false);
+int RunMissionVoicePrepareSession(const std::filesystem::path& usrdir,
+                                  const std::filesystem::path& captureDirectory);
 int RunOrdinaryVoiceStopSession(const std::filesystem::path& usrdir,
                                const std::filesystem::path& captureDirectory);
 int RunUiSoundSession(const std::filesystem::path& usrdir,

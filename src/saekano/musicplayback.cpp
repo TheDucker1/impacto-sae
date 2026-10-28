@@ -177,6 +177,7 @@ struct MusicPlayback::Impl {
   std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> SecondaryVoice;
   std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> MissionVoice;
   bool HasMissionVoice=false;
+  std::unique_ptr<HcaPlaybackStream> PreparedMissionVoice;
   std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> UiSound;
   SystemSoundAssets* UiSounds = nullptr;
   float UiSoundGain = 0;
@@ -257,6 +258,7 @@ struct MusicPlayback::Impl {
     ProfileVoice.reset();
     SecondaryVoice.reset();
     MissionVoice.reset();
+    PreparedMissionVoice.reset();
     UiSound.reset();
     PreparedProfileVoice.reset();
     for (auto& channel : SeChannels) channel.reset();
@@ -533,15 +535,25 @@ int32_t PlaybackOrdinaryVoice::Position(uint32_t channel) const {
   return playback_.OrdinaryVoicePosition(channel);
 }
 void MusicPlayback::PlayMissionVoice(uint32_t id,std::unique_ptr<HcaWaveReader> reader,float gain) {
+  PrepareMissionVoice(id,std::move(reader),gain);StartMissionVoice();
+}
+void MusicPlayback::PrepareMissionVoice(uint32_t id,std::unique_ptr<HcaWaveReader> reader,float gain) {
   if(!reader || id>uint32_t(INT16_MAX) || !std::isfinite(gain) || gain<0 || gain>1)
     throw FormatError("invalid mission voice preparation");
   auto stream=std::make_unique<HcaPlaybackStream>(std::move(reader),int32_t(id),"voice.awb/mission11");
   impl_->MissionVoice->Stop(0);impl_->MissionVoice->SetVolume(gain);
-  impl_->MissionVoice->Play(std::move(stream),false,0);impl_->HasMissionVoice=true;
+  impl_->PreparedMissionVoice=std::move(stream);impl_->HasMissionVoice=false;
+  AlCheck("mission voice prepare");
+}
+void MusicPlayback::StartMissionVoice() {
+  if(impl_->PreparedMissionVoice) {
+    impl_->MissionVoice->Play(std::move(impl_->PreparedMissionVoice),false,0);impl_->HasMissionVoice=true;
+  } else if(impl_->HasMissionVoice)impl_->MissionVoice->Resume();
   AlCheck("mission voice play");
 }
+bool MusicPlayback::MissionVoiceReady() const { return bool(impl_->PreparedMissionVoice); }
 void MusicPlayback::ResetMissionVoice() {
-  impl_->MissionVoice->Stop(0);impl_->HasMissionVoice=false;AlCheck("mission voice reset");
+  impl_->MissionVoice->Stop(0);impl_->PreparedMissionVoice.reset();impl_->HasMissionVoice=false;AlCheck("mission voice reset");
 }
 bool MusicPlayback::MissionVoicePlaying() const {
   return impl_->HasMissionVoice && impl_->MissionVoice->GetState()!=Audio::ACS_Stopped;
@@ -566,11 +578,13 @@ void PlaybackMissionVoice::Register(std::span<const int32_t> ids) {
   }
   catalog_=std::move(prepared);
 }
-void PlaybackMissionVoice::Begin(int32_t id,uint64_t) {
+void PlaybackMissionVoice::Begin(int32_t id,uint64_t now) { Prepare(id);Start(now); }
+void PlaybackMissionVoice::Prepare(int32_t id) {
   if(!catalog_.contains(id))throw UnsupportedCommand("mission voice was not registered at script load");
   auto reader=std::make_unique<HcaWaveReader>(bank_,uint32_t(id));
-  playback_.PlayMissionVoice(uint32_t(id),std::move(reader),gain_);
+  playback_.PrepareMissionVoice(uint32_t(id),std::move(reader),gain_);
 }
+void PlaybackMissionVoice::Start(uint64_t) { playback_.StartMissionVoice(); }
 void PlaybackMissionVoice::Disable() { playback_.ResetMissionVoice(); }
 PlaybackProfileVoice::PlaybackProfileVoice(MusicPlayback& playback,
                                            uint8_t option,
@@ -620,6 +634,53 @@ void MusicPlayback::Render(std::span<int16_t> output) {
   }
 }
 
+int RunMissionVoicePrepareSession(const std::filesystem::path& usrdir,
+                                  const std::filesystem::path& captureDirectory) {
+  bool created=false;
+  try {
+    CreateCaptureDirectory(usrdir,captureDirectory);created=true;
+    if(!SDL_Init(SDL_INIT_EVENTS))throw FormatError(SDL_GetError());
+    struct Cleanup { ~Cleanup(){SDL_Quit();} } cleanup;
+    ArchiveBgmResources music(usrdir);MusicPlayback playback(music,true);
+    PlaybackMissionVoice voice(playback,usrdir,10,1.0f);
+    const std::array<int32_t,1> ids{10580};voice.Register(ids);voice.Start(0);
+    if(playback.MissionVoicePlaying() || playback.MissionVoicePosition()!=-1)
+      throw FormatError("empty PC mission Start mutated the channel");
+    voice.Prepare(10580);
+    std::vector<int16_t> before(9600*2);playback.Render(before);
+    if(!playback.MissionVoiceReady() || playback.MissionVoicePlaying() || playback.MissionVoicePosition()!=-1)
+      throw FormatError("PC mission preparation started playback");
+    bool rejected=false;try{voice.Prepare(10581);}catch(const UnsupportedCommand&){rejected=true;}
+    if(!rejected || !playback.MissionVoiceReady())throw FormatError("invalid preparation disturbed PC ready voice");
+    voice.Start(200);
+    if(playback.MissionVoiceReady() || !playback.MissionVoicePlaying())throw FormatError("PC mission Start failed");
+    std::vector<int16_t> body(24000*2);playback.Render(body);
+    const auto position=playback.MissionVoicePosition();
+    voice.Disable();voice.Start(700);
+    std::vector<int16_t> tail(9600*2);playback.Render(tail);
+    if(playback.MissionVoiceReady() || playback.MissionVoicePlaying() || playback.MissionVoicePosition()!=-1)
+      throw FormatError("disabled PC mission retained a source");
+    const auto peak=[](std::span<const int16_t> pcm) {
+      int32_t result=0;for(const auto v:pcm)result=std::max(result,std::abs(int32_t(v)));return result;
+    };
+    const auto beforePeak=peak(before),bodyPeak=peak(body),tailPeak=peak(std::span(tail).last(9600));
+    if(beforePeak>1 || bodyPeak<=32 || tailPeak>1 || position<450 || position>550)
+      throw FormatError("mission prepare/start PCM or position check failed");
+    std::vector<int16_t> pcm;pcm.insert(pcm.end(),before.begin(),before.end());
+    pcm.insert(pcm.end(),body.begin(),body.end());pcm.insert(pcm.end(),tail.begin(),tail.end());
+    SaveWav(captureDirectory/"prepare-start-stop.wav",pcm);
+    std::ofstream report(captureDirectory/"mission-prepare.json");
+    report << "{\"voice\":10580,\"prepared_output_frames\":9600,\"started_output_frames\":24000,"
+           << "\"tail_output_frames\":9600,\"prepared_peak\":" << beforePeak
+           << ",\"playing_peak\":" << bodyPeak << ",\"settled_tail_peak\":" << tailPeak
+           << ",\"started_position_ms\":" << position
+           << ",\"unregistered_preserves_ready\":true,\"disabled_start_noop\":true}\n";
+    return 0;
+  }catch(const std::exception& e) {
+    if(created){std::ofstream error(captureDirectory/"error.txt");error << std::string(e.what()).substr(0,2048);}
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano mission voice preparation: %s",e.what());return 1;
+  }
+}
 int RunMissionVoiceSession(const std::filesystem::path& usrdir,
                            const std::filesystem::path& captureDirectory,bool lifecycleOnly) {
   bool created=false;

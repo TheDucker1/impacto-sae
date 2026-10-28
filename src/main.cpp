@@ -258,6 +258,8 @@ int main(int argc, char* argv[]) {
   }
   if (argc == 4 && std::string_view(argv[1]) == "--saekano-mission-voice")
     return Saekano::RunMissionVoiceSession(argv[2],argv[3]);
+  if (argc == 5 && std::string_view(argv[1]) == "--saekano-mission-voice" && std::string_view(argv[4])=="--prepare")
+    return Saekano::RunMissionVoicePrepareSession(argv[2],argv[3]);
   if (argc == 5 && std::string_view(argv[1]) == "--saekano-mission-voice" && std::string_view(argv[4])=="--lifecycle")
     return Saekano::RunMissionVoiceSession(argv[2],argv[3],true);
   if (argc == 5 && std::string_view(argv[1]) == "--saekano-bgm-fade") {

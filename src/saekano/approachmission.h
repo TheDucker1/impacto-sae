@@ -28,6 +28,10 @@ class ApproachMissionAudio {
   virtual ~ApproachMissionAudio()=default;
   virtual void Register(std::span<const int32_t> ids)=0;
   virtual void Begin(int32_t id,uint64_t now)=0;
+  // Result commands prepare during entrance and start only at reveal. Existing
+  // mission Begin stays immediate; unsupported adapters must reject the split.
+  virtual void Prepare(int32_t);
+  virtual void Start(uint64_t);
   virtual void Update(uint64_t now)=0;
   virtual void Disable()=0;
   virtual void Reset()=0;

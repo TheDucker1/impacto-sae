@@ -14,8 +14,15 @@ void ClockedMissionVoice::Register(std::span<const int32_t> ids) {
   catalog_=std::move(prepared);
 }
 void ClockedMissionVoice::Begin(int32_t id,uint64_t now) {
+  Prepare(id);Start(now);
+}
+void ClockedMissionVoice::Prepare(int32_t id) {
   if(!catalog_.contains(id))throw UnsupportedCommand("mission voice was not registered at script load");
   auto reader=std::make_unique<HcaWaveReader>(bank_,uint32_t(id));
-  voice_.Prepare(std::move(reader));voice_.Start(now);id_=id;
+  voice_.Prepare(std::move(reader));id_=id;prepared_=true;
+}
+void ClockedMissionVoice::Start(uint64_t now) {
+  if(!prepared_)return; // Native Start on an absent/disabled channel is a no-op.
+  voice_.Start(now);prepared_=false;
 }
 }
