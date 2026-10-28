@@ -131,7 +131,70 @@ struct ModelTextures {
     Handles.clear();
   }
   ~ModelTextures() { Release(); }
+  void Bind(Cubism2Model& model) const {
+    for(size_t i=0;i<Handles.size();++i)model.BindTexture(i,Handles[i]);
+  }
 };
+
+// Cubism2 owns a legacy GL pipeline. Keep its client arrays on VAO0 and restore
+// the UI pipeline, including fixed-function state changed by the SDK.
+struct ScopedSdkGlState {
+  using Push=void(APIENTRY*)(GLbitfield);
+  using Pop=void(APIENTRY*)();
+  Pop PopAttributes=nullptr,PopClientAttributes=nullptr;
+  GLint Program=0,Vao=0,ArrayBuffer=0,ActiveTexture=0;
+  ScopedSdkGlState() {
+    // The app's GLAD surface is core-only; resolve the compatibility functions
+    // from the compatibility context created for the legacy SDK.
+    const auto push=reinterpret_cast<Push>(SDL_GL_GetProcAddress("glPushAttrib"));
+    const auto pushClient=reinterpret_cast<Push>(SDL_GL_GetProcAddress("glPushClientAttrib"));
+    PopAttributes=reinterpret_cast<Pop>(SDL_GL_GetProcAddress("glPopAttrib"));
+    PopClientAttributes=reinterpret_cast<Pop>(SDL_GL_GetProcAddress("glPopClientAttrib"));
+    if(!push || !pushClient || !PopAttributes || !PopClientAttributes)
+      throw UnsupportedCommand("SDK compatibility GL state functions are unavailable");
+    glGetIntegerv(GL_CURRENT_PROGRAM,&Program);glGetIntegerv(GL_VERTEX_ARRAY_BINDING,&Vao);
+    glGetIntegerv(GL_ARRAY_BUFFER_BINDING,&ArrayBuffer);glGetIntegerv(GL_ACTIVE_TEXTURE,&ActiveTexture);
+    push(0x000fffff);glBindVertexArray(0);  // GL_ALL_ATTRIB_BITS.
+    pushClient(0xffffffff);glUseProgram(0);glActiveTexture(GL_TEXTURE0);
+  }
+  ~ScopedSdkGlState() {
+    PopClientAttributes();PopAttributes();glUseProgram(GLuint(Program));
+    glBindVertexArray(GLuint(Vao));glBindBuffer(GL_ARRAY_BUFFER,GLuint(ArrayBuffer));
+    glActiveTexture(GLenum(ActiveTexture));
+  }
+};
+std::vector<GLint> UiGlState() {
+  std::vector<GLint> result;
+  for(const GLenum key:{GL_CURRENT_PROGRAM,GL_VERTEX_ARRAY_BINDING,GL_ARRAY_BUFFER_BINDING,
+      GL_ELEMENT_ARRAY_BUFFER_BINDING,GL_ACTIVE_TEXTURE,GL_TEXTURE_BINDING_2D,
+      GL_BLEND_SRC_RGB,GL_BLEND_DST_RGB,GL_BLEND_SRC_ALPHA,GL_BLEND_DST_ALPHA,
+      GL_BLEND_EQUATION_RGB,GL_BLEND_EQUATION_ALPHA,GL_DEPTH_WRITEMASK,
+      GL_UNPACK_ALIGNMENT}) {
+    GLint value=0;glGetIntegerv(key,&value);result.push_back(value);
+  }
+  for(const GLenum key:{GL_BLEND,GL_DEPTH_TEST,GL_STENCIL_TEST,GL_CULL_FACE,
+      GL_SCISSOR_TEST,0x0bc0,GL_FRAMEBUFFER_SRGB})result.push_back(glIsEnabled(key)); // GL_ALPHA_TEST.
+  std::array<GLint,4> viewport{};glGetIntegerv(GL_VIEWPORT,viewport.data());
+  result.insert(result.end(),viewport.begin(),viewport.end());return result;
+}
+void DrawSceneModels(SdkLive2dDriver& models,const Live2dState& state,
+    std::map<int32_t,std::unique_ptr<ModelTextures>>& textures,bool verifyState) {
+  if(state.Records.empty())return;
+  const auto before=verifyState?UiGlState():std::vector<GLint>{};
+  {
+    ScopedSdkGlState scope;
+    for(const auto& record:state.Records) {
+      if(!record.ResourceId)continue;
+      const auto id=*record.ResourceId;
+      if(!textures.contains(id))textures[id]=std::make_unique<ModelTextures>(models.Model(id),models.Assets(id));
+      // The SDK object may have been reattached since the texture upload.
+      textures.at(id)->Bind(models.Model(id));
+    }
+    models.Draw(state);
+  }
+  GlCheck("scene SDK draw/state restoration");
+  if(verifyState && UiGlState()!=before)throw FormatError("SDK drawing disturbed UI OpenGL state");
+}
 
 struct ViewerModel {
   std::unique_ptr<Cubism2Model> Model;
@@ -654,7 +717,9 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                       bool captureAuto = false, bool captureButtonAuto = false,
                       bool captureVoiced = false,
                       std::optional<size_t> captureUntilMessage = {},
-                      std::optional<size_t> captureFromCommand = {}) {
+                      std::optional<size_t> captureFromCommand = {},
+                      std::optional<int32_t> captureScriptOverride = {},
+                      bool captureWaitingInput = false) {
   const bool capture = !captureDirectory.empty();
   if (!owner.WindowOpacity || !owner.ReadColorEnabled || !owner.TextSpeed ||
       !owner.AutoSpeed)
@@ -686,6 +751,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   ArchiveSceneImages images(resources);
   ArchiveCharacterPoses poses(resources);
   ArchiveApproachResources approachAssets(resources);
+  const auto approachVisual=ApproachVisualEnvironment::Decode(SceneRead(root/"env/env_approach.dat"));
+  std::map<int32_t,std::unique_ptr<ModelTextures>> modelTextures;
   SdkLive2dDriver models(resources, Live2dEnvironment::Decode(SceneRead(root / "env/env_live2d.dat")));
   const auto voiceSettings = MakeFreshOrdinaryVoiceSettings();
   PlaybackMissionVoice missionVoice(playback,root,voiceSettings.Volume,1.0f);
@@ -701,7 +768,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   backend.SeArchives = &sounds;
   auto vm = VirtualMachine::FromCompletedProfile(resources, backend,
                                                  std::move(owner), completed);
-  const auto captureScript = vm->State().ScriptFileId;
+  const auto captureScript = captureScriptOverride.value_or(vm->State().ScriptFileId);
   if (captureFromCommand && (!captureUntilMessage || *captureFromCommand > *captureUntilMessage))
     throw FormatError("capture range requires a start before its target command");
   if (captureUntilMessage) {
@@ -712,7 +779,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     if (!capture || !captureAuto)
       throw FormatError("capture target requires automatic capture mode");
   }
-  bool targetCompleted = false;
+  bool targetCompleted = false, targetWaitingReached = false;
   bool captureActive = !captureFromCommand;
   std::optional<uint64_t> pcmEpoch;
   auto mouthControl = MakeFreshOrdinaryMouthControl();
@@ -723,6 +790,9 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   int32_t voiceScript = -1;
   const auto bindScriptVoices = [&] {
     if (voiceScript == vm->State().ScriptFileId) return;
+    // File load creates a fresh manager RNG. The headless route supplies this
+    // same host seed at that boundary; PC must also seed before sprite updates.
+    if(!vm->State().Random.Known())vm->SeedRandom(capture?0u:uint32_t(SDL_GetTicks()));
     backend.ResetMessages();
     mouths.clear();
     mouthControl = MakeFreshOrdinaryMouthControl();
@@ -762,7 +832,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   backend.ActivateLane = [&](uint32_t lane, uint64_t time, int32_t position) {
     const auto before = vm->State().LaneCommandIndex.at(lane);
     vm->ActivateLane(lane);
-    if (capture) {
+    if (capture && captureActive) {
       events << "{\"kind\":\"inline_queue\",\"now\":" << time << ",\"command\":"
              << vm->State().CurrentCommandIndex << ",\"lane\":" << lane << ",\"voice_position\":"
              << position << ",\"before\":" << before << ",\"after\":"
@@ -899,7 +969,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     vm->UpdateSkipAuto(skipAuto, policyInput, skipAutoEnvironment.AutoKeyDuration, now);
     backend.AutoAdvance = skipAuto.Auto;
     input.Route = vm->State().SkipPhase ? UpdateRoute::Skipping : UpdateRoute::Normal;
-    if (capture && policyFlags != previousPolicyFlags) {
+    if (capture && captureActive && policyFlags != previousPolicyFlags) {
       events << "{\"kind\":\"widget_policy\",\"frame\":" << frame
              << ",\"now\":" << now << ",\"flags\":" << policyFlags
              << ",\"velocity_x_bits\":" << std::bit_cast<uint32_t>(policyInput.PrimaryVelocityX)
@@ -907,7 +977,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
              << ",\"auto\":" << skipAuto.Auto << "}\n";
       previousPolicyFlags = policyFlags;
     }
-    if (capture && (policyInput.AutoPressed || wasAuto != skipAuto.Auto))
+    if (capture && captureActive && (policyInput.AutoPressed || wasAuto != skipAuto.Auto))
       events << "{\"kind\":\"auto_policy\",\"frame\":" << frame
              << ",\"now\":" << now << ",\"pressed\":" << policyInput.AutoPressed
              << ",\"held\":" << autoKeyHeld << ",\"auto\":" << skipAuto.Auto << "}\n";
@@ -924,7 +994,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     sceneInput.BeginFrame(pointerSnapshot);
     const bool pointerAdvance = sceneInput.UpdatePrimary();
     input.Advance = input.Advance || pointerAdvance;
-    if (capture) {
+    if (capture && captureActive) {
       const auto& point = pointerSnapshot[0];
       const auto signature = point ? std::to_string(point->Position[0]) + ',' +
                                          std::to_string(point->Position[1])
@@ -960,7 +1030,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
           size_t(step.Command) >= *captureFromCommand) captureActive = true;
       input.Advance = false;
       syncMouths();
-      if (capture && (step.Boundary == VmBoundary::CommandStarted ||
+      if (capture && captureActive && (step.Boundary == VmBoundary::CommandStarted ||
                       step.Boundary == VmBoundary::CommandCompletedBeforeDispatch))
         events << "{\"kind\":\"command\",\"frame\":" << frame << ",\"now\":" << now
                << ",\"script\":" << step.Script << ",\"command\":" << step.Command
@@ -980,8 +1050,14 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         break;
       }
       if (step.Boundary == VmBoundary::WaitingInput ||
-          step.Boundary == VmBoundary::WaitingBackend)
+          step.Boundary == VmBoundary::WaitingBackend) {
+        if(capture && captureWaitingInput && captureUntilMessage &&
+            step.Script==captureScript && size_t(step.Command)==*captureUntilMessage &&
+            step.Boundary==VmBoundary::WaitingInput) {
+          targetCompleted=true;targetWaitingReached=true;quit=true;
+        }
         break;
+      }
       if (step.Boundary == VmBoundary::Ended) {
         quit = true;
         break;
@@ -991,13 +1067,13 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     }
     for (const auto& request : vm->TakeEvents()) {
       if (!backend.ConsumeVoiceEvent(request)) playback.Submit(request);
-      if (capture)
+      if (capture && captureActive)
         events << "{\"kind\":\"audio\",\"frame\":" << frame
                << ",\"now\":" << now << ",\"event\":" << int(request.Kind)
                << ",\"id\":" << request.Id << "}\n";
     }
     const auto spriteClock = capture ? uint32_t(now) : uint32_t(SDL_GetTicks());
-    if (capture)
+    if (capture && captureActive)
       for (const auto& [id, actor] : vm->State().Characters) {
         if (!vm->SpriteBlink(id))
           events << "{\"kind\":\"blink_init\",\"frame\":" << frame
@@ -1020,6 +1096,9 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         mouths.at(id).Update(now);
     backend.UpdateMessage(now);
     const auto& state = vm->State();
+    // Run the actual preceding commands/audio to obtain their owning state,
+    // but do not render or capture the previously checked scene range again.
+    if(capture && !captureActive)continue;
     if (capture && captureActive) {
       const auto* text = backend.CurrentMessage();
       if (text && !text->Parsed.QueueMarkers.empty() && text->Reveal.Started &&
@@ -1055,8 +1134,9 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
              "scene frame size");
     renderer.Draw({}, width, height);
     renderer.SetFilter(*state.ScreenFilter.Mode, *state.ScreenFilter.Intensity);
-    const auto* message = backend.CurrentMessage();
-    if (!message) {
+    const auto* activeMessage = backend.CurrentMessage();
+    const bool approach=state.ApproachMode.Enabled.value_or(false);
+    if (!activeMessage && !approach) {
       UiSpriteBlit white;
       white.Destination = {0, 0, 960, 544};
       white.Color = {255, 255, 255, 255};
@@ -1065,13 +1145,15 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       if (!capture) SDL_Delay(16);
       continue;
     }
+    // Empty text contributes no glyphs. A message-free approach frame still
+    // draws its scene queue and HUD; report its absent message explicitly.
+    const SceneMessageTextState emptyMessage;
+    const auto* message=activeMessage?activeMessage:&emptyMessage;
     if (!state.ScreenFade)
       throw UnsupportedCommand("scene screen-fade state is unknown");
-    if (state.ApproachMode.Enabled.value_or(false))
-      throw UnsupportedCommand("approach mode renderer is not bound");
     if (!state.Quake[0] || !state.Quake[1] || !state.Quake[2])
       throw UnsupportedCommand("scene quake inputs are missing");
-    if (!laidOut || layoutCommand != message->Command) {
+    if (activeMessage && (!laidOut || layoutCommand != message->Command)) {
       layout =
           LayoutPlainText(message->Reveal.Text, format, font.Cached(), metrics,
                           visual.Window.TextWidth, visual.BodyScale,
@@ -1130,6 +1212,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
             spriteDraws.push_back(sprite);
           }
         }
+      } else if (pass.Kind == SceneDrawKind::Live2d) {
+        DrawSceneModels(models,state.Live2d,modelTextures,capture);
       } else if (pass.Kind == SceneDrawKind::Effect) {
         const auto effect = BuildRuleWipeDraw(state.RuleWipe);
         if (effect.Kind == RuleWipeDrawKind::MaskedImage || effect.Kind == RuleWipeDrawKind::Image)
@@ -1156,7 +1240,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         windowState.OpacitySetting = opacity;
         windowState.Quake = *state.Quake[2];
         windowState.SpeakerId = state.SpeakerId;
-        windowState.MessageCommand = true;
+        windowState.MessageCommand = activeMessage && state.CurrentCommandIndex==int32_t(message->Command);
         windowState.CursorVisible = backend.CursorVisible();
         windowState.CursorOffset = messageCursor.Current;
         windowState.RendererMode = uint32_t(*state.ScreenFilter.Mode);
@@ -1184,6 +1268,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
             renderer.SetFilter(int32_t(draw.Index), std::bit_cast<float>(draw.Parameter));
         }
       } else if (pass.Kind == SceneDrawKind::MessageText) {
+        if(!activeMessage)continue;
         // This entry is an explicitly fresh owner with no loaded read history.
         textDraws = BuildOrdinaryMessageTextDraws(
             visual, message->Parsed, message->Reveal, layout, format,
@@ -1200,6 +1285,16 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       }
     }
     renderer.SetFilter(0, 0.0f);  // Native resets after queued callbacks, before later HUD.
+    if(approach) {
+      if(!state.ApproachMode.Id || !state.Approach.Known)
+        throw UnsupportedCommand("approach HUD owning inputs are unknown");
+      if(state.Approach.Changing || std::any_of(state.Approach.Particles.begin(),state.Approach.Particles.end(),
+          [](const auto& p){return p.Opacity.Current!=0;}))
+        throw UnsupportedCommand("active approach particle drawing is not bound");
+      for(const auto& sprites:{BuildApproachGaugeSprites(approachVisual,state.ApproachGauge,false),
+          BuildApproachMissionSprites(approachVisual,*state.ApproachMode.Id,state.ApproachMission)})
+        for(const auto& sprite:sprites){uploadMain(sprite.Texture.Entry);drawSprite(sprite);spriteDraws.push_back(sprite);}
+    }
     // Native HUD tail8007708c draws white after queued presentation/HUD.
     if (const auto fade = BuildScreenFade(*state.ScreenFade)) {
       glUniform1i(renderer.AlphaMode, 1);
@@ -1218,6 +1313,10 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     signature += ':' + std::to_string(*state.ScreenFilter.Mode) + ':' +
         std::to_string(int32_t(std::clamp(*state.ScreenFilter.Intensity, 0.0f, 1.0f) * 16));
     signature += ':' + std::to_string(*state.ScreenFade / 16);
+    if(approach) {
+      signature+=':'+std::to_string(state.ApproachMission.Stage);
+      for(const auto& tween:state.ApproachMission.Tweens)signature+=':'+std::to_string(tween.Current/16);
+    }
     for (const auto& fill : state.SceneImages.Slots.FillRects)
       signature += ':' + std::to_string(fill.Opacity / 16);
     for (const auto& [id, actor] : state.Characters) {
@@ -1235,6 +1334,11 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
              << (message->Reveal.Revealed ? "true" : "false")
              << ",\"frame\":" << frame
              << ",\"message_command\":" << message->Command
+             << ",\"message_present\":" << (activeMessage?"true":"false")
+             << ",\"approach_enabled\":" << (approach?"true":"false")
+             << ",\"approach_mission\":[" << state.ApproachMission.Visible << ',' << state.ApproachMission.Stage
+             << ',' << state.ApproachMission.PendingStage.value_or(-1) << ',' << state.ApproachMission.Mission << ']'
+             << ",\"mission_voice_position_ms\":" << playback.MissionVoicePosition()
              << ",\"pcm_epoch_ms\":";
       if (pcmEpoch) report << *pcmEpoch; else report << "null";
       report
@@ -1317,6 +1421,18 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
           report << int(component.HeldHistory[j]);
         }
         report << "]}";
+      }
+      report << "],\"scene_models\":[";
+      bool firstModel=true;
+      for(const auto& record:state.Live2d.Records) {
+        if(!record.ResourceId)continue;if(!firstModel)report << ',';firstModel=false;
+        const auto id=*record.ResourceId;const auto observation=models.Observe(id);
+        report << "{\"resource\":" << id << ",\"enabled\":" << observation.Enabled
+               << ",\"color\":[" << int(observation.Color[0]) << ',' << int(observation.Color[1])
+               << ',' << int(observation.Color[2]) << ',' << int(observation.Color[3]) << "],\"matrix\":[";
+        const auto matrix=models.Matrix(id);
+        for(size_t i=0;i<matrix.size();++i){if(i)report << ',';report << matrix[i];}
+        report << "],\"textures\":" << modelTextures.at(id)->Handles.size() << ",\"ui_gl_state_restored\":true}";
       }
       report << "],\"widget_inputs\":[";
       for (size_t i = 0; i < widgetInputs.size(); ++i) {
@@ -1404,13 +1520,65 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     report.close();
     pcm.close();
     events.close();
-    if (!quit || firstMessage == UINT64_MAX || (captureUntilMessage && !targetCompleted))
+    if (!quit || firstMessage == UINT64_MAX || (captureUntilMessage && !targetCompleted) ||
+        (captureWaitingInput && !targetWaitingReached))
       throw UnsupportedCommand("scene preview budget exhausted");
   }
   return 0;
 }
 }  // namespace
 
+int RunSceneSdkUiProbe(const std::filesystem::path& usrdir,
+                       const std::filesystem::path& captureDirectory) {
+  bool created=false;
+  try {
+    const auto out=std::filesystem::weakly_canonical(captureDirectory);
+    const auto data=std::filesystem::weakly_canonical(usrdir);
+    for(auto p=out;!p.empty();p=p.parent_path()) {
+      if(p==data || p==data.parent_path())throw FormatError("SDK/UI output overlaps original data");
+      if(p==p.parent_path())break;
+    }
+    if(std::filesystem::exists(out))throw FormatError("choose a fresh SDK/UI capture directory");
+    std::filesystem::create_directories(out);created=true;
+    GameResources resources(SceneRead(usrdir/"resource.dat"));
+    ViewerWindow window(true,true);UiBlitRenderer renderer;
+    std::map<int32_t,std::unique_ptr<ModelTextures>> textures;
+    SdkLive2dDriver models(resources,Live2dEnvironment::Decode(SceneRead(usrdir/"env/env_live2d.dat")));
+    const auto state=RunModelSetupScene(resources,models,{1,13,20});
+    models.Frame(state.Live2d,0);models.Frame(state.Live2d,16);
+    renderer.Draw({},960,544);DrawSceneModels(models,state.Live2d,textures,true);
+    std::vector<uint8_t> pixels(960*544*4);glReadPixels(0,0,960,544,GL_RGBA,GL_UNSIGNED_BYTE,pixels.data());
+    size_t visible=0;for(size_t i=0;i<pixels.size();i+=4)if(pixels[i] || pixels[i+1] || pixels[i+2])++visible;
+    if(visible<1000)throw FormatError("SDK/UI probe did not draw visible model pixels");
+    const auto raw=SceneRead(usrdir/"env/env_approach.dat");
+    const auto visual=ApproachVisualEnvironment::Decode(raw);
+    ApproachMissionState mission;const auto environment=ApproachMissionEnvironment::Decode(raw);
+    StartApproachMission(mission,environment,10579,0);
+    for(const auto now:{400u,416u,912u,928u})UpdateApproachMission(mission,environment,false,now);
+    size_t sprites=0;
+    for(const auto& list:{BuildApproachGaugeSprites(visual,0,false),BuildApproachMissionSprites(visual,0,mission)})
+      for(const auto& sprite:list) {
+        if(!renderer.Textures.contains(sprite.Texture))
+          renderer.Upload(sprite.Texture,DecodeSceneImage(resources.LoadProfileTexture(sprite.Texture).Data));
+        renderer.DrawQuad(sprite,renderer.Textures.at(sprite.Texture),false);++sprites;
+      }
+    UiSpriteBlit marker;marker.Destination={8,8,8,8};marker.Color={21,63,127,255};
+    renderer.DrawQuad(marker,{0,1,1},true);
+    std::array<uint8_t,4> sample{};glReadPixels(12,544-12,1,1,GL_RGBA,GL_UNSIGNED_BYTE,sample.data());
+    if(sample[0]!=21 || sample[1]!=63 || sample[2]!=127)
+      throw FormatError("UI draw after SDK did not preserve shader/vertex/blend state");
+    GlCheck("SDK/UI sentinel readback");Capture(out/"sdk-ui.bmp",960,544);
+    std::ofstream report(out/"sdk-ui.json");
+    report << "{\"passed\":true,\"setup_script\":1,\"setup_begin\":13,\"setup_end\":20,"
+              "\"sdk_model_pixels\":" << visible << ",\"approach_sprites\":" << sprites
+           << ",\"ui_gl_state_restored\":true,\"post_sdk_rgb\":[" << int(sample[0]) << ','
+           << int(sample[1]) << ',' << int(sample[2]) << "],\"actual_scene_route\":false}\n";
+    if(!report)throw FormatError("cannot save SDK/UI probe report");return 0;
+  }catch(const std::exception& error) {
+    if(created){std::ofstream out(captureDirectory/"error.txt");out << std::string(error.what()).substr(0,2048);}
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano SDK/UI: %s",error.what());return 1;
+  }
+}
 int RunScreenFilterProbe(const std::filesystem::path& fixtureDirectory,
                          const std::filesystem::path& output) {
   try {
@@ -2664,7 +2832,8 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
                         const std::filesystem::path& captureDirectory,
                         bool captureAuto, bool captureButtonAuto, bool captureVoiced,
                         std::optional<size_t> captureUntilMessage,
-                        std::optional<size_t> captureFromCommand) {
+                        std::optional<size_t> captureFromCommand,
+                        std::optional<int32_t> captureScriptOverride,bool captureWaitingInput) {
   bool created = false;
   try {
     const bool capture = !captureDirectory.empty();
@@ -2727,7 +2896,7 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
     return RunCompletedScene(window, renderer, fontTextures, font, resources,
                              playback, music, sounds, std::move(owner), mode,
                              usrdir, captureDirectory, captureAuto, captureButtonAuto, captureVoiced,
-                             captureUntilMessage, captureFromCommand);
+                             captureUntilMessage, captureFromCommand,captureScriptOverride,captureWaitingInput);
   } catch (const std::exception& error) {
     if (created) {
       std::ofstream out(captureDirectory / "error.txt");
