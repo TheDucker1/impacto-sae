@@ -97,6 +97,7 @@ class VirtualMachine {
   uint16_t Opcode() const;
   const QuakeAnimation* CurrentQuake() const;
   const ChapterTitleAnimation* CurrentChapter() const;
+  std::span<const ApproachEntry> CurrentApproachEntries() const;
   const ProfileMode* CurrentProfile() const { return profile_.get(); }
   VmEvent Step(uint64_t now, const CommandInput& input = {});
   void UpdateSkipAuto(SkipAutoState& policy, const SkipAutoInput& input,

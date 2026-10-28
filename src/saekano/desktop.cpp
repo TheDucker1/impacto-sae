@@ -719,7 +719,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                       std::optional<size_t> captureUntilMessage = {},
                       std::optional<size_t> captureFromCommand = {},
                       std::optional<int32_t> captureScriptOverride = {},
-                      bool captureWaitingInput = false,bool captureConfirmInput = false) {
+                      bool captureWaitingInput = false,bool captureConfirmInput = false,bool captureMenuInput = false,
+                      bool captureMenuPointer = false) {
   const bool capture = !captureDirectory.empty();
   if (!owner.WindowOpacity || !owner.ReadColorEnabled || !owner.TextSpeed ||
       !owner.AutoSpeed)
@@ -752,6 +753,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   ArchiveCharacterPoses poses(resources);
   ArchiveApproachResources approachAssets(resources);
   const auto approachVisual=ApproachVisualEnvironment::Decode(SceneRead(root/"env/env_approach.dat"));
+  const auto selectionLayout=ApproachSelectionLayout::Decode(SceneRead(root/"env/env_approach.dat"));
+  const auto selectionShared=SharedSelectionEnvironment::Decode(SceneRead(root/"env/env_script_select.dat"));
   std::map<int32_t,std::unique_ptr<ModelTextures>> modelTextures;
   SdkLive2dDriver models(resources, Live2dEnvironment::Decode(SceneRead(root / "env/env_live2d.dat")));
   const auto voiceSettings = MakeFreshOrdinaryVoiceSettings();
@@ -779,10 +782,14 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       throw FormatError("capture target is not a valid entry-script command/message");
     if (!capture || !captureAuto)
       throw FormatError("capture target requires automatic capture mode");
+    if(captureMenuInput && script.Records()[*captureUntilMessage].Opcode!=0x3f6)
+      throw FormatError("menu capture target requires approach selection");
   }
   bool targetCompleted = false, targetWaitingReached = false;
   bool captureActive = !captureFromCommand && !captureConfirmInput;
   bool confirmDue=false,confirmSent=false;
+  bool menuMissionDue=false,menuMissionSent=false;
+  uint32_t menuCaptureStep=0;
   std::optional<uint64_t> pcmEpoch;
   auto mouthControl = MakeFreshOrdinaryMouthControl();
   std::map<uint16_t, ProfileMouthPlayback> mouths;
@@ -869,6 +876,10 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   std::string previousSignature;
   size_t saved = 0;
   std::map<uint16_t, bool> actorEligibility;
+  WidgetInputHistory menuPointer;
+  std::vector<WidgetEventHistory> menuParents,menuChildren,menuArrows;
+  std::pair<int32_t,int32_t> menuIdentity{-1,-1};
+  int32_t menuChildParent=-1;
   const uint32_t frameBudget = captureFromCommand ? 20000 : 2000;
   for (uint32_t frame = 0; !quit && (!capture || frame < frameBudget); ++frame) {
     const uint64_t now =
@@ -877,6 +888,41 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     CommandInput input;
     SkipAutoInput policyInput;
     SDL_Event event;
+    if(capture && captureMenuInput) {
+      const auto& menu=vm->State().ApproachSelection;
+      SDL_Keycode key=0;
+      if(menuMissionDue){key=SDLK_RETURN;menuMissionDue=false;menuMissionSent=true;}
+      else if(!captureMenuPointer && menu.Visible && vm->State().ScriptFileId==captureScript &&
+          size_t(vm->State().CurrentCommandIndex)==*captureUntilMessage && !menu.PendingPhase) {
+        if(menuCaptureStep==0 && menu.Phase==4){key=SDLK_DOWN;++menuCaptureStep;}
+        else if(menuCaptureStep==1 && menu.Phase==4 && !menu.ParentUnselected){key=SDLK_RETURN;++menuCaptureStep;}
+        else if(menuCaptureStep==2 && menu.Phase==7){key=SDLK_DOWN;++menuCaptureStep;}
+        else if(menuCaptureStep==3 && menu.Phase==7 && !menu.ChildUnselected){key=SDLK_RETURN;++menuCaptureStep;}
+      }
+      if(key) {
+        for(const auto type:{SDL_EVENT_KEY_DOWN,SDL_EVENT_KEY_UP}) {
+          SDL_Event e{};e.type=type;e.key.windowID=SDL_GetWindowID(window.Window);
+          e.key.key=key;e.key.down=type==SDL_EVENT_KEY_DOWN;SdlCheck(SDL_PushEvent(&e),"menu capture explicit key");
+        }
+        if(captureActive)events << "{\"kind\":\"menu_input\",\"source\":\"SDL_key\",\"key\":" << key
+            << ",\"step\":" << menuCaptureStep << ",\"now\":" << now << "}\n";
+      }
+      if(captureMenuPointer && menu.Visible && !menu.PendingPhase && menuCaptureStep<4 &&
+          ((menuCaptureStep<2 && menu.Phase==4) || (menuCaptureStep>=2 && menu.Phase==7))) {
+        size_t children=menu.Parent>=0?menu.ChildCounts.at(size_t(menu.Parent)):0;
+        const auto regions=BuildApproachSelectionHitRegions(selectionLayout,selectionShared,*backend.SelectionSettings,
+            menu.OriginalOrdinals.size(),children);
+        const auto& r=menuCaptureStep<2?regions.Parents.at(0):regions.Children.at(0);
+        int w=0,h=0;SdlCheck(SDL_GetWindowSize(window.Window,&w,&h),"menu capture pointer viewport");
+        SDL_Event e{};e.type=menuCaptureStep%2==0?SDL_EVENT_MOUSE_BUTTON_DOWN:SDL_EVENT_MOUSE_BUTTON_UP;
+        e.button.windowID=SDL_GetWindowID(window.Window);e.button.button=SDL_BUTTON_LEFT;e.button.down=menuCaptureStep%2==0;
+        e.button.x=float(r[0]+r[2]/2)*float(w)/960;e.button.y=float(r[1]+r[3]/2)*float(h)/544;
+        SdlCheck(SDL_PushEvent(&e),"menu capture explicit pointer");++menuCaptureStep;
+        events << "{\"kind\":\"menu_pointer_input\",\"source\":\"SDL_mouse\",\"step\":" << menuCaptureStep
+            << ",\"down\":" << e.button.down << ",\"now\":" << now << ",\"logical_position\":["
+            << r[0]+r[2]/2 << ',' << r[1]+r[3]/2 << "]}\n";
+      }
+    }
     if(capture && confirmDue) {
       // Explicit capture input, delivered through the same SDL key handler as
       // a user's Enter press. Normal gameplay never fabricates confirmation.
@@ -926,8 +972,14 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     }
     while (SDL_PollEvent(&event)) {
       if (event.type == SDL_EVENT_QUIT ||
-          (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE))
+          (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE &&
+           !vm->State().ApproachSelection.Visible))
         quit = true;
+      if(event.type==SDL_EVENT_KEY_DOWN && !event.key.repeat && vm->State().ApproachSelection.Visible) {
+        input.Approach.Previous|=event.key.key==SDLK_UP;
+        input.Approach.Next|=event.key.key==SDLK_DOWN;
+        input.Approach.Back|=event.key.key==SDLK_ESCAPE || event.key.key==SDLK_BACKSPACE;
+      }
       if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
           event.key.key == SDLK_RETURN)
         input.Advance = true;
@@ -958,6 +1010,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         skipKeysHeld = {};
         policyInput.SkipPressed = false;
         sceneInput.CancelPointer();
+        menuPointer={};menuParents.clear();menuChildren.clear();menuArrows.clear();menuIdentity={-1,-1};
       }
     }
     if (quit) break;
@@ -1006,7 +1059,41 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         pointerSnapshot[0] = WidgetTouch{0, {int16_t(x), int16_t(y)}};
     }
     sceneInput.BeginFrame(pointerSnapshot);
-    const bool pointerAdvance = sceneInput.UpdatePrimary();
+    const auto& menuState=vm->State().ApproachSelection;
+    if(menuState.Visible) {
+      const auto identity=std::pair{vm->State().ScriptFileId,vm->State().CurrentCommandIndex};
+      const auto reset=[&](auto& components,size_t count){components.clear();
+        for(size_t i=0;i<count;++i)components.emplace_back(inputEnvironment.HoldFrames);};
+      if(menuIdentity!=identity) {
+        menuIdentity=identity;menuPointer={};menuChildParent=-1;
+        reset(menuParents,menuState.Carousel?1:menuState.OriginalOrdinals.size());reset(menuArrows,menuState.Carousel?2:0);
+        sceneInput.CancelPointer();
+      }
+      size_t children=0;
+      if(menuState.Parent>=0 && size_t(menuState.Parent)<menuState.ChildCounts.size())children=menuState.ChildCounts[size_t(menuState.Parent)];
+      const auto regions=BuildApproachSelectionHitRegions(selectionLayout,selectionShared,*backend.SelectionSettings,
+          menuState.OriginalOrdinals.size(),children);
+      if(menuState.Phase==6 || (menuState.Phase==7 && menuChildParent!=menuState.Parent)) {
+        reset(menuChildren,children);menuChildParent=menuState.Parent;
+      }
+      menuPointer.BeginFrame(pointerSnapshot);
+      const auto released=[&](auto& components,const auto& rectangles) -> std::optional<size_t> {
+        std::optional<size_t> hit;
+        for(size_t i=0;i<components.size();++i) {
+          auto& component=components[i];component.Update(SampleWidgetContact(rectangles.at(i),menuPointer.Current[0],
+              menuPointer.Previous[0],component.TrackedId,menuPointer.Velocity(0)));
+          menuPointer.Publish(component.Flags);if(!hit && (component.Flags&8))hit=i;
+        }
+        return hit;
+      };
+      if(menuState.Phase==4) {
+        input.Approach.ParentReleased=released(menuParents,regions.Parents);
+        if(const auto arrow=released(menuArrows,regions.Arrows)) {
+          input.Approach.Previous|=*arrow==0;input.Approach.Next|=*arrow==1;
+        }
+      } else if(menuState.Phase==7)input.Approach.ChildReleased=released(menuChildren,regions.Children);
+    } else {menuIdentity={-1,-1};menuChildParent=-1;}
+    const bool pointerAdvance = !menuState.Visible && sceneInput.UpdatePrimary();
     input.Advance = input.Advance || pointerAdvance;
     if (capture && captureActive) {
       const auto& point = pointerSnapshot[0];
@@ -1043,6 +1130,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       if (!captureConfirmInput && captureFromCommand && step.Script == captureScript &&
           size_t(step.Command) >= *captureFromCommand) captureActive = true;
       input.Advance = false;
+      input.Approach={};
       syncMouths();
       if (capture && captureActive && (step.Boundary == VmBoundary::CommandStarted ||
                       step.Boundary == VmBoundary::CommandCompletedBeforeDispatch))
@@ -1065,6 +1153,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       }
       if (step.Boundary == VmBoundary::WaitingInput ||
           step.Boundary == VmBoundary::WaitingBackend) {
+        if(captureMenuInput && !menuMissionSent && step.Opcode==0x3f7 && step.Boundary==VmBoundary::WaitingInput)
+          menuMissionDue=true;
         if(capture && (captureWaitingInput || captureConfirmInput) && captureUntilMessage &&
             step.Script==captureScript && size_t(step.Command)==*captureUntilMessage &&
             step.Boundary==VmBoundary::WaitingInput) {
@@ -1112,8 +1202,6 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         mouths.at(id).Update(now);
     backend.UpdateMessage(now);
     const auto& state = vm->State();
-    if(state.ApproachSelection.Visible)
-      throw UnsupportedCommand("approach selection renderer/input is not bound");
     // Run the actual preceding commands/audio to obtain their owning state,
     // but do not render or capture the previously checked scene range again.
     if(capture && !captureActive)continue;
@@ -1180,6 +1268,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       layoutCommand = message->Command;
     }
     SceneQueueInputs gates;
+    gates.ApproachSelectionVisible=state.ApproachSelection.Visible;
     gates.EffectPlacement = state.RuleWipe.Parameter;
     for (size_t c = 0; c < 2; ++c)
       for (size_t i = 0; i < 4; ++i) {
@@ -1252,6 +1341,25 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
           }
           spriteDraws.push_back(sprite);
         }
+      } else if(pass.Kind==SceneDrawKind::ApproachSelection) {
+        renderer.SetFilter(0,0);glUniform1i(renderer.AlphaMode,1);
+        const auto draws=BuildApproachSelectionDraws(selectionLayout,selectionShared,*backend.SelectionSettings,
+            state.ApproachSelection,vm->CurrentApproachEntries(),state.ApproachFlags,{},utility.Size,
+            [&](const auto& text,int32_t size){return int32_t(MeasurePvfText(font.Cached(),text,uint32_t(size),font.NominalSize()));});
+        for(const auto& draw:draws) {
+          if(draw.Kind==ApproachSelectionDrawKind::Sprite) {
+            uploadMain(draw.Sprite.Texture.Entry);drawSprite(draw.Sprite);spriteDraws.push_back(draw.Sprite);
+          } else if(draw.Kind==ApproachSelectionDrawKind::Text) {
+            fontTextures.DrawString(renderer,font,draw.Text,draw.Position[0],draw.Position[1],uint32_t(draw.FontSize),draw.Color);
+            textDraws.push_back({draw.Text,draw.Position,uint32_t(draw.FontSize),draw.Color});
+          } else if(draw.Kind==ApproachSelectionDrawKind::ClipBegin) {
+            const auto& r=draw.Clip;const int x=std::max(0,r[0]),y=std::max(0,r[1]);
+            const int right=std::clamp(r[0]+r[2],0,960),bottom=std::clamp(r[1]+r[3],0,544);
+            glEnable(GL_SCISSOR_TEST);glScissor(x*width/960,(544-bottom)*height/544,
+                std::max(0,right-x)*width/960,std::max(0,bottom-y)*height/544);
+          } else glDisable(GL_SCISSOR_TEST);
+        }
+        renderer.SetFilter(*state.ScreenFilter.Mode,*state.ScreenFilter.Intensity);
       } else if (pass.Kind == SceneDrawKind::MessageWindow) {
         OrdinaryMessageWindowState windowState;
         windowState.Openness = state.WindowOpenness[0];
@@ -1334,6 +1442,9 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     if(approach) {
       signature+=':'+std::to_string(state.ApproachMission.Stage);
       for(const auto& tween:state.ApproachMission.Tweens)signature+=':'+std::to_string(tween.Current/16);
+      const auto& menu=state.ApproachSelection;
+      signature+=':'+std::to_string(menu.Visible)+':'+std::to_string(menu.Phase)+':'+std::to_string(menu.Parent)+':'+std::to_string(menu.Child);
+      signature+=':'+std::to_string(menu.Scroll.Current);
     }
     for (const auto& fill : state.SceneImages.Slots.FillRects)
       signature += ':' + std::to_string(fill.Opacity / 16);
@@ -1401,6 +1512,13 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
              << ",\"voice_slot\":" << message->VoiceGate.Slot << ",\"voice_position_ms\":" << message->AudioPosition
              << ",\"skip_state\":[" << state.SkipMode << ',' << state.SkipPhase << ']'
              << ",\"history_gate_supplied\":false"
+             << ",\"approach_selection\":{\"visible\":" << state.ApproachSelection.Visible
+             << ",\"phase\":" << state.ApproachSelection.Phase << ",\"pending\":" << state.ApproachSelection.PendingPhase.value_or(-1)
+             << ",\"parent\":" << state.ApproachSelection.Parent << ",\"child\":" << state.ApproachSelection.Child
+             << ",\"parent_none\":" << state.ApproachSelection.ParentUnselected << ",\"child_none\":" << state.ApproachSelection.ChildUnselected
+             << ",\"weight_bits\":" << std::bit_cast<uint32_t>(state.ApproachSelection.ParentWeight)
+             << ",\"scroll\":" << state.ApproachSelection.Scroll.Current << ",\"history_bound\":false,\"bucket\":18}"
+             << ",\"menu_capture_step\":" << menuCaptureStep << ",\"menu_prior_mission_confirmed\":" << menuMissionSent
              << ",\"capture_auto\":" << captureAuto
              << ",\"capture_auto_button\":" << captureButtonAuto << ",\"sprites\":[";
       for (size_t i = 0; i < spriteDraws.size(); ++i) {
@@ -2855,7 +2973,7 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
                         bool captureAuto, bool captureButtonAuto, bool captureVoiced,
                         std::optional<size_t> captureUntilMessage,
                         std::optional<size_t> captureFromCommand,
-                        std::optional<int32_t> captureScriptOverride,bool captureWaitingInput,bool captureConfirmInput) {
+                        std::optional<int32_t> captureScriptOverride,bool captureWaitingInput,bool captureConfirmInput,bool captureMenuInput,bool captureMenuPointer) {
   bool created = false;
   try {
     const bool capture = !captureDirectory.empty();
@@ -2921,7 +3039,7 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
     return RunCompletedScene(window, renderer, fontTextures, font, resources,
                              playback, music, sounds, std::move(owner), mode,
                              usrdir, captureDirectory, captureAuto, captureButtonAuto, captureVoiced,
-                             captureUntilMessage, captureFromCommand,captureScriptOverride,captureWaitingInput,captureConfirmInput);
+                             captureUntilMessage, captureFromCommand,captureScriptOverride,captureWaitingInput,captureConfirmInput,captureMenuInput,captureMenuPointer);
   } catch (const std::exception& error) {
     if (created) {
       std::ofstream out(captureDirectory / "error.txt");

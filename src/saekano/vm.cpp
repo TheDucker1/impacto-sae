@@ -251,6 +251,12 @@ const QuakeAnimation* VirtualMachine::CurrentQuake() const {
   if (Opcode() != 0x190) return nullptr;
   return &commands_[size_t(state_.CurrentCommandIndex)].QuakeRuntime;
 }
+std::span<const ApproachEntry> VirtualMachine::CurrentApproachEntries() const {
+  if(Opcode()!=0x3f6 || !state_.ApproachSelection.Visible)return {};
+  const auto& command=commands_.at(size_t(state_.CurrentCommandIndex));
+  if(!command.Started || !command.ApproachEntries)return {};
+  return *command.ApproachEntries;
+}
 VmEvent VirtualMachine::Event(VmBoundary boundary) const {
   return {boundary, state_.ScriptFileId, state_.CurrentCommandIndex, Opcode()};
 }

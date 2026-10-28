@@ -28,6 +28,7 @@ std::vector<SceneDrawPass> BuildSceneDrawQueue(
     }
   }
   if (inputs.ModeVisible) add(SceneDrawKind::ModeOverlay, 21);
+  if(inputs.ApproachSelectionVisible)add(SceneDrawKind::ApproachSelection,18);
   for (uint32_t category = 0; category < 2; ++category)
     for (uint32_t i = 0; i < 4; ++i) {
       const auto& slot = images.FloatSlots[category][i];
