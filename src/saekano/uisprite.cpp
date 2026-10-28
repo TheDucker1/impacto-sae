@@ -6,6 +6,7 @@
 #include <bit>
 #include <cmath>
 #include <limits>
+#include <algorithm>
 
 namespace Impacto::Saekano {
 namespace {
@@ -100,6 +101,26 @@ UiSpriteDefinition UiSpriteDefinition::ReadLegacy(PayloadReader& reader) {
   result.Color = {uint8_t(color >> 16), uint8_t(color >> 8), uint8_t(color),
                   uint8_t(color >> 24)};
   return result;
+}
+SharedSelectionEnvironment SharedSelectionEnvironment::Decode(std::span<const uint8_t> bytes) {
+  if(bytes.size()<3)throw FormatError("truncated shared selection header");
+  SharedSelectionEnvironment result;std::copy_n(bytes.begin(),3,result.Header.begin());
+  PayloadReader reader(bytes.subspan(3));result.Font=reader.U16();
+  for(auto& word:result.Scalars)word=reader.I32();
+  const auto color=[&](){const auto packed=reader.U32();return std::array<uint8_t,4>{
+      uint8_t(packed>>16),uint8_t(packed>>8),uint8_t(packed),uint8_t(packed>>24)};};
+  for(auto& value:result.Colors)value=color();
+  for(auto& sprite:result.Sprites)sprite=UiSpriteDefinition::Read(reader);
+  for(auto& table:result.PointTables) {
+    const auto count=reader.U32();reader.CheckCount(count,8);table.reserve(count);
+    for(uint32_t i=0;i<count;++i)table.push_back({reader.I32(),reader.I32()});
+  }
+  for(auto& word:result.LayoutWords)word=reader.I32();
+  result.TextScale=std::bit_cast<float>(reader.U32());
+  if(!std::isfinite(result.TextScale) || result.TextScale<0)
+    throw FormatError("invalid shared selection text scale");
+  for(auto& value:result.TextColors)value=color();
+  result.PrefixBytes=bytes.size()-reader.Remaining();return result;
 }
 OrdinaryMessageEnvironment OrdinaryMessageEnvironment::Decode(
     std::span<const uint8_t> bytes) {

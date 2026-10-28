@@ -22,6 +22,21 @@ struct UiSpriteBlit {
   std::array<uint8_t, 4> Color{};
   std::optional<UiSpriteRotation> Rotation;
 };
+// env_script_select, loader801db948. Neutral scalar/layout fields retain
+// authored values until their individual draw consumers are bound.
+struct SharedSelectionEnvironment {
+  std::array<uint8_t,3> Header{};
+  uint16_t Font=0;
+  std::array<int32_t,4> Scalars{};
+  std::array<std::array<uint8_t,4>,3> Colors{};
+  std::array<UiSpriteDefinition,3> Sprites;
+  std::array<std::vector<std::array<int32_t,2>>,2> PointTables;
+  std::array<int32_t,6> LayoutWords{};
+  float TextScale=0;
+  std::array<std::array<uint8_t,4>,2> TextColors{};
+  size_t PrefixBytes=0;
+  static SharedSelectionEnvironment Decode(std::span<const uint8_t> bytes);
+};
 // Native8017c4e0 lowers its scale/alignment to the raw sprite backend call.
 UiSpriteBlit ResolveUiSprite(ProfileTextureKey texture,
                              const UiSpriteDefinition& sprite, float scaleX = 1,
