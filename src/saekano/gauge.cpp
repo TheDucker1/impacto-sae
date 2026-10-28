@@ -3,6 +3,7 @@
 #include "commands.h"
 #include "uisprite.h"
 #include "approachmission.h"
+#include "approachselection.h"
 
 #include <algorithm>
 #include <bit>
@@ -264,7 +265,8 @@ namespace {
 ApproachGaugeEnvironment ReadApproachGauge(
     EnvironmentReader& reader, ModeResultVisualEnvironment* visuals = nullptr,
     ApproachMissionEnvironment* mission = nullptr,
-    ApproachVisualEnvironment* approachVisuals = nullptr) {
+    ApproachVisualEnvironment* approachVisuals = nullptr,
+    ApproachSelectionEnvironment* selection = nullptr) {
   ApproachGaugeEnvironment result;
   reader.Skip(3 + 3 * 4);
   for (size_t i = 0; i < 6; ++i) {
@@ -305,7 +307,12 @@ ApproachGaugeEnvironment ReadApproachGauge(
   reader.Table(8);
   reader.Skip(4);
   for (size_t i = 0; i < 4; ++i) reader.Table(8);
-  reader.Skip(4 * 4 + 2 * 16 + 4 * 4);
+  reader.Skip(4 * 4 + 2 * 16 + 2 * 4);
+  if(selection) {
+    selection->ScrollDistance=reader.Word();selection->ScrollDuration=reader.Word();
+    if(selection->ScrollDistance<0 || selection->ScrollDuration<0)
+      throw FormatError("invalid approach selection scroll configuration");
+  } else reader.Skip(2*4);
   if (visuals) {
     visuals->ProgressFill = reader.VisualSprite();  // bc18
     visuals->Frame = reader.VisualSprite();  // bc3c
@@ -345,6 +352,10 @@ ApproachVisualEnvironment ApproachVisualEnvironment::Decode(std::span<const uint
   EnvironmentReader reader(bytes);ApproachVisualEnvironment result;
   ReadApproachGauge(reader,nullptr,nullptr,&result);
   return result;
+}
+ApproachSelectionEnvironment ApproachSelectionEnvironment::Decode(std::span<const uint8_t> bytes) {
+  EnvironmentReader reader(bytes);ApproachSelectionEnvironment result;
+  ReadApproachGauge(reader,nullptr,nullptr,nullptr,&result);return result;
 }
 ApproachMissionEnvironment ApproachMissionEnvironment::Decode(std::span<const uint8_t> bytes) {
   EnvironmentReader reader(bytes);ApproachMissionEnvironment result;
