@@ -26,6 +26,20 @@ struct UiSpriteBlit {
 UiSpriteBlit ResolveUiSprite(ProfileTextureKey texture,
                              const UiSpriteDefinition& sprite, float scaleX = 1,
                              float scaleY = 1);
+struct ApproachVisualEnvironment {
+  // Native8025b9c8..ba7c: banner, left/right panel, gauge frame/fill, particle.
+  std::array<UiSpriteDefinition, 6> Sprites;
+  std::vector<UiSpriteDefinition> CharacterLabels;
+  static ApproachVisualEnvironment Decode(std::span<const uint8_t> bytes);
+};
+// Native80074daa: gauge sprites precede effect-group6; mission sprites follow.
+// Effect-group and result drawing belong to their respective owning passes.
+std::vector<UiSpriteBlit> BuildApproachGaugeSprites(
+    const ApproachVisualEnvironment& environment, int32_t gauge, bool hidden);
+struct ApproachMissionState;
+std::vector<UiSpriteBlit> BuildApproachMissionSprites(
+    const ApproachVisualEnvironment& environment, int32_t character,
+    const ApproachMissionState& mission);
 struct ProfileBackdropEnvironment {
   int32_t IntroFade = 0, WavePeriod = 0;
   std::array<UiSpriteDefinition, 3> Sprites;

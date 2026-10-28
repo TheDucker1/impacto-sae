@@ -1,6 +1,7 @@
 #include "uisprite.h"
 
 #include "commands.h"
+#include "approachmission.h"
 
 #include <bit>
 #include <cmath>
@@ -261,6 +262,40 @@ UiSpriteBlit ResolveUiSprite(ProfileTextureKey texture,
                    scaleX > 0 ? sprite.Width : Subtract(0, sprite.Width),
                    scaleY > 0 ? sprite.Height : Subtract(0, sprite.Height)};
   result.Color = sprite.Color;
+  return result;
+}
+std::vector<UiSpriteBlit> BuildApproachGaugeSprites(
+    const ApproachVisualEnvironment& environment,int32_t gauge,bool hidden) {
+  if(hidden)return {};
+  if(gauge<0 || gauge>100)throw FormatError("approach gauge outside native consumer range");
+  const auto& frame=environment.Sprites[3];
+  auto fill=environment.Sprites[4];
+  // VDIV then VMUL and VCVT truncate the height. Native anchors/crops upward
+  // from the authored lower edge, with no interpolation of the gauge width.
+  const auto height=Convert(float(fill.Height)*(float(gauge)/100.0f));
+  fill.SourceY=Subtract(fill.SourceY,Subtract(height,fill.Height));
+  fill.Height=height;
+  return {ResolveUiSprite({ProfileTextureSection::MainUi,-1,24},frame),
+          ResolveUiSprite({ProfileTextureSection::MainUi,-1,25},fill)};
+}
+std::vector<UiSpriteBlit> BuildApproachMissionSprites(
+    const ApproachVisualEnvironment& environment,int32_t character,
+    const ApproachMissionState& mission) {
+  if(!mission.Visible)return {};
+  if(!mission.Started || character<0 || size_t(character)>=environment.CharacterLabels.size())
+    throw UnsupportedCommand("approach mission drawing inputs are unavailable");
+  const auto offset=mission.Tweens[4].Current;
+  std::vector<UiSpriteBlit> result;
+  const auto emit=[&](UiSpriteDefinition sprite,uint32_t entry,int32_t alpha) {
+    sprite.Y=Subtract(sprite.Y,Subtract(0,offset));sprite.Color[3]=uint8_t(alpha);
+    result.push_back(ResolveUiSprite({ProfileTextureSection::MainUi,-1,entry},sprite));
+  };
+  emit(environment.Sprites[0],22,mission.Tweens[0].Current);
+  auto left=environment.Sprites[1];left.X=mission.Tweens[1].Current;
+  emit(left,32,mission.Tweens[5].Current);
+  auto right=environment.Sprites[2];right.X=mission.Tweens[2].Current;
+  emit(right,32,mission.Tweens[5].Current);
+  emit(environment.CharacterLabels[size_t(character)],uint32_t(character)+26,mission.Tweens[3].Current);
   return result;
 }
 ProfileBackdropEnvironment ProfileBackdropEnvironment::Decode(

@@ -263,11 +263,18 @@ bool UpdateBattleGauge(SemanticState& state, BattleGaugeAnimation& animation,
 namespace {
 ApproachGaugeEnvironment ReadApproachGauge(
     EnvironmentReader& reader, ModeResultVisualEnvironment* visuals = nullptr,
-    ApproachMissionEnvironment* mission = nullptr) {
+    ApproachMissionEnvironment* mission = nullptr,
+    ApproachVisualEnvironment* approachVisuals = nullptr) {
   ApproachGaugeEnvironment result;
   reader.Skip(3 + 3 * 4);
   for (size_t i = 0; i < 6; ++i) {
     const auto sprite = reader.Sprite();
+    if (approachVisuals) {
+      const auto color=uint32_t(sprite.Words[7]);
+      approachVisuals->Sprites[i]={sprite.Resource,sprite.Words[0],sprite.Words[1],
+          sprite.Words[2],sprite.Words[3],sprite.Words[4],sprite.Words[5],sprite.Words[6],
+          {uint8_t(color>>16),uint8_t(color>>8),uint8_t(color),uint8_t(color>>24)}};
+    }
     if(mission && i==1){mission->LeftX=sprite.Words[1];mission->LeftWidth=sprite.Words[5];}
     if(mission && i==2)mission->RightX=sprite.Words[1];
     if (i == 0 && visuals) {
@@ -285,7 +292,11 @@ ApproachGaugeEnvironment ReadApproachGauge(
   }
   result.PositiveEffectPosition = {reader.Word(), reader.Word()};
   result.NegativeEffectPosition = {reader.Word(), reader.Word()};
-  reader.Table(34);
+  if (approachVisuals) {
+    const auto count=reader.Count(34);
+    approachVisuals->CharacterLabels.reserve(count);
+    for(size_t i=0;i<count;++i)approachVisuals->CharacterLabels.push_back(reader.VisualSprite());
+  } else reader.Table(34);
   reader.Skip(2 * 34 + 8 + 34 + 16);
   reader.Table(34);
   reader.Table(34);
@@ -329,6 +340,11 @@ ApproachGaugeEnvironment ApproachGaugeEnvironment::Decode(
     std::span<const uint8_t> bytes) {
   EnvironmentReader reader(bytes);
   return ReadApproachGauge(reader);
+}
+ApproachVisualEnvironment ApproachVisualEnvironment::Decode(std::span<const uint8_t> bytes) {
+  EnvironmentReader reader(bytes);ApproachVisualEnvironment result;
+  ReadApproachGauge(reader,nullptr,nullptr,&result);
+  return result;
 }
 ApproachMissionEnvironment ApproachMissionEnvironment::Decode(std::span<const uint8_t> bytes) {
   EnvironmentReader reader(bytes);ApproachMissionEnvironment result;
