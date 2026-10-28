@@ -97,6 +97,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   backend.ApproachResourceBank = &approachAssets;
   backend.MissionVoiceBank=&missionVoice;
   backend.MissionSettings=ApproachMissionEnvironment::Decode(Read(root/"env/env_approach.dat"));
+  backend.SelectionSettings=ApproachSelectionEnvironment::Decode(Read(root/"env/env_approach.dat"));
   backend.ApproachConfig = ApproachGaugeEnvironment::Decode(Read(root / "env/env_approach.dat"));
   backend.MusicResources = &music; backend.SeArchives = &sounds;
 #ifdef SAEKANO_SCENE_CUBISM2
@@ -293,7 +294,22 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
               << vm->State().CurrentCommandIndex << "}\n";
         } else {finish("approach_mission_confirmation_required",false);return 1;}
       }
-      if(waitingSelection){finish("explicit_choice_required",false);return 1;}
+      if(waitingSelection) {
+        if(vm->Opcode()==0x3f6) {
+          const auto& selection=vm->State().ApproachSelection;
+          out << "{\"kind\":\"approach_selection_ready\",\"now\":" << now
+              << ",\"script\":" << vm->State().ScriptFileId << ",\"command\":" << vm->State().CurrentCommandIndex
+              << ",\"phase\":" << selection.Phase << ",\"pending\":" << selection.PendingPhase.value_or(-1)
+              << ",\"visible\":" << selection.Visible << ",\"parent\":" << selection.Parent
+              << ",\"child\":" << selection.Child << ",\"parent_none\":" << selection.ParentUnselected
+              << ",\"child_none\":" << selection.ChildUnselected << ",\"ordinals\":[";
+          for(size_t i=0;i<selection.OriginalOrdinals.size();++i){if(i)out << ',';out << selection.OriginalOrdinals[i];}
+          out << "],\"children\":[";
+          for(size_t i=0;i<selection.ChildCounts.size();++i){if(i)out << ',';out << selection.ChildCounts[i];}
+          out << "]}\n";
+        }
+        finish("explicit_choice_required",false);return 1;
+      }
       for (const auto& [id, actor] : vm->State().Characters)
         if (actor.Pose.Ready && actor.Tweens[size_t(CharacterTween::Opacity)].Current != 0) mouths.at(id).Update(now);
       backend.UpdateMessage(now);

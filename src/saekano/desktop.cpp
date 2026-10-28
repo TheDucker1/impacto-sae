@@ -763,6 +763,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   backend.SceneModels = &models;
   backend.MissionVoiceBank=&missionVoice;
   backend.MissionSettings=ApproachMissionEnvironment::Decode(SceneRead(root/"env/env_approach.dat"));
+  backend.SelectionSettings=ApproachSelectionEnvironment::Decode(SceneRead(root/"env/env_approach.dat"));
   backend.ApproachConfig = ApproachGaugeEnvironment::Decode(SceneRead(root / "env/env_approach.dat"));
   backend.MusicResources = &music;
   backend.SeArchives = &sounds;
@@ -1111,6 +1112,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         mouths.at(id).Update(now);
     backend.UpdateMessage(now);
     const auto& state = vm->State();
+    if(state.ApproachSelection.Visible)
+      throw UnsupportedCommand("approach selection renderer/input is not bound");
     // Run the actual preceding commands/audio to obtain their owning state,
     // but do not render or capture the previously checked scene range again.
     if(capture && !captureActive)continue;

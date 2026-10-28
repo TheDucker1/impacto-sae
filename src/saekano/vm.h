@@ -50,6 +50,7 @@ class VmBackend {
   virtual ApproachResources* ApproachAssets() { return nullptr; }
   virtual ApproachMissionAudio* MissionVoices() { return nullptr; }
   virtual const ApproachMissionEnvironment* MissionConfig() const { return nullptr; }
+  virtual const ApproachSelectionEnvironment* SelectionConfig() const { return nullptr; }
   virtual BgmResources* Music() { return nullptr; }
   virtual SeResources* SoundEffects() { return nullptr; }
   virtual const BattleGaugeEnvironment* BattleEnvironment() const { return nullptr; }
@@ -127,6 +128,7 @@ class VirtualMachine {
     uint32_t SavedDay = 0;
     CompletedCommand Routing;
     std::optional<MessageCommand> Message;
+    std::optional<std::vector<ApproachEntry>> ApproachEntries;
     std::optional<PlayBgmCommand> PlayBgm;
     std::optional<PlaySeCommand> PlaySe;
     std::optional<StopSeCommand> StopSe;

@@ -87,6 +87,8 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     if (opcode == 0x64) {
       command.Message = DecodeMessage(script_->Payload(i));
       command.Routing = {command.Message->Route != 0, command.Message->Lane};
+    } else if(opcode==0x3f6) {
+      command.ApproachEntries=DecodeApproach(script_->Payload(i));
     } else if (opcode == 0x3ec) {
       command.Chapter = ChapterTitleCommand::Decode(script_->Payload(i));
     } else if (opcode == 0x258) {
@@ -185,6 +187,7 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     state_.ApproachGauge = 0;
     state_.ApproachMode = {};
     state_.ApproachMission = {};
+    state_.ApproachSelection = {};
     if (auto* resources = backend_.ApproachAssets()) resources->Reset();
     state_.BattleGauge = 50;
     state_.Battle = {};  // Mode entry must initialize its display and sides.
@@ -353,6 +356,9 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
     if (!resources) throw UnsupportedCommand("approach entry resource backend is unavailable");
     PayloadReader reader(script_->Payload(index));
     StartApproachEntry(state_, reader.I32(), *resources);
+  } else if(opcode==0x3f6 && !lane) {
+    if(!backend_.SelectionConfig())throw UnsupportedCommand("approach selection environment is unavailable");
+    StartApproachSelection(state_.ApproachSelection,state_,*command.ApproachEntries,now);
   } else if (opcode == 0x3f7 && !lane) {
     auto* audio=backend_.MissionVoices();const auto* environment=backend_.MissionConfig();
     if(!audio || !environment)throw UnsupportedCommand("approach mission resources/environment are unavailable");
@@ -516,6 +522,28 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
     if (lane) return true;
     return UpdateFillRect(state_, command.FillAnimation, *command.FillRect,
                           input.Route == UpdateRoute::Skipping, now);
+  }
+  if(opcode==0x3f6) {
+    if(lane)return true;
+    if(input.Choice || input.Child)
+      throw UnsupportedCommand("approach selection requires controller input, not a final ordinal");
+    const auto* environment=backend_.SelectionConfig();
+    if(!environment)throw UnsupportedCommand("approach selection environment is unavailable");
+    // Native UpdateSkipping80626 sets phase2 before the shared controller;
+    // a skip request does not choose an item or suppress its input gate.
+    if(input.Route==UpdateRoute::Skipping)state_.SkipPhase=2;
+    auto action=input.Approach;action.Accept=action.Accept || input.Advance;
+    const bool done=UpdateApproachSelection(state_.ApproachSelection,*environment,state_.ApproachFlags,action,now);
+    for(const auto sound:state_.ApproachSelection.Sounds)
+      state_.PendingEvents.push_back({GameEventKind::Sound,sound});
+    state_.ApproachSelection.Sounds.clear();
+    if(done) {
+      const auto choice=CompletedApproachChoice(state_.ApproachSelection);
+      if(!choice)throw FormatError("approach controller completed without a valid choice");
+      auto commit=input;commit.Choice=(*choice)[0];commit.Child=(*choice)[1];
+      CompleteCommand(state_,opcode,script_->Payload(index),commit);
+    }
+    return done;
   }
   if (opcode == 0x3f7) {
     if(lane)return true;
@@ -736,7 +764,9 @@ VmEvent VirtualMachine::Step(uint64_t now, const CommandInput& input) {
     if (state_.SkipPhase != 0) routedInput.Route = UpdateRoute::Skipping;
     if (Update(index, now, routedInput, false)) boundary_ = VmBoundary::CommandCompletedBeforeDispatch;
     else {
-      boundary_ = (Opcode() == 0x65 || Opcode() == 0x3f2 || Opcode() == 0x3f6 ||
+      const auto& selection=state_.ApproachSelection;
+      boundary_ = (Opcode() == 0x65 || Opcode() == 0x3f2 ||
+                   (Opcode()==0x3f6 && !selection.PendingPhase && (selection.Phase==4 || selection.Phase==7)) ||
                    (Opcode()==0x3f7 && state_.ApproachMission.Stage==2))
           ? VmBoundary::WaitingInput : VmBoundary::WaitingBackend;
       UpdateLanes(now);
