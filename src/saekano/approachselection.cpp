@@ -102,6 +102,27 @@ std::optional<std::array<size_t,2>> CompletedApproachChoice(const ApproachSelect
   if(!s.Started || s.Phase!=11 || s.Parent<0 || s.Child<0)return {};
   return std::array<size_t,2>{s.OriginalOrdinals.at(size_t(s.Parent)),size_t(s.Child)};
 }
+ApproachSelectionHitRegions BuildApproachSelectionHitRegions(
+    const ApproachSelectionLayout& e,const SharedSelectionEnvironment& shared,
+    const ApproachSelectionEnvironment& navigation,size_t parents,size_t children) {
+  if(parents>6 || children>3)throw FormatError("approach hit regions exceed menu limits");
+  const auto add=[](int32_t a,int32_t b){return std::bit_cast<int32_t>(uint32_t(a)+uint32_t(b));};
+  ApproachSelectionHitRegions result;
+  if(parents>=5) {
+    result.Parents.push_back({add(e.Offset[0],e.SelectedOffset),
+        add(e.Offset[1],std::bit_cast<int32_t>(uint32_t(navigation.ScrollDistance)*2)),
+        e.HitRectangle[2],e.HitRectangle[3]});
+    result.Arrows={e.ArrowHitRectangles.at(0),e.ArrowHitRectangles.at(1)};
+  } else {
+    const auto& points=e.PointTables[parents==3?0:1];
+    for(size_t i=0;i<parents;++i)result.Parents.push_back({add(points.at(i)[0],e.SelectedOffset),
+        points.at(i)[1],e.HitRectangle[2],e.HitRectangle[3]});
+  }
+  const auto& points=shared.PointTables[children==2?0:1];
+  for(size_t i=0;i<children;++i)result.Children.push_back({points.at(i)[0],points.at(i)[1],
+      e.Rectangles[0][2],e.Rectangles[0][3]});
+  return result;
+}
 std::vector<ApproachSelectionDraw> BuildApproachSelectionDraws(
     const ApproachSelectionLayout& e,const SharedSelectionEnvironment& shared,
     const ApproachSelectionEnvironment& navigation,const ApproachSelectionState& s,

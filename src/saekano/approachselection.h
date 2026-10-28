@@ -50,6 +50,12 @@ bool UpdateApproachSelection(ApproachSelectionState& selection,
     const ApproachSelectionInput& input,uint64_t now);
 std::optional<std::array<size_t,2>> CompletedApproachChoice(const ApproachSelectionState& selection);
 enum class ApproachSelectionDrawKind { Sprite, Text, ClipBegin, ClipEnd };
+struct ApproachSelectionHitRegions {
+  std::vector<std::array<int32_t,4>> Parents,Children,Arrows;
+};
+ApproachSelectionHitRegions BuildApproachSelectionHitRegions(
+    const ApproachSelectionLayout& layout,const SharedSelectionEnvironment& shared,
+    const ApproachSelectionEnvironment& navigation,size_t parents,size_t children);
 struct ApproachSelectionDraw {
   ApproachSelectionDrawKind Kind=ApproachSelectionDrawKind::Sprite;
   UiSpriteBlit Sprite;
