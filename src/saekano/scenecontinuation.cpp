@@ -6,6 +6,9 @@
 #include "scenemessage.h"
 #include "skipauto.h"
 #include "album.h"
+#ifdef SAEKANO_SCENE_CUBISM2
+#include "live2ddriver.h"
+#endif
 
 #include <fstream>
 #include <bit>
@@ -64,6 +67,9 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
     throw FormatError("scene continuation profile entry did not complete");
   ArchiveSceneImages images(resources);
   ArchiveApproachResources approachAssets(resources);
+#ifdef SAEKANO_SCENE_CUBISM2
+  SdkLive2dDriver models(resources, Live2dEnvironment::Decode(Read(root / "env/env_live2d.dat")));
+#endif
   ArchiveCharacterPoses poses(resources);
   ArchiveBgmResources music(root);
   ArchiveSeResources sounds(root);
@@ -73,6 +79,9 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   backend.ApproachResourceBank = &approachAssets;
   backend.ApproachConfig = ApproachGaugeEnvironment::Decode(Read(root / "env/env_approach.dat"));
   backend.MusicResources = &music; backend.SeArchives = &sounds;
+#ifdef SAEKANO_SCENE_CUBISM2
+  backend.SceneModels = &models;
+#endif
   auto vm = VirtualMachine::FromCompletedProfile(resources, backend, std::move(owner), mode);
   vm->SeedRandom(0);
   const auto entryScript = vm->State().ScriptFileId;
@@ -171,6 +180,23 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
               << ",\"phase\":" << s.SkipPhase << ",\"textures\":" << approachAssets.Textures().size()
               << ",\"resource_idle\":" << approachAssets.Status().Idle() << "}\n";
         }
+#ifdef SAEKANO_SCENE_CUBISM2
+        if (event.Opcode == 0x438 && event.Boundary == VmBoundary::CommandCompletedBeforeDispatch) {
+          out << "{\"kind\":\"model_command\",\"script\":" << event.Script
+              << ",\"command\":" << event.Command << ",\"now\":" << now << ",\"records\":[";
+          bool first = true;
+          for (const auto& record : vm->State().Live2d.Records) {
+            if (!record.ResourceId) continue;
+            if (!first) out << ','; first = false;
+            const auto model = models.Observe(*record.ResourceId);
+            out << "{\"resource\":" << *record.ResourceId << ",\"logical\":" << record.LogicalId
+                << ",\"enabled\":" << model.Enabled << ",\"pose\":" << record.Pose.value_or(-1)
+                << ",\"position\":[" << model.Position[0] << ',' << model.Position[1]
+                << "],\"scale\":[" << model.Scale[0] << ',' << model.Scale[1] << "]}";
+          }
+          out << "]}\n";
+        }
+#endif
         if (event.Opcode == 0x64 && (event.Boundary == VmBoundary::CommandStarted ||
                                     event.Boundary == VmBoundary::CommandCompletedBeforeDispatch)) {
           const auto* message = backend.CurrentMessage();
@@ -207,6 +233,9 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         }
       }
       vm->UpdateSpriteFrames(uint32_t(now));
+#ifdef SAEKANO_SCENE_CUBISM2
+      models.Frame(vm->State().Live2d, now);
+#endif
       for (const auto& [id, actor] : vm->State().Characters)
         if (actor.Pose.Ready && actor.Tweens[size_t(CharacterTween::Opacity)].Current != 0) mouths.at(id).Update(now);
       backend.UpdateMessage(now);

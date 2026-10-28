@@ -686,10 +686,12 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   ArchiveSceneImages images(resources);
   ArchiveCharacterPoses poses(resources);
   ArchiveApproachResources approachAssets(resources);
+  SdkLive2dDriver models(resources, Live2dEnvironment::Decode(SceneRead(root / "env/env_live2d.dat")));
   SceneMessageBackend backend(format, timing, *owner.TextSpeed, owner.AutoSpeed);
   backend.SceneImages = &images;
   backend.CharacterPoses = &poses;
   backend.ApproachResourceBank = &approachAssets;
+  backend.SceneModels = &models;
   backend.ApproachConfig = ApproachGaugeEnvironment::Decode(SceneRead(root / "env/env_approach.dat"));
   backend.MusicResources = &music;
   backend.SeArchives = &sounds;
@@ -1009,6 +1011,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         }
       }
     vm->UpdateSpriteFrames(spriteClock);
+    models.Frame(vm->State().Live2d, now);
     for (const auto& [id, actor] : vm->State().Characters)
       if (actor.Pose.Ready && actor.Tweens[size_t(CharacterTween::Opacity)].Current != 0)
         mouths.at(id).Update(now);

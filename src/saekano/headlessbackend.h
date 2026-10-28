@@ -19,6 +19,8 @@ class HeadlessBackend : public VmBackend {
   CharacterPoseDriver* Poses() override { return CharacterPoses; }
   ApproachResources* ApproachResourceBank = nullptr;
   ApproachResources* ApproachAssets() override { return ApproachResourceBank; }
+  Live2dDriver* SceneModels = nullptr;
+  Live2dDriver* Models() override { return SceneModels; }
   BgmResources* MusicResources = nullptr;
   BgmResources* Music() override { return MusicResources; }
   SeResources* SeArchives = nullptr;
