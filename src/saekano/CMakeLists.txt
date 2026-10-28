@@ -27,6 +27,7 @@ add_library(saekano_core STATIC formats.cpp commands.cpp flow.cpp vm.cpp resourc
 target_link_libraries(saekano_core PUBLIC ZLIB::ZLIB saekano_audio)
 target_sources(saekano_core PRIVATE missionvoice.cpp)
 target_sources(saekano_core PRIVATE approachselection.cpp)
+target_sources(saekano_core PRIVATE approachresult.cpp)
 target_include_directories(saekano_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_features(saekano_core PUBLIC cxx_std_20)
 if(MSVC)
