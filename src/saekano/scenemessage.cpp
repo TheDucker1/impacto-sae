@@ -19,6 +19,11 @@ SceneMessageBackend::SceneMessageBackend(const TextFormatEnvironment& format,
   if (autoSpeed_) timing_.ForAutoDelay(*autoSpeed_);
   AutoReveal = AutoAdvance = false;
 }
+void SceneMessageBackend::StartPresentation(size_t command,uint16_t opcode,
+    std::span<const uint8_t> payload,bool lane,uint64_t now) {
+  if(opcode==0x3f8)throw UnsupportedCommand("approach result presentation/audio/input lifecycle is not bound");
+  HeadlessBackend::StartPresentation(command,opcode,payload,lane,now);
+}
 void SceneMessageBackend::BeginMessage(size_t command,
                                        const MessageCommand& message,
                                        size_t side, uint64_t now) {

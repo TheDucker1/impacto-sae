@@ -12,6 +12,7 @@
 #endif
 
 #include <fstream>
+#include <algorithm>
 #include <bit>
 #include <iterator>
 #include <ostream>
@@ -53,7 +54,11 @@ void String(std::ostream& out, std::string_view value) {
 }
 }
 int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
-                         std::optional<size_t> untilMessage, std::ostream& report,bool confirmFirstMission,bool chooseFirstApproach) {
+                         std::optional<size_t> untilMessage, std::ostream& report,bool confirmFirstMission,bool chooseFirstApproach,
+                         std::span<const std::array<size_t,2>> approachPlan) {
+  const std::array<std::array<size_t,2>,1> firstChoice{{{0,0}}};
+  if(chooseFirstApproach && approachPlan.empty())approachPlan=firstChoice;
+  chooseFirstApproach=!approachPlan.empty();
   DiscoveryBuffer output(report.rdbuf(),!confirmFirstMission && !chooseFirstApproach);std::ostream out(&output);
   if (!frameBudget || frameBudget > 1000000)
     throw FormatError("scene continuation frame budget outside1..1000000");
@@ -157,6 +162,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   };
   std::optional<std::pair<int32_t, uint32_t>> previousFilter;
   std::optional<std::tuple<int32_t,int32_t,int32_t>> previousMission;
+  size_t choiceIndex=0;
   const auto finish = [&](std::string_view reason, bool success) {
     output.Enabled=true;  // A failure before the requested gate still reports its exact boundary.
     out << "{\"kind\":\"result\",\"success\":" << (success ? "true" : "false") << ",\"reason\":";
@@ -168,11 +174,13 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         << ",\"sprite_submissions\":" << spriteSubmissions
         << ",\"mission_voice_id\":" << missionVoice.CurrentId()
         << ",\"mission_voice_frames\":" << missionVoice.FramesConsumed().value_or(0)
+        << ",\"choice_plan_entries\":" << approachPlan.size() << ",\"choices_committed\":" << choiceIndex
+        << ",\"approach_gauge\":" << vm->State().ApproachGauge
         << ",\"clock_step_ms\":16,\"seed\":0,\"voice_pcm_decoded\":true,\"bgm_se_playback\":false,"
            "\"fresh_unread_controls\":true,\"history_bound\":false,\"gpu_pixels\":false}\n";
   };
   bool confirmationDue=false,confirmationSent=false;
-  uint32_t choiceStep=0;bool choiceCompleted=false;
+  uint32_t choiceStep=0;
   try {
     for (size_t frame = 0; frame < frameBudget; ++frame) {
       now = uint64_t(frame) * 16;
@@ -187,15 +195,26 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
       voices.Update(now);
       bool ended = false, reached = false, waitingMission=false,waitingSelection=false;
       CommandInput commandInput;
-      if(chooseFirstApproach && !choiceCompleted) {
+      if(choiceIndex<approachPlan.size()) {
         const auto& menu=vm->State().ApproachSelection;
         if(menu.Visible && !menu.PendingPhase) {
-          if(choiceStep==0 && menu.Phase==4){commandInput.Approach.Next=true;++choiceStep;}
-          else if(choiceStep==1 && menu.Phase==4 && !menu.ParentUnselected){commandInput.Approach.Accept=true;++choiceStep;}
-          else if(choiceStep==2 && menu.Phase==7){commandInput.Approach.Next=true;++choiceStep;}
-          else if(choiceStep==3 && menu.Phase==7 && !menu.ChildUnselected){commandInput.Approach.Accept=true;++choiceStep;}
+          const auto target=approachPlan[choiceIndex];
+          const auto found=std::find(menu.OriginalOrdinals.begin(),menu.OriginalOrdinals.end(),target[0]);
+          if(found==menu.OriginalOrdinals.end())throw FormatError("planned approach parent is not enabled");
+          const auto parent=size_t(found-menu.OriginalOrdinals.begin());
+          if(target[1]>=menu.ChildCounts.at(parent) || vm->State().ApproachFlags.at(target[0]*3+target[1]))
+            throw FormatError("planned approach child is invalid or already used");
+          if(menu.Phase==4) {
+            if(menu.ParentUnselected || menu.Parent!=int32_t(parent))commandInput.Approach.Next=true;
+            else commandInput.Approach.Accept=true;
+          } else if(menu.Phase==7) {
+            if(menu.ChildUnselected || menu.Child!=int32_t(target[1]))commandInput.Approach.Next=true;
+            else commandInput.Approach.Accept=true;
+          }
           if(commandInput.Approach.Next || commandInput.Approach.Accept) {
+            ++choiceStep;
             out << "{\"kind\":\"approach_selection_input\",\"step\":" << choiceStep << ",\"now\":" << now
+                << ",\"plan_index\":" << choiceIndex << ",\"original_parent\":" << target[0] << ",\"child\":" << target[1]
                 << ",\"source\":\"explicit_probe_controller_input\"}\n";
           }
         }
@@ -210,9 +229,17 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         sync();
         const auto event = vm->Step(now,commandInput);commandInput.Advance=false;commandInput.Approach={};
         if(chooseFirstApproach && event.Opcode==0x3f6 && event.Boundary==VmBoundary::CommandCompletedBeforeDispatch) {
-          choiceCompleted=true;output.Enabled=true;
+          const auto actual=CompletedApproachChoice(vm->State().ApproachSelection);
+          if(choiceIndex>=approachPlan.size() || !actual || *actual!=approachPlan[choiceIndex])
+            throw FormatError("approach controller did not commit the planned original choice");
+          const auto chosen=approachPlan[choiceIndex++];output.Enabled=true;
           out << "{\"kind\":\"approach_selection_committed\",\"script\":" << event.Script
-              << ",\"command\":" << event.Command << ",\"now\":" << now << ",\"choice_step\":" << choiceStep << "}\n";
+              << ",\"command\":" << event.Command << ",\"now\":" << now << ",\"choice_step\":" << choiceStep
+              << ",\"plan_index\":" << choiceIndex-1 << ",\"original_parent\":" << chosen[0] << ",\"child\":" << chosen[1]
+              << ",\"destination\":" << vm->State().PendingCommandIndex
+              << ",\"used\":[";
+          for(size_t i=0;i<18;++i){if(i)out << ',';out << +vm->State().ApproachFlags[i];}out << "]}\n";
+          choiceStep=0;
         }
         sync();
         if (event.Boundary == VmBoundary::CommandStarted || event.Boundary == VmBoundary::CommandCompletedBeforeDispatch) {
@@ -329,9 +356,13 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
           for(size_t i=0;i<selection.OriginalOrdinals.size();++i){if(i)out << ',';out << selection.OriginalOrdinals[i];}
           out << "],\"children\":[";
           for(size_t i=0;i<selection.ChildCounts.size();++i){if(i)out << ',';out << selection.ChildCounts[i];}
+          out << "],\"topic_bank0\":[";
+          for(size_t i=50;i<56;++i){if(i!=50)out << ',';out << vm->State().Bank0[i];}
+          out << "],\"used\":[";
+          for(size_t i=0;i<18;++i){if(i)out << ',';out << +vm->State().ApproachFlags[i];}
           out << "]}\n";
         }
-        if(!(chooseFirstApproach && !choiceCompleted && vm->Opcode()==0x3f6)) {
+        if(!(choiceIndex<approachPlan.size() && vm->Opcode()==0x3f6)) {
           finish("explicit_choice_required",false);return 1;
         }
       }
