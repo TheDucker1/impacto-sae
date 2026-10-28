@@ -1,5 +1,7 @@
 #include "approachselection.h"
 #include "commands.h"
+#include <bit>
+#include <cmath>
 
 namespace Impacto::Saekano {
 void StartApproachSelection(ApproachSelectionState& s,const SemanticState& owner,
@@ -99,5 +101,102 @@ bool UpdateApproachSelection(ApproachSelectionState& s,const ApproachSelectionEn
 std::optional<std::array<size_t,2>> CompletedApproachChoice(const ApproachSelectionState& s) {
   if(!s.Started || s.Phase!=11 || s.Parent<0 || s.Child<0)return {};
   return std::array<size_t,2>{s.OriginalOrdinals.at(size_t(s.Parent)),size_t(s.Child)};
+}
+std::vector<ApproachSelectionDraw> BuildApproachSelectionDraws(
+    const ApproachSelectionLayout& e,const SharedSelectionEnvironment& shared,
+    const ApproachSelectionEnvironment& navigation,const ApproachSelectionState& s,
+    std::span<const ApproachEntry> entries,std::span<const uint8_t,18> used,
+    std::span<const std::array<uint8_t,4>> history,int32_t utilityFontSize,
+    const std::function<int32_t(const std::u16string&,int32_t)>& measure) {
+  std::vector<ApproachSelectionDraw> draws;
+  if(!s.Started || !s.Visible)return draws;
+  if(!measure || utilityFontSize<0 || !std::isfinite(s.ParentWeight) ||
+     s.ParentWeight<0 || s.ParentWeight>1)
+    throw FormatError("invalid approach selection drawing context");
+  const auto add=[](int32_t a,int32_t b){return std::bit_cast<int32_t>(uint32_t(a)+uint32_t(b));};
+  const auto mul=[](int32_t a,int32_t b){return std::bit_cast<int32_t>(uint32_t(a)*uint32_t(b));};
+  const auto alpha=[&](uint8_t value){return uint8_t(float(value)*s.ParentWeight);};
+  const auto read=[&](size_t parent,size_t child){
+    if(history.empty())return false;
+    if(parent>=history.size())throw FormatError("missing approach read history");
+    return history[parent].at(child)!=0;
+  };
+  const auto ordinal=[&](size_t parent){const auto index=s.OriginalOrdinals.at(parent);
+    if(index>=entries.size() || index>=6)throw FormatError("invalid approach drawing ordinal");return index;};
+  const auto sprite=[&](uint32_t entry,UiSpriteDefinition definition,std::array<int32_t,2> point) {
+    definition.X=point[0];definition.Y=point[1];ApproachSelectionDraw draw;
+    draw.Sprite=ResolveUiSprite({ProfileTextureSection::MainUi,-1,entry},definition);
+    draws.push_back(std::move(draw));
+  };
+  const auto text=[&](const std::u16string& value,std::array<int32_t,2> point,int32_t size,
+                       std::array<uint8_t,4> color,bool baseline) {
+    const auto width=measure(value,size);if(width<0)throw FormatError("negative approach label width");
+    ApproachSelectionDraw draw;draw.Kind=ApproachSelectionDrawKind::Text;draw.Text=value;
+    draw.Position={add(point[0],-width/2),add(point[1],baseline?-size:0)};
+    draw.FontSize=size;draw.Color=color;draws.push_back(std::move(draw));
+  };
+  const auto parentSize=int32_t(float(utilityFontSize)*e.TextScale);
+  const auto childSize=int32_t(float(utilityFontSize)*shared.TextScale);
+  const auto firstArrow=[&]() -> const UiSpriteDefinition& {
+    if(e.ArrowSprites[0].empty())throw FormatError("empty approach arrow descriptor table");
+    return e.ArrowSprites[0][0];
+  };
+  const auto parent=[&](size_t index,std::array<int32_t,2> point,bool selected) {
+    const auto original=ordinal(index);auto card=e.Sprites[1];card.Color[3]=alpha(card.Color[3]);
+    point[0]=add(point[0],selected?e.SelectedOffset:0);sprite(selected?31:30,card,point);
+    auto color=shared.TextColors[read(original,0)?1:0];color[3]=alpha(255);
+    text(entries[original].Label,{add(point[0],e.TextOffset[0]),add(point[1],e.TextOffset[1])},parentSize,color,true);
+  };
+  const auto marker=[&](std::array<int32_t,2> point) {
+    auto definition=e.Sprites[2];definition.Color=firstArrow().Color;definition.Color[3]=alpha(255);
+    sprite(37,definition,point);
+  };
+  const auto count=s.OriginalOrdinals.size();
+  if(s.Carousel && count) {
+    for(size_t i=0;i<2;++i) {
+      const auto state=i?s.NextArrow:s.PreviousArrow;
+      auto definition=e.ArrowSprites[i].at(state?1:0);
+      definition.Alignment=e.ArrowSprites[i].at(0).Alignment;
+      definition.Color=firstArrow().Color;definition.Color[3]=alpha(255);
+      sprite(39,definition,e.PointTables[count==3?4:5].at(i));
+      if(i)draws.back().Sprite.Source[3]=std::bit_cast<int32_t>(0u-uint32_t(definition.Height));
+    }
+    ApproachSelectionDraw clip;clip.Kind=ApproachSelectionDrawKind::ClipBegin;
+    clip.Clip=e.Rectangles[1];draws.push_back(clip);
+    auto index=(s.Parent+int32_t(count)-2)%int32_t(count);
+    for(int32_t row=0;row<6;++row) {
+      parent(size_t(index),{e.Offset[0],add(add(e.Offset[1],mul(navigation.ScrollDistance,row)),s.Scroll.Current)},
+          s.Phase!=5 && !s.ParentUnselected && row==2);
+      index=(index+1)%int32_t(count);
+    }
+    if(s.Phase!=5 && !s.ParentUnselected)marker(e.PointTables[3].at(1));
+    clip.Kind=ApproachSelectionDrawKind::ClipEnd;draws.push_back(clip);
+  } else {
+    const auto table=count==3?0:1;
+    for(size_t i=0;i<count;++i) {
+      const auto selected=int32_t(i)==s.Parent;
+      parent(i,e.PointTables[table].at(i),selected);
+      if(selected)marker(e.PointTables[table+2].at(i));
+    }
+  }
+  if(s.Phase>6 && s.Parent>=0 && size_t(s.Parent)<count) {
+    const auto original=ordinal(size_t(s.Parent));const auto& children=entries[original].Children;
+    const auto& points=shared.PointTables[children.size()==2?0:1];
+    for(size_t i=0;i<children.size();++i) {
+      if(i>=3)throw FormatError("approach drawing child exceeds flag layout");
+      const auto selected=int32_t(i)==s.Child;const auto wasRead=read(original,i+1);
+      const auto wasUsed=used[original*3+i]!=0;auto card=shared.Sprites[0];
+      card.Alignment=firstArrow().Alignment;card.Color=wasUsed?e.Colors[1]:std::array<uint8_t,4>{255,255,255,255};
+      sprite(selected?18:19,card,points.at(i));
+      if(selected) {
+        auto mark=shared.Sprites[2];const auto point=points.at(i);mark.Alignment=0;
+        sprite(20,mark,{add(point[0],mark.X),add(point[1],mark.Y)});
+      }
+      auto color=shared.TextColors[wasRead?1:0];if(wasRead && wasUsed)color=e.Colors[2];
+      const auto point=points.at(i);
+      text(children[i].Label,{add(point[0],shared.LayoutWords[4]),add(point[1],shared.LayoutWords[5])},childSize,color,false);
+    }
+  }
+  return draws;
 }
 }

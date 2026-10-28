@@ -1,6 +1,7 @@
 #pragma once
 #include "gauge.h"
 #include "uisprite.h"
+#include <functional>
 
 namespace Impacto::Saekano {
 struct ApproachEntry;
@@ -48,4 +49,22 @@ bool UpdateApproachSelection(ApproachSelectionState& selection,
     const ApproachSelectionEnvironment& environment,std::span<const uint8_t,18> used,
     const ApproachSelectionInput& input,uint64_t now);
 std::optional<std::array<size_t,2>> CompletedApproachChoice(const ApproachSelectionState& selection);
+enum class ApproachSelectionDrawKind { Sprite, Text, ClipBegin, ClipEnd };
+struct ApproachSelectionDraw {
+  ApproachSelectionDrawKind Kind=ApproachSelectionDrawKind::Sprite;
+  UiSpriteBlit Sprite;
+  std::u16string Text;
+  std::array<int32_t,2> Position{};
+  int32_t FontSize=0;
+  std::array<uint8_t,4> Color{};
+  std::array<int32_t,4> Clip{};
+};
+// Read history is indexed by original parent, then parent/three children.
+// The caller resolves the owner's history policy; an empty span is fresh state.
+std::vector<ApproachSelectionDraw> BuildApproachSelectionDraws(
+    const ApproachSelectionLayout& layout,const SharedSelectionEnvironment& shared,
+    const ApproachSelectionEnvironment& navigation,const ApproachSelectionState& state,
+    std::span<const ApproachEntry> entries,std::span<const uint8_t,18> used,
+    std::span<const std::array<uint8_t,4>> readHistory,int32_t utilityFontSize,
+    const std::function<int32_t(const std::u16string&,int32_t)>& measure);
 }
