@@ -93,4 +93,8 @@ VoiceTextDurations TextTimingEnvironment::ForVoice(uint32_t duration,
     throw FormatError("text speed option outside authored table");
   return {Duration(duration, Factors[option]), Duration(duration, Factors[2])};
 }
+VoiceTextDurations TextTimingEnvironment::ForApproachResult(uint32_t duration,uint8_t option) const {
+  if(option>=Factors.size())throw FormatError("result text speed outside authored table");
+  return {duration,Duration(duration,Factors[option])};
+}
 }  // namespace Impacto::Saekano

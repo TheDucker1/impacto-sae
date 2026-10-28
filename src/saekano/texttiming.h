@@ -23,6 +23,8 @@ struct TextTimingEnvironment {
                                       bool readIntervals = false,
                                       bool readAutoDelays = false);
   VoiceTextDurations ForVoice(uint32_t duration, uint8_t option) const;
+  // Approach result812c4..81308 passes raw duration first, scaled option second.
+  VoiceTextDurations ForApproachResult(uint32_t duration,uint8_t option) const;
   uint32_t ForCharacters(uint8_t option) const;
   int32_t ForAutoDelay(uint8_t option) const;
 };
