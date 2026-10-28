@@ -256,6 +256,10 @@ int main(int argc, char* argv[]) {
            "Usage: --saekano-se USRDIR TRACK CHANNEL [--capture DIRECTORY]\n");
     return 1;
   }
+  if (argc == 4 && std::string_view(argv[1]) == "--saekano-mission-voice")
+    return Saekano::RunMissionVoiceSession(argv[2],argv[3]);
+  if (argc == 5 && std::string_view(argv[1]) == "--saekano-mission-voice" && std::string_view(argv[4])=="--lifecycle")
+    return Saekano::RunMissionVoiceSession(argv[2],argv[3],true);
   if (argc == 5 && std::string_view(argv[1]) == "--saekano-bgm-fade") {
     uint32_t track = 0;
     const std::string_view text(argv[3]);

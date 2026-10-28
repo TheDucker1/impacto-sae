@@ -175,6 +175,8 @@ struct MusicPlayback::Impl {
   std::array<std::unique_ptr<Audio::OpenAL::OpenALAudioChannel>,4> SeChannels;
   std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> ProfileVoice;
   std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> SecondaryVoice;
+  std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> MissionVoice;
+  bool HasMissionVoice=false;
   std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> UiSound;
   SystemSoundAssets* UiSounds = nullptr;
   float UiSoundGain = 0;
@@ -237,6 +239,8 @@ struct MusicPlayback::Impl {
           Audio::AC_VOICE0, Audio::ACG_Voice);
       SecondaryVoice = std::make_unique<Audio::OpenAL::OpenALAudioChannel>(
           Audio::AC_VOICE1, Audio::ACG_Voice);
+      MissionVoice = std::make_unique<Audio::OpenAL::OpenALAudioChannel>(
+          Audio::AC_VOICE2, Audio::ACG_Voice);
       UiSound = std::make_unique<Audio::OpenAL::OpenALAudioChannel>(
           Audio::AC_SE0, Audio::ACG_SE);
       if (Sounds) for (size_t i=0; i<SeChannels.size(); ++i)
@@ -252,6 +256,7 @@ struct MusicPlayback::Impl {
     Channel.reset();
     ProfileVoice.reset();
     SecondaryVoice.reset();
+    MissionVoice.reset();
     UiSound.reset();
     PreparedProfileVoice.reset();
     for (auto& channel : SeChannels) channel.reset();
@@ -376,6 +381,7 @@ void MusicPlayback::Update(float seconds) {
   for (auto& channel : impl_->SeChannels) if (channel) channel->Update(seconds);
   impl_->ProfileVoice->Update(seconds);
   impl_->SecondaryVoice->Update(seconds);
+  impl_->MissionVoice->Update(seconds);
   impl_->UiSound->Update(seconds);
   AlCheck("BGM frame");
 }
@@ -383,6 +389,7 @@ bool MusicPlayback::Playing() const {
   if (impl_->Channel->GetState() != Audio::ACS_Stopped) return true;
   if (impl_->ProfileVoice->GetState() != Audio::ACS_Stopped) return true;
   if (impl_->SecondaryVoice->GetState() != Audio::ACS_Stopped) return true;
+  if (MissionVoicePlaying()) return true;
   if (UiSoundPlaying()) return true;
   for (auto& channel : impl_->SeChannels)
     if (channel && channel->GetState() != Audio::ACS_Stopped) return true;
@@ -525,6 +532,46 @@ bool PlaybackOrdinaryVoice::Playing(uint32_t channel) const {
 int32_t PlaybackOrdinaryVoice::Position(uint32_t channel) const {
   return playback_.OrdinaryVoicePosition(channel);
 }
+void MusicPlayback::PlayMissionVoice(uint32_t id,std::unique_ptr<HcaWaveReader> reader,float gain) {
+  if(!reader || id>uint32_t(INT16_MAX) || !std::isfinite(gain) || gain<0 || gain>1)
+    throw FormatError("invalid mission voice preparation");
+  auto stream=std::make_unique<HcaPlaybackStream>(std::move(reader),int32_t(id),"voice.awb/mission11");
+  impl_->MissionVoice->Stop(0);impl_->MissionVoice->SetVolume(gain);
+  impl_->MissionVoice->Play(std::move(stream),false,0);impl_->HasMissionVoice=true;
+  AlCheck("mission voice play");
+}
+void MusicPlayback::ResetMissionVoice() {
+  impl_->MissionVoice->Stop(0);impl_->HasMissionVoice=false;AlCheck("mission voice reset");
+}
+bool MusicPlayback::MissionVoicePlaying() const {
+  return impl_->HasMissionVoice && impl_->MissionVoice->GetState()!=Audio::ACS_Stopped;
+}
+int32_t MusicPlayback::MissionVoicePosition() const {
+  if(!impl_->HasMissionVoice)return -1;
+  const auto seconds=impl_->MissionVoice->PositionInSeconds();
+  return std::isfinite(seconds) && seconds>=0 ? int32_t(seconds*1000) : -1;
+}
+PlaybackMissionVoice::PlaybackMissionVoice(MusicPlayback& playback,
+    const std::filesystem::path& usrdir,uint8_t volume,float coefficient)
+    : playback_(playback),bank_(std::make_shared<AwbBank>(usrdir/"voice.awb")),
+      gain_(ProfileVoiceGain(volume,coefficient)) {
+  if(!std::isfinite(gain_) || gain_<0 || gain_>1)throw FormatError("mission voice gain outside supported range");
+}
+void PlaybackMissionVoice::Register(std::span<const int32_t> ids) {
+  std::set<int32_t> prepared;
+  for(const auto id:ids) {
+    if(id<0)continue;
+    if(id>INT16_MAX)throw FormatError("mission voice ID exceeds verified signed16 range");
+    (void)bank_->Index().Find(uint32_t(id));prepared.insert(id);
+  }
+  catalog_=std::move(prepared);
+}
+void PlaybackMissionVoice::Begin(int32_t id,uint64_t) {
+  if(!catalog_.contains(id))throw UnsupportedCommand("mission voice was not registered at script load");
+  auto reader=std::make_unique<HcaWaveReader>(bank_,uint32_t(id));
+  playback_.PlayMissionVoice(uint32_t(id),std::move(reader),gain_);
+}
+void PlaybackMissionVoice::Disable() { playback_.ResetMissionVoice(); }
 PlaybackProfileVoice::PlaybackProfileVoice(MusicPlayback& playback,
                                            uint8_t option,
                                            float channelCoefficient)
@@ -573,6 +620,64 @@ void MusicPlayback::Render(std::span<int16_t> output) {
   }
 }
 
+int RunMissionVoiceSession(const std::filesystem::path& usrdir,
+                           const std::filesystem::path& captureDirectory,bool lifecycleOnly) {
+  bool created=false;
+  try {
+    CreateCaptureDirectory(usrdir,captureDirectory);created=true;
+    if(!SDL_Init(SDL_INIT_EVENTS))throw FormatError(SDL_GetError());
+    struct Cleanup { ~Cleanup(){SDL_Quit();} } cleanup;
+    ArchiveBgmResources music(usrdir);MusicPlayback playback(music,true);
+    auto bank=std::make_shared<AwbBank>(usrdir/"voice.awb");
+    const auto info=HcaWaveReader(bank,10579).Info();
+    std::ofstream report(captureDirectory/"mission.json");
+    report << "{\"voice\":10579,\"source_rate\":" << info.SampleRate
+           << ",\"source_frames\":" << info.Frames << ",\"gains\":[";
+    const std::array<int32_t,1> ids{10579};
+    if(!lifecycleOnly)for(const auto volume:{uint8_t(0),uint8_t(5),uint8_t(10)}) {
+      PlaybackMissionVoice voice(playback,usrdir,volume,1.0f);voice.Register(ids);
+      voice.Begin(10579,0);
+      if(!playback.MissionVoicePlaying())throw FormatError("mission source did not start");
+      const auto expected=(info.Frames*48000+info.SampleRate-1)/info.SampleRate;
+      if(expected>48000*20)throw FormatError("mission cue diagnostic duration budget exceeded");
+      std::vector<int16_t> pcm;
+      while(playback.MissionVoicePlaying()) {
+        if(pcm.size()/2>expected+24000)throw FormatError("mission cue did not finish within source duration budget");
+        std::array<int16_t,960> block;playback.Render(block);
+        pcm.insert(pcm.end(),block.begin(),block.end());
+      }
+      SaveWav(captureDirectory/("gain-"+std::to_string(volume)+".wav"),pcm);
+      if(volume)report << ',';report << voice.Gain();voice.Reset();
+    }
+    PlaybackOrdinaryVoice ordinary(playback,usrdir,10,1.0f);
+    ordinary.Prepare(7,5322);ordinary.Start(7);
+    PlaybackMissionVoice voice(playback,usrdir,10,1.0f);voice.Register(ids);voice.Begin(10579,0);
+    std::vector<int16_t> block(4800*2);playback.Render(block);
+    const auto before=ordinary.Position(7);
+    bool rejected=false;try{voice.Begin(10580,0);}catch(const UnsupportedCommand&){rejected=true;}
+    if(!rejected || !playback.MissionVoicePlaying())throw FormatError("unregistered cue disturbed current mission source");
+    voice.Disable();playback.Render(block);
+    const auto after=ordinary.Position(7);
+    // Start consumes the prepared reader. Mission stop must preserve the
+    // playing dialogue source, without recreating its consumed preparation.
+    if(!ordinary.Playing(7) || ordinary.Ready(7) || before<0 || after<=before ||
+        playback.MissionVoicePlaying() || playback.MissionVoicePosition()!=-1)
+      throw FormatError("mission independence: before="+std::to_string(before)+", after="+std::to_string(after)+
+          ", dialogue_playing="+std::to_string(ordinary.Playing(7))+", ready="+std::to_string(ordinary.Ready(7))+
+          ", mission_playing="+std::to_string(playback.MissionVoicePlaying())+
+          ", mission_position="+std::to_string(playback.MissionVoicePosition()));
+    ordinary.Stop(7);playback.Render(block);  // Settle both stop ramps.
+    voice.Begin(10579,0);playback.Render(block);voice.Disable();
+    std::vector<int16_t> tail(9600*2);playback.Render(tail);SaveWav(captureDirectory/"stop-tail.wav",tail);
+    report << "],\"unregistered_rejected\":true,\"dialogue_before_ms\":" << before
+           << ",\"dialogue_after_ms\":" << after
+           << ",\"independent_dialogue\":true,\"reset_missing_position\":true}\n";
+    return 0;
+  }catch(const std::exception& e) {
+    if(created){std::ofstream error(captureDirectory/"error.txt");error << std::string(e.what()).substr(0,2048);}
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano mission voice: %s",e.what());return 1;
+  }
+}
 int RunUiSoundSession(const std::filesystem::path& usrdir,
                       const std::filesystem::path& captureDirectory) {
   bool created = false;

@@ -687,11 +687,15 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   ArchiveCharacterPoses poses(resources);
   ArchiveApproachResources approachAssets(resources);
   SdkLive2dDriver models(resources, Live2dEnvironment::Decode(SceneRead(root / "env/env_live2d.dat")));
+  const auto voiceSettings = MakeFreshOrdinaryVoiceSettings();
+  PlaybackMissionVoice missionVoice(playback,root,voiceSettings.Volume,1.0f);
   SceneMessageBackend backend(format, timing, *owner.TextSpeed, owner.AutoSpeed);
   backend.SceneImages = &images;
   backend.CharacterPoses = &poses;
   backend.ApproachResourceBank = &approachAssets;
   backend.SceneModels = &models;
+  backend.MissionVoiceBank=&missionVoice;
+  backend.MissionSettings=ApproachMissionEnvironment::Decode(SceneRead(root/"env/env_approach.dat"));
   backend.ApproachConfig = ApproachGaugeEnvironment::Decode(SceneRead(root / "env/env_approach.dat"));
   backend.MusicResources = &music;
   backend.SeArchives = &sounds;
@@ -714,7 +718,6 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   auto mouthControl = MakeFreshOrdinaryMouthControl();
   std::map<uint16_t, ProfileMouthPlayback> mouths;
   SpriteMessageMouth spriteMouth(vm->State(), mouthControl, mouths);
-  const auto voiceSettings = MakeFreshOrdinaryVoiceSettings();
   PlaybackOrdinaryVoice voices(playback, root, voiceSettings.Volume, 1.0f);
   std::unique_ptr<SceneMessageVoiceOwner> voiceOwner;
   int32_t voiceScript = -1;

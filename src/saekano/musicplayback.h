@@ -3,6 +3,7 @@
 #include "commands.h"
 #include "profilevoiceoutput.h"
 #include "ordinaryvoice.h"
+#include <set>
 
 namespace Impacto::Saekano {
 class SystemSoundAssets;
@@ -40,6 +41,10 @@ class MusicPlayback {
   bool OrdinaryVoiceReady(uint32_t channel) const;
   bool OrdinaryVoicePlaying(uint32_t channel) const;
   int32_t OrdinaryVoicePosition(uint32_t channel) const;  // Milliseconds, or-1.
+  void PlayMissionVoice(uint32_t voiceId,std::unique_ptr<HcaWaveReader> reader,float gain);
+  void ResetMissionVoice();
+  bool MissionVoicePlaying() const;
+  int32_t MissionVoicePosition() const;
 
  private:
   struct Impl;
@@ -66,9 +71,26 @@ class PlaybackOrdinaryVoice final : public OrdinaryVoiceOutput {
   float gain_;
 };
 
-// Uses the same device/channel as BGM/SE and the existing PC HCA stream.
-// Settings/coefficient must be known current state. The frontend pumps audio;
-// Update intentionally does not substitute the profile clock for device state.
+// Native mission channel11 has its own source on the shared audio device.
+// Uses the existing HCA stream; settings/coefficient must be known current state.
+class PlaybackMissionVoice final : public ApproachMissionAudio {
+ public:
+  PlaybackMissionVoice(MusicPlayback& playback,const std::filesystem::path& usrdir,
+                       uint8_t volume,float coefficient);
+  void Register(std::span<const int32_t> ids) override;
+  void Begin(int32_t id,uint64_t now) override;
+  void Update(uint64_t) override {}  // The physical host owns the clock.
+  void Disable() override;
+  void Reset() override { Disable();catalog_.clear(); }
+  float Gain() const { return gain_; }
+ private:
+  MusicPlayback& playback_;
+  std::shared_ptr<AwbBank> bank_;
+  std::set<int32_t> catalog_;
+  float gain_;
+};
+// The frontend pumps the shared device; Update does not substitute a script
+// clock for the profile channel's actual playback state.
 class PlaybackProfileVoice final : public ProfileVoiceOutput {
  public:
   PlaybackProfileVoice(MusicPlayback& playback, uint8_t option,
@@ -100,6 +122,8 @@ int RunProfileVoiceSession(const std::filesystem::path& usrdir,
                            const std::filesystem::path& captureDirectory = {});
 int RunOrdinaryVoiceSession(const std::filesystem::path& usrdir,
                             const std::filesystem::path& captureDirectory);
+int RunMissionVoiceSession(const std::filesystem::path& usrdir,
+                           const std::filesystem::path& captureDirectory,bool lifecycleOnly=false);
 int RunOrdinaryVoiceStopSession(const std::filesystem::path& usrdir,
                                const std::filesystem::path& captureDirectory);
 int RunUiSoundSession(const std::filesystem::path& usrdir,
