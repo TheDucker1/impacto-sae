@@ -266,7 +266,8 @@ ApproachGaugeEnvironment ReadApproachGauge(
     EnvironmentReader& reader, ModeResultVisualEnvironment* visuals = nullptr,
     ApproachMissionEnvironment* mission = nullptr,
     ApproachVisualEnvironment* approachVisuals = nullptr,
-    ApproachSelectionEnvironment* selection = nullptr) {
+    ApproachSelectionEnvironment* selection = nullptr,
+    ApproachSelectionLayout* layout = nullptr) {
   ApproachGaugeEnvironment result;
   reader.Skip(3 + 3 * 4);
   for (size_t i = 0; i < 6; ++i) {
@@ -299,20 +300,51 @@ ApproachGaugeEnvironment ReadApproachGauge(
     approachVisuals->CharacterLabels.reserve(count);
     for(size_t i=0;i<count;++i)approachVisuals->CharacterLabels.push_back(reader.VisualSprite());
   } else reader.Table(34);
-  reader.Skip(2 * 34 + 8 + 34 + 16);
-  reader.Table(34);
-  reader.Table(34);
-  reader.Table(16);
-  reader.Table(8);
-  reader.Table(8);
-  reader.Skip(4);
-  for (size_t i = 0; i < 4; ++i) reader.Table(8);
-  reader.Skip(4 * 4 + 2 * 16 + 2 * 4);
+  if(layout) {
+    layout->Sprites[0]=reader.VisualSprite();
+    layout->Sprites[1]=reader.VisualSprite();
+    for(auto& value:layout->TextOffset)value=reader.Word();
+    layout->Sprites[2]=reader.VisualSprite();
+    for(auto& value:layout->HitRectangle)value=reader.Word();
+    for(auto& table:layout->ArrowSprites) {
+      const auto count=reader.Count(34);table.reserve(count);
+      for(size_t i=0;i<count;++i)table.push_back(reader.VisualSprite());
+    }
+    const auto count=reader.Count(16);layout->ArrowHitRectangles.reserve(count);
+    for(size_t i=0;i<count;++i) {
+      std::array<int32_t,4> rectangle{};
+      for(auto& value:rectangle)value=reader.Word();
+      layout->ArrowHitRectangles.push_back(rectangle);
+    }
+    const auto points=[&](size_t index) {
+      const auto count=reader.Count(8);auto& table=layout->PointTables[index];table.reserve(count);
+      for(size_t i=0;i<count;++i)table.push_back({reader.Word(),reader.Word()});
+    };
+    points(0);points(1);layout->SelectedOffset=reader.Word();
+    for(size_t i=2;i<6;++i)points(i);
+    const auto color=[&]() {
+      const auto value=uint32_t(reader.Word());return std::array<uint8_t,4>{
+        uint8_t(value>>16),uint8_t(value>>8),uint8_t(value),uint8_t(value>>24)};
+    };
+    layout->Colors[0]=color();layout->TextScale=std::bit_cast<float>(uint32_t(reader.Word()));
+    layout->Colors[1]=color();layout->Colors[2]=color();
+    if(!std::isfinite(layout->TextScale) || layout->TextScale<0)
+      throw FormatError("invalid approach selection text scale");
+    for(auto& rectangle:layout->Rectangles)for(auto& value:rectangle)value=reader.Word();
+    for(auto& value:layout->Offset)value=reader.Word();
+  } else {
+    reader.Skip(2 * 34 + 8 + 34 + 16);
+    reader.Table(34);reader.Table(34);reader.Table(16);
+    reader.Table(8);reader.Table(8);reader.Skip(4);
+    for(size_t i=0;i<4;++i)reader.Table(8);
+    reader.Skip(4*4+2*16+2*4);
+  }
   if(selection) {
     selection->ScrollDistance=reader.Word();selection->ScrollDuration=reader.Word();
     if(selection->ScrollDistance<0 || selection->ScrollDuration<0)
       throw FormatError("invalid approach selection scroll configuration");
   } else reader.Skip(2*4);
+  if(layout)layout->PrefixBytes=reader.Position();
   if (visuals) {
     visuals->ProgressFill = reader.VisualSprite();  // bc18
     visuals->Frame = reader.VisualSprite();  // bc3c
@@ -356,6 +388,10 @@ ApproachVisualEnvironment ApproachVisualEnvironment::Decode(std::span<const uint
 ApproachSelectionEnvironment ApproachSelectionEnvironment::Decode(std::span<const uint8_t> bytes) {
   EnvironmentReader reader(bytes);ApproachSelectionEnvironment result;
   ReadApproachGauge(reader,nullptr,nullptr,nullptr,&result);return result;
+}
+ApproachSelectionLayout ApproachSelectionLayout::Decode(std::span<const uint8_t> bytes) {
+  EnvironmentReader reader(bytes);ApproachSelectionLayout result;
+  ReadApproachGauge(reader,nullptr,nullptr,nullptr,nullptr,&result);return result;
 }
 ApproachMissionEnvironment ApproachMissionEnvironment::Decode(std::span<const uint8_t> bytes) {
   EnvironmentReader reader(bytes);ApproachMissionEnvironment result;
