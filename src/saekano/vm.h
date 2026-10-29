@@ -33,6 +33,8 @@ class ScriptSource {
 class VmBackend {
  public:
   virtual ~VmBackend() = default;
+  virtual void ResetParticles(bool) {}
+  virtual bool StartParticleEffect(const GameEvent&) { return false; }
   virtual void BeginMessage(size_t command, const MessageCommand& message,
                              size_t context, uint64_t now) = 0;
   virtual bool MessageRevealed(size_t command, uint64_t now) = 0;

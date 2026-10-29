@@ -233,6 +233,9 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     dispatcher_ = {};
   }
   messageKeywords_ = {};
+  // Native LoadScriptInit prepares/reseeds the particle manager. A bound
+  // frontend must distinguish fresh manager replacement from restored state.
+  backend_.ResetParticles(preserveOwnerState);
   if(auto* audio=backend_.MissionVoices()) {
     audio->Reset();audio->Register(CollectScriptVoiceIds(*script_));
   }
@@ -453,7 +456,16 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
   } else if (opcode == 0x3f5 && !lane) {
     const auto* environment = backend_.ApproachEnvironment();
     if (!environment) throw UnsupportedCommand("approach gauge environment is unavailable");
+    const auto firstEvent = state_.PendingEvents.size();
     StartApproachGauge(state_, command.ApproachAnimation, *command.ApproachGauge, *environment, now);
+    // Request at Start, before another command can run or replace this manager.
+    // Unbound backends retain the existing event contract for headless callers.
+    for (size_t event = firstEvent; event < state_.PendingEvents.size();) {
+      const auto& request = state_.PendingEvents[event];
+      if (request.Kind == GameEventKind::Effect && backend_.StartParticleEffect(request))
+        state_.PendingEvents.erase(state_.PendingEvents.begin() + event);
+      else ++event;
+    }
   } else if (opcode == 0x3f4 && !lane) {
     const auto* environment = backend_.BattleEnvironment();
     if (!environment) throw UnsupportedCommand("battle gauge environment is unavailable");

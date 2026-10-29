@@ -22,6 +22,7 @@
 #include "skipauto.h"
 #include "mouthselection.h"
 #include "particle.h"
+#include "scenecamera.h"
 #include "particlevertexshader.h"
 #include "particlerastervertexshader.h"
 #include "particlefragmentshader.h"
@@ -638,6 +639,7 @@ void main(){
 };
 struct ParticleGlRenderer {
   const ParticleManager* TextureOwner = nullptr;
+  uint64_t TextureGeneration = 0;
   std::map<size_t,UiBlitRenderer::BoundTexture> Textures;
   GLuint Vao = 0, Buffer = 0;
   std::array<GLuint,7> Programs{};
@@ -655,7 +657,9 @@ struct ParticleGlRenderer {
     Textures.clear(); TextureOwner=nullptr;
   }
   const UiBlitRenderer::BoundTexture& Texture(const ParticleManager& manager,size_t index) {
-    if (TextureOwner!=&manager) { ResetTextures();TextureOwner=&manager; }
+    if (TextureOwner!=&manager || TextureGeneration!=manager.ResourceGeneration()) {
+      ResetTextures();TextureOwner=&manager;TextureGeneration=manager.ResourceGeneration();
+    }
     if (const auto found=Textures.find(index);found!=Textures.end()) return found->second;
     ScopedSdkGlState scope;
     const auto pixels=DecodeSceneImage(manager.TextureData(index)); GLuint handle=0;glGenTextures(1,&handle);
@@ -859,7 +863,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                       std::optional<int32_t> captureScriptOverride = {},
                       bool captureWaitingInput = false,bool captureConfirmInput = false,int32_t captureMenuInput = 0) {
   const bool capture = !captureDirectory.empty();
-  const bool captureMenuPointer=captureMenuInput==2,captureBranch=captureMenuInput==3;
+  const bool captureParticles=captureMenuInput==4;
+  const bool captureMenuPointer=captureMenuInput==2,captureBranch=captureMenuInput==3 || captureParticles;
   if (!owner.WindowOpacity || !owner.ReadColorEnabled || !owner.TextSpeed ||
       !owner.AutoSpeed)
     throw UnsupportedCommand("scene owner display settings are missing");
@@ -891,6 +896,14 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   ArchiveCharacterPoses poses(resources);
   ArchiveApproachResources approachAssets(resources);
   const auto approachVisual=ApproachVisualEnvironment::Decode(SceneRead(root/"env/env_approach.dat"));
+  const auto particleEnvironment=ParticleEnvironment::Decode(SceneRead(root/"env/env_particle.dat"));
+  ParticleManager particles(0); ParticleGlRenderer particleRenderer;
+  auto particleCamera=InitialSceneCamera();
+  ParticleFragmentState particleFragment;particleFragment.SetBlendMode(1);
+  uint64_t particleClock=0;
+  bool particleCaptureRequested=false;size_t particleCaptureFrames=0;
+  struct ParticleRequestLog { int32_t Id;ParticleEffectRequest Request;uint32_t Seed;uint64_t Before; };
+  std::vector<ParticleRequestLog> particleRequests;
   const auto selectionLayout=ApproachSelectionLayout::Decode(SceneRead(root/"env/env_approach.dat"));
   const auto selectionShared=SharedSelectionEnvironment::Decode(SceneRead(root/"env/env_script_select.dat"));
   std::map<int32_t,std::unique_ptr<ModelTextures>> modelTextures;
@@ -898,6 +911,20 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   const auto voiceSettings = MakeFreshOrdinaryVoiceSettings();
   PlaybackMissionVoice missionVoice(playback,root,voiceSettings.Volume,1.0f);
   SceneMessageBackend backend(format, timing, *owner.TextSpeed, owner.AutoSpeed);
+  backend.ParticleReset=[&](bool fresh) {
+    if(!fresh)throw UnsupportedCommand("restored particle manager state is unavailable");
+    particles.ResetForScript(capture?particleClock:SDL_GetTicks());
+    particles.LoadEffect(resources,particleEnvironment,10);
+    particles.LoadEffect(resources,particleEnvironment,11);
+  };
+  backend.ParticleRequest=[&](const GameEvent& event) {
+    if(event.Id!=10 && event.Id!=11)throw UnsupportedCommand("scene particle request type is unbound");
+    const auto request=BuildApproachParticleRequest(event.ScreenPosition,particleCamera,particleEnvironment.Scalar);
+    particleRequests.push_back({event.Id,request,particles.Random().SeedValue(),particles.Random().Draws()});
+    if(!particles.Request(size_t(event.Id),request,particleEnvironment.Effects.at(size_t(event.Id)).Parameter))
+      throw UnsupportedCommand("scene particle resource is not registered");
+    particleCaptureRequested=true;
+  };
   backend.SceneImages = &images;
   backend.CharacterPoses = &poses;
   backend.ApproachResourceBank = &approachAssets;
@@ -924,10 +951,11 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       throw FormatError("menu capture target requires approach selection");
   }
   bool targetCompleted = false, targetWaitingReached = false;
-  bool captureActive = !captureFromCommand && !captureConfirmInput;
+  bool captureActive = !captureFromCommand && !captureConfirmInput && !captureParticles;
   bool confirmDue=false,confirmSent=false;
   bool menuMissionDue=false,menuMissionSent=false;
   uint32_t menuCaptureStep=0;
+  std::pair<int32_t,int32_t> captureMenuSite{-1,-1};
   std::optional<uint64_t> pcmEpoch;
   auto mouthControl = MakeFreshOrdinaryMouthControl();
   std::map<uint16_t, ProfileMouthPlayback> mouths;
@@ -1018,24 +1046,45 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   std::vector<WidgetEventHistory> menuParents,menuChildren,menuArrows;
   std::pair<int32_t,int32_t> menuIdentity{-1,-1};
   int32_t menuChildParent=-1;
-  const uint32_t frameBudget = captureFromCommand ? (captureBranch?40000:20000) : 2000;
+  const uint32_t frameBudget = captureParticles?100000:(captureFromCommand ? (captureBranch?40000:20000) : 2000);
   for (uint32_t frame = 0; !quit && (!capture || frame < frameBudget); ++frame) {
     const uint64_t now =
         capture ? uint64_t(frame) * 16 : SDL_GetTicks() - epoch;
+    particleClock=now;
     messageCursor.Update(now);
     CommandInput input;
     SkipAutoInput policyInput;
     SDL_Event event;
     if(capture && captureMenuInput) {
       const auto& menu=vm->State().ApproachSelection;
+      if(captureBranch && menu.Visible) {
+        const auto site=std::pair{vm->State().ScriptFileId,vm->State().CurrentCommandIndex};
+        if(site!=captureMenuSite || (menuCaptureStep>=4 && menu.Phase==4 && menu.ParentUnselected)) {
+          captureMenuSite=site;menuCaptureStep=0;
+        }
+      }
       SDL_Keycode key=0;
       if(menuMissionDue){key=SDLK_RETURN;menuMissionDue=false;menuMissionSent=true;}
       else if(!captureMenuPointer && menu.Visible && vm->State().ScriptFileId==captureScript &&
           (captureBranch || size_t(vm->State().CurrentCommandIndex)==*captureUntilMessage) && !menu.PendingPhase) {
         if(menuCaptureStep==0 && menu.Phase==4){key=SDLK_DOWN;++menuCaptureStep;}
-        else if(menuCaptureStep==1 && menu.Phase==4 && !menu.ParentUnselected){key=SDLK_RETURN;++menuCaptureStep;}
-        else if(menuCaptureStep==2 && menu.Phase==7){key=SDLK_DOWN;++menuCaptureStep;}
-        else if(menuCaptureStep==3 && menu.Phase==7 && !menu.ChildUnselected){key=SDLK_RETURN;++menuCaptureStep;}
+        else if(menuCaptureStep==1 && menu.Phase==4) {
+          bool available=true;
+          if(captureParticles && !menu.ParentUnselected && menu.Parent>=0) {
+            const auto row=size_t(menu.Parent),original=menu.OriginalOrdinals.at(row);
+            available=false;
+            for(size_t child=0;child<menu.ChildCounts.at(row);++child)
+              available|=vm->State().ApproachFlags.at(original*3+child)==0;
+          }
+          if(!menu.ParentUnselected && available){key=SDLK_RETURN;++menuCaptureStep;}
+          else if(frame%4==0)key=SDLK_DOWN;
+        } else if(menuCaptureStep==2 && menu.Phase==7){key=SDLK_DOWN;++menuCaptureStep;}
+        else if(menuCaptureStep==3 && menu.Phase==7) {
+          const bool used=captureParticles && !menu.ChildUnselected && menu.Parent>=0 && menu.Child>=0 &&
+            vm->State().ApproachFlags.at(menu.OriginalOrdinals.at(size_t(menu.Parent))*3+size_t(menu.Child))!=0;
+          if(!menu.ChildUnselected && !used){key=SDLK_RETURN;++menuCaptureStep;}
+          else if(frame%4==0)key=SDLK_DOWN;
+        }
       }
       if(key) {
         for(const auto type:{SDL_EVENT_KEY_DOWN,SDL_EVENT_KEY_UP}) {
@@ -1265,8 +1314,9 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       bindScriptVoices();
       syncMouths();
       const auto step = vm->Step(now, input);
+      if(captureParticles && particleCaptureRequested)captureActive=true;
       if (!captureConfirmInput && captureFromCommand && step.Script == captureScript &&
-          size_t(step.Command) >= *captureFromCommand) captureActive = true;
+          size_t(step.Command) == *captureFromCommand) captureActive = true;
       input.Advance = false;
       input.Approach={};
       syncMouths();
@@ -1281,7 +1331,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         capturePointerStage = 0;
         break;
       }
-      if (step.Boundary == VmBoundary::CommandCompletedBeforeDispatch && capture &&
+      if (step.Boundary == VmBoundary::CommandCompletedBeforeDispatch && capture && !captureParticles &&
           (captureUntilMessage
                ? step.Script == captureScript && size_t(step.Command) == *captureUntilMessage
                : step.Opcode == 0x64 && (!captureVoiced || step.Command >= 67))) {
@@ -1309,6 +1359,15 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       if (work == 255)
         throw UnsupportedCommand("scene per-frame command budget exceeded");
     }
+    if(capture && captureActive)for(const auto& requestLog:particleRequests) {
+      events << "{\"kind\":\"particle_request\",\"now\":" << now << ",\"id\":" << requestLog.Id
+        << ",\"seed\":" << requestLog.Seed << ",\"draws_before\":" << requestLog.Before << ",\"words\":["
+        << requestLog.Request.StartOffset << ',' << requestLog.Request.Group;
+      for(const auto value:requestLog.Request.Owner)events << ',' << std::bit_cast<uint32_t>(value);
+      events << "]}\n";
+    }
+    particleRequests.clear();
+    particles.Update();  // Native749fe: fixed16ms after command work, before drawing.
     for (const auto& request : vm->TakeEvents()) {
       if (!backend.ConsumeVoiceEvent(request)) playback.Submit(request);
       if (capture && captureActive)
@@ -1480,6 +1539,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
           spriteDraws.push_back(sprite);
         }
       } else if(pass.Kind==SceneDrawKind::ApproachSelection) {
+        particleFragment.SetBlendMode(1);
         renderer.SetFilter(0,0);glUniform1i(renderer.AlphaMode,1);
         const auto draws=BuildApproachSelectionDraws(selectionLayout,selectionShared,*backend.SelectionSettings,
             state.ApproachSelection,vm->CurrentApproachEntries(),state.ApproachFlags,{},utility.Size,
@@ -1491,11 +1551,12 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
             fontTextures.DrawString(renderer,font,draw.Text,draw.Position[0],draw.Position[1],uint32_t(draw.FontSize),draw.Color);
             textDraws.push_back({draw.Text,draw.Position,uint32_t(draw.FontSize),draw.Color});
           } else if(draw.Kind==ApproachSelectionDrawKind::ClipBegin) {
+            particleFragment.SetAlphaTest(true,6,0);
             const auto& r=draw.Clip;const int x=std::max(0,r[0]),y=std::max(0,r[1]);
             const int right=std::clamp(r[0]+r[2],0,960),bottom=std::clamp(r[1]+r[3],0,544);
             glEnable(GL_SCISSOR_TEST);glScissor(x*width/960,(544-bottom)*height/544,
                 std::max(0,right-x)*width/960,std::max(0,bottom-y)*height/544);
-          } else glDisable(GL_SCISSOR_TEST);
+          } else {glDisable(GL_SCISSOR_TEST);particleFragment.SetAlphaTest(false,3,0);}
         }
         renderer.SetFilter(*state.ScreenFilter.Mode,*state.ScreenFilter.Intensity);
       } else if (pass.Kind == SceneDrawKind::MessageWindow) {
@@ -1516,6 +1577,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
             drawSprite(draw.Sprite);
             spriteDraws.push_back(draw.Sprite);
           } else if (draw.Kind == MessageWindowDrawKind::Widget) {
+            if(draw.Index==0)particleFragment.SetAlphaTest(false,3,0); // Native common widget631b4.
             widgetInputs.push_back({int32_t(draw.Index), int32_t(skipAuto.SkipIndicators[0]) |
                                         (int32_t(skipAuto.SkipIndicators[1]) << 1),
                                     int32_t(skipAuto.AutoIndicator), draw.Offset[0],
@@ -1532,6 +1594,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
             renderer.SetFilter(int32_t(draw.Index), std::bit_cast<float>(draw.Parameter));
         }
       } else if (pass.Kind == SceneDrawKind::MessageText) {
+        particleFragment.SetBlendMode(1);  // Native GpFont draw.
         if(!activeMessage)continue;
         // This entry is an explicitly fresh owner with no loaded read history.
         textDraws = BuildOrdinaryMessageTextDraws(
@@ -1552,12 +1615,20 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     if(approach) {
       if(!state.ApproachMode.Id || !state.Approach.Known)
         throw UnsupportedCommand("approach HUD owning inputs are unknown");
-      if(state.Approach.Changing || std::any_of(state.Approach.Particles.begin(),state.Approach.Particles.end(),
-          [](const auto& p){return p.Opacity.Current!=0;}))
-        throw UnsupportedCommand("active approach particle drawing is not bound");
-      for(const auto& sprites:{BuildApproachGaugeSprites(approachVisual,state.ApproachGauge,false),
-          BuildApproachMissionSprites(approachVisual,*state.ApproachMode.Id,state.ApproachMission)})
-        for(const auto& sprite:sprites){uploadMain(sprite.Texture.Entry);drawSprite(sprite);spriteDraws.push_back(sprite);}
+      for(const auto& sprite:BuildApproachGaugeSprites(approachVisual,state.ApproachGauge,false)) {
+        uploadMain(sprite.Texture.Entry);drawSprite(sprite);spriteDraws.push_back(sprite);
+      }
+      const auto camera=UpdateSceneCamera(particleCamera);ParticleProjectionUniforms projection;
+      projection.View=camera.View;projection.Projection=camera.Projection;
+      projection.World=ApproachParticleWorld();projection.Aspect=particleCamera.Aspect;
+      const auto count=particleRenderer.DrawGroup(particles,6,1.0f,projection,particleFragment,ParticleRasterViewport{});
+      if(capture && captureActive && count)events << "{\"kind\":\"particle_group\",\"frame\":" << frame
+        << ",\"now\":" << now << ",\"draws\":" << count << ",\"rng_draws\":" << particles.Random().Draws()
+        << ",\"blend\":" << particleFragment.BlendIndex << ",\"alpha\":" << particleFragment.AlphaFamily << "}\n";
+      if(captureParticles && count && ++particleCaptureFrames>=8){targetCompleted=true;quit=true;}
+      for(const auto& sprite:BuildApproachMissionSprites(approachVisual,*state.ApproachMode.Id,state.ApproachMission)) {
+        uploadMain(sprite.Texture.Entry);drawSprite(sprite);spriteDraws.push_back(sprite);
+      }
     }
     // Native HUD tail8007708c draws white after queued presentation/HUD.
     if (const auto fade = BuildScreenFade(*state.ScreenFade)) {
@@ -1642,7 +1713,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                 "\"unbound_passes\":[\"restored_read_history\",\"widget_long_hold_"
                 "visual\","
                 "\"letterbox\",\"animation_"
-                "groups\",\"effects\"],\"auto_state\":[" << skipAuto.Auto << ','
+                "groups\",\"other_particle_groups\"],\"auto_state\":[" << skipAuto.Auto << ','
              << autoKeyHeld << ',' << autoRotation.Channel.Current << ','
              << autoRotation.Channel.Epoch << ',' << autoRotation.Channel.Sample
              << "],\"message_epoch\":" << message->Epoch

@@ -13,6 +13,13 @@ class HeadlessBackend : public VmBackend {
  public:
   bool AutoReveal = true;
   bool AutoAdvance = true;
+  std::function<void(bool)> ParticleReset;
+  std::function<void(const GameEvent&)> ParticleRequest;
+  void ResetParticles(bool fresh) override { if (ParticleReset) ParticleReset(fresh); }
+  bool StartParticleEffect(const GameEvent& event) override {
+    if (!ParticleRequest) return false;
+    ParticleRequest(event); return true;
+  }
   SceneImageDriver* SceneImages = nullptr;
   SceneImageDriver* Images() override { return SceneImages; }
   CharacterPoseDriver* CharacterPoses = nullptr;

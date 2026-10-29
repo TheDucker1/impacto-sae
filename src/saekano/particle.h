@@ -315,6 +315,10 @@ class ParticleManager {
   static constexpr size_t GroupCount = 8, HandlesPerGroup = 25;
   using GroupHandles = std::array<ParticleEffectHandle, HandlesPerGroup>;
   explicit ParticleManager(uint64_t nativeClock);
+  // Scene replacement retires old resource references. Keep the native handle
+  // repeat indices and pause flags; reseed and restore group origins to zero.
+  void ResetForScript(uint64_t nativeClock);
+  uint64_t ResourceGeneration() const { return resourceGeneration_; }
   // Native145f0 loads every effect pack in archive order before requests. This
   // texture-only catalog does not interpret unrelated unsupported CSV families.
   void LoadTextureCatalog(const GameResources& resources);
@@ -344,6 +348,7 @@ class ParticleManager {
   std::map<std::string, Bytes> textures_;
   std::vector<std::string> textureOrder_;
   bool textureCatalogLoaded_ = false;
+  uint64_t resourceGeneration_ = 0;
   std::array<GroupHandles, GroupCount> groups_;
   std::array<std::array<float, 2>, GroupCount> origins_{};
   ParticleRandomState random_;

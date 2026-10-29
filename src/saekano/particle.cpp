@@ -1075,6 +1075,17 @@ void ParticleManager::LoadEffect(const GameResources& resources,
   LoadTextureCatalog(resources);
   RegisterEffect(effectId, ConfiguredParticleEffect::Load(resources, environment, effectId));
 }
+void ParticleManager::ResetForScript(uint64_t nativeClock) {
+  for (auto& group : groups_) for (auto& handle : group) {
+    const auto repeats = handle.State.Repeats;
+    handle.EffectId.reset(); handle.State = {};
+    handle.State.Repeats = repeats;
+    handle.State.Enabled = handle.State.Running = handle.State.Emitting = false;
+  }
+  origins_ = {}; random_.Initialize(nativeClock);
+  effects_.clear(); textures_.clear(); textureOrder_.clear(); textureCatalogLoaded_ = false;
+  ++resourceGeneration_;
+}
 void ParticleManager::LoadTextureCatalog(const GameResources& resources) {
   if (textureCatalogLoaded_) return;
   if (!textureOrder_.empty()) throw FormatError("cannot replace manually registered particle texture order");
