@@ -173,4 +173,14 @@ struct PreparedParticleEffects {
   std::map<std::string, Bytes> Textures;  // Inflated original GXT, before GPU upload.
   static PreparedParticleEffects Prepare(const EffectResourceAssets& assets);
 };
+struct ParticleEffectState {
+  std::vector<ParticleEmitterState> Rows;
+  std::array<float, 14> Owner{};
+  std::array<float, 2> OriginOffset{};
+  int32_t Counter = 0, StartOffset = 0, Repeats = 0;
+  bool Enabled = true, Running = true, Emitting = true;
+  void Start(const ParticleEffectProgram& program, const PreparedParticleEffects& assets, GameRandom& random);
+  bool Update(const ParticleEffectProgram& program, const PreparedParticleEffects& assets,
+              uint64_t elapsedDelta, GameRandom& random);
+};
 }  // namespace Impacto::Saekano

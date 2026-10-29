@@ -574,6 +574,66 @@ std::vector<size_t> DueParticleEmissions(const ParticleEffectProgram& program,
   }
   return result;
 }
+namespace {
+void EmitEffectRow(ParticleEffectState& state, const ParticleEffectProgram& program,
+    const PreparedParticleEffects& assets, size_t row, GameRandom& random) {
+  const auto& point = program.Points[row];
+  const auto definition = assets.Definitions.find(point.ParticleName);
+  if (definition == assets.Definitions.end() || !assets.Textures.contains(point.TextureName))
+    throw FormatError("unresolved particle effect resources");
+  state.Rows[row].Emit(point, definition->second, state.Owner, program.Header, state.OriginOffset, random);
+}
+void AgeEffectRow(ParticleEffectState& state, const ParticleEffectProgram& program,
+    const PreparedParticleEffects& assets, size_t row, uint64_t delta, GameRandom& random) {
+  const auto definition = assets.Definitions.find(program.Points[row].ParticleName);
+  if (definition == assets.Definitions.end()) throw FormatError("unresolved aging definition");
+  for (auto& particle : state.Rows[row].Particles)
+    if (particle.Birth.Flags[1]) AdvanceParticle(particle, &definition->second, delta, random);
+}
+}
+void ParticleEffectState::Start(const ParticleEffectProgram& program,
+    const PreparedParticleEffects& assets, GameRandom& random) {
+  Rows.clear(); Rows.resize(program.Points.size()); Counter = 0;
+  Enabled = Running = Emitting = true;
+  for (const auto row : DueParticleEmissions(program, Rows, Counter, StartOffset, true))
+    EmitEffectRow(*this, program, assets, row, random);
+}
+bool ParticleEffectState::Update(const ParticleEffectProgram& program,
+    const PreparedParticleEffects& assets, uint64_t elapsedDelta, GameRandom& random) {
+  if (!Enabled || !Running) return true;
+  if (Rows.size() != program.Points.size()) throw FormatError("particle effect row mismatch");
+  Counter = std::bit_cast<int32_t>(uint32_t(Counter) + 1);
+  const uint32_t deadline = uint32_t(StartOffset) + uint32_t(program.Header.Integers[0]);
+  if (deadline > uint32_t(Counter)) {
+    const auto due = Emitting ? DueParticleEmissions(program, Rows, Counter, StartOffset, false) : std::vector<size_t>{};
+    size_t event = 0;
+    for (size_t row = 0; row < Rows.size(); ++row) {
+      while (event < due.size() && due[event] == row) { EmitEffectRow(*this, program, assets, row, random); ++event; }
+      AgeEffectRow(*this, program, assets, row, elapsedDelta, random);
+    }
+    return true;
+  }
+  bool restarted = false;
+  const auto repeatLimit = program.Header.Integers[1];
+  if (Repeats != repeatLimit) {
+    if (repeatLimit != -1) {
+      Repeats = std::bit_cast<int32_t>(uint32_t(Repeats) + 1);
+    }
+    Start(program, assets, random);  // No nested effects in the supported point catalog.
+    restarted = true;  // Native42c6 sets success for both finite and-1 repeats.
+  } else Running = false;
+  bool result = false;
+  if (!Emitting || restarted) {
+    if ((deadline << 1) <= uint32_t(Counter)) {
+      for (auto& row : Rows) row.Emitted = 0;
+      Running = false;
+    }
+    result = true;
+  } else Emitting = false;
+  for (size_t row = 0; row < Rows.size(); ++row)
+    AgeEffectRow(*this, program, assets, row, elapsedDelta, random);
+  return result;
+}
 uint32_t ParticleDefinition::Bits(size_t nativeOffset) const {
   if (nativeOffset < 0x20 || nativeOffset >= 0x298 || nativeOffset % 4)
     throw FormatError("particle parameter offset outside native record");
