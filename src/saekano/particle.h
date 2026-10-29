@@ -160,6 +160,14 @@ struct ParticleProjectionUniforms {
   // Native GXP default uniform slots0,16,32,48; final padding is zero.
   std::array<float, 52> Pack() const;
 };
+struct ParticleRasterViewport {
+  // GXM default complete-target viewport; native framebuffer orientation is
+  // converted to the PC screen after the unchanged viewport wrapper.
+  std::array<float,4> Flip{1,-1,1,1};
+  std::array<float,2> TargetSize{960,544};
+  float Enabled = 1, DepthOffset = .5f, DepthScale = .5f;
+  bool PresentToPc = true;
+};
 struct ParticleBlendConfiguration {
   bool Enabled = false;
   // Native GXM factor indices:0 zero,1 one,2 source color,4 source alpha,

@@ -23,6 +23,7 @@
 #include "mouthselection.h"
 #include "particle.h"
 #include "particlevertexshader.h"
+#include "particlerastervertexshader.h"
 #include "particlefragmentshader.h"
 #include "../io/memorystream.h"
 #include "../texture/texture.h"
@@ -634,6 +635,69 @@ void main(){
     Buffer = Vao = Program = Vertex = Fragment = 0;
   }
   ~UiBlitRenderer() { Release(); }
+};
+struct ParticleGlRenderer {
+  GLuint Vao = 0, Buffer = 0;
+  std::array<GLuint,7> Programs{};
+  ParticleGlRenderer() {
+    glGenVertexArrays(1,&Vao);glGenBuffers(1,&Buffer);
+  }
+  ~ParticleGlRenderer() {
+    for (auto program : Programs) if (program) glDeleteProgram(program);
+    if (Buffer) glDeleteBuffers(1,&Buffer);
+    if (Vao) glDeleteVertexArrays(1,&Vao);
+  }
+  GLuint Program(uint32_t family) {
+    if (family >= Programs.size()) throw FormatError("unknown particle fragment family");
+    if (Programs[family]) return Programs[family];
+    const auto vertex = UiBlitRenderer::Compile(GL_VERTEX_SHADER,ParticleMode0RasterVertexShader);
+    GLuint fragment = 0, program = 0;
+    try {
+      fragment=UiBlitRenderer::Compile(GL_FRAGMENT_SHADER,ParticleSceneFragmentShaders[family]);
+      program=glCreateProgram();glAttachShader(program,vertex);glAttachShader(program,fragment);
+      glLinkProgram(program);GLint linked=0;glGetProgramiv(program,GL_LINK_STATUS,&linked);
+      if (!linked) { char log[1024]{};glGetProgramInfoLog(program,sizeof(log),nullptr,log);throw FormatError(log); }
+    } catch (...) {
+      if (program) glDeleteProgram(program);if (fragment) glDeleteShader(fragment);glDeleteShader(vertex);throw;
+    }
+    glDeleteShader(vertex);glDeleteShader(fragment);Programs[family]=program;return program;
+  }
+  void Draw(const ParticleDrawPacket& packet, GLuint texture, uint32_t textureWidth,
+            uint32_t textureHeight, const ParticleProjectionUniforms& projection,
+            const ParticleFragmentState& fragment, const ParticleRasterViewport& viewport) {
+    if (packet.RenderMode != 0) throw UnsupportedCommand("particle shader mode is not implemented");
+    if (!texture) throw FormatError("particle draw has no texture");
+    if (!(viewport.TargetSize[0]>0) || !(viewport.TargetSize[1]>0))
+      throw FormatError("particle target size is invalid");
+    // Native98c8's mode0 reset supersedes the earlier intensity filter setup.
+    // Keep the PC UI's physical pipeline intact; logical native state is owned
+    // separately by the scene. This scope does not touch the target framebuffer.
+    ScopedSdkGlState scope;
+    const auto program=Program(fragment.AlphaFamily);glUseProgram(program);
+    const auto uniforms=projection.Pack();
+    glUniform4fv(glGetUniformLocation(program,"nativeUniforms"),13,uniforms.data());
+    glUniform4fv(glGetUniformLocation(program,"nativeViewportFlip"),1,viewport.Flip.data());
+    glUniform2fv(glGetUniformLocation(program,"nativeTargetSize"),1,viewport.TargetSize.data());
+    glUniform1f(glGetUniformLocation(program,"viewportEnabled"),viewport.Enabled);
+    glUniform1f(glGetUniformLocation(program,"nativeDepthOffset"),viewport.DepthOffset);
+    glUniform1f(glGetUniformLocation(program,"nativeDepthScale"),viewport.DepthScale);
+    glUniform1i(glGetUniformLocation(program,"presentToPc"),viewport.PresentToPc);
+    glUniform1i(glGetUniformLocation(program,"image"),0);
+    ApplyParticleFragmentState(fragment,program);
+    glDisable(GL_CULL_FACE);glDisable(GL_DEPTH_TEST);glDepthMask(GL_FALSE);
+    glDisable(GL_FRAMEBUFFER_SRGB);
+    glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,texture);
+    const auto vertices=BuildParticleQuad(packet,textureWidth,textureHeight);
+    glBindVertexArray(Vao);glBindBuffer(GL_ARRAY_BUFFER,Buffer);
+    glBufferData(GL_ARRAY_BUFFER,sizeof(vertices),vertices.data(),GL_STREAM_DRAW);
+    constexpr GLint components[]{3,4,2,3,3};constexpr size_t offsets[]{0,12,16,24,36};
+    for (GLuint index=0;index<5;++index) {
+      glEnableVertexAttribArray(index);
+      glVertexAttribPointer(index,components[index],index==1?GL_UNSIGNED_BYTE:GL_FLOAT,
+          index==1?GL_TRUE:GL_FALSE,sizeof(ParticleVertex),reinterpret_cast<void*>(offsets[index]));
+    }
+    glDrawArrays(GL_TRIANGLE_STRIP,0,4);GlCheck("particle raster drawing");
+  }
 };
 struct FontTextures {
   std::map<std::pair<bool, uint32_t>, UiBlitRenderer::BoundTexture> Textures;
@@ -1790,6 +1854,121 @@ int RunResultRenderStateProbe(const std::filesystem::path& output) {
     return 0;
   }catch(const std::exception& e) {
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano result render-state: %s",e.what());return 1;
+  }
+}
+int RunParticleRasterProbe(const std::filesystem::path& fixtureDirectory,
+                           const std::filesystem::path& output) {
+  try {
+    if (std::filesystem::exists(output)) throw FormatError("choose a fresh particle raster output");
+    const auto bytes=SceneRead(fixtureDirectory/"cases.bin");PayloadReader reader(bytes);
+    if (reader.U32()!=0x31525350) throw FormatError("invalid particle raster fixture");
+    const auto count=reader.U32();if (!count || count>8) throw FormatError("particle raster case budget");
+    const auto sourcePixels=SceneRead(fixtureDirectory/"pixels.bin");
+    if (sourcePixels.size()!=64) throw FormatError("particle raster texture fixture size");
+    ViewerWindow window(true);ParticleGlRenderer actual;
+    struct Target {
+      GLuint Framebuffer=0,Color=0,Image=0;
+      ~Target() { if (Framebuffer) glDeleteFramebuffers(1,&Framebuffer);
+        if (Color) glDeleteTextures(1,&Color);if (Image) glDeleteTextures(1,&Image); }
+    } target;
+    constexpr uint32_t width=48,height=32;
+    glGenTextures(1,&target.Image);glBindTexture(GL_TEXTURE_2D,target.Image);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,4,4,0,GL_RGBA,GL_UNSIGNED_BYTE,sourcePixels.data());
+    glGenTextures(1,&target.Color);glBindTexture(GL_TEXTURE_2D,target.Color);
+    glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA32F,width,height,0,GL_RGBA,GL_FLOAT,nullptr);
+    glGenFramebuffers(1,&target.Framebuffer);glBindFramebuffer(GL_FRAMEBUFFER,target.Framebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,target.Color,0);
+    glDrawBuffer(GL_COLOR_ATTACHMENT0);glReadBuffer(GL_COLOR_ATTACHMENT0);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE)
+      throw FormatError("particle raster target incomplete");
+    struct Reference {
+      GLuint Program=0,Vao=0,Buffer=0;
+      Reference(const std::string& vertex,const std::string& fragment) {
+        const auto vs=UiBlitRenderer::Compile(GL_VERTEX_SHADER,vertex.c_str());
+        const auto fs=UiBlitRenderer::Compile(GL_FRAGMENT_SHADER,fragment.c_str());
+        Program=glCreateProgram();glAttachShader(Program,vs);glAttachShader(Program,fs);
+        glLinkProgram(Program);glDeleteShader(vs);glDeleteShader(fs);
+        GLint linked=0;glGetProgramiv(Program,GL_LINK_STATUS,&linked);
+        if (!linked) { char log[1024]{};glGetProgramInfoLog(Program,sizeof(log),nullptr,log);throw FormatError(log); }
+        glGenVertexArrays(1,&Vao);glGenBuffers(1,&Buffer);
+      }
+      ~Reference() { if (Program) glDeleteProgram(Program);if (Buffer) glDeleteBuffers(1,&Buffer);if (Vao) glDeleteVertexArrays(1,&Vao); }
+    };
+    const auto readText=[&](const std::string& name) {
+      const auto raw=SceneRead(fixtureDirectory/name);return std::string(raw.begin(),raw.end());
+    };
+    const auto referenceVertex=readText("reference.vert");
+    std::map<uint32_t,std::unique_ptr<Reference>> references;
+    std::ofstream report(output);if (!report) throw FormatError("cannot create particle raster report");
+    const auto scalar=[&]() { return std::bit_cast<float>(reader.U32()); };
+    const auto reset=[&]() {
+      glViewport(0,0,width,height);glDisable(GL_SCISSOR_TEST);glDisable(GL_STENCIL_TEST);
+      glDisable(GL_DEPTH_TEST);glDisable(GL_CULL_FACE);glDisable(GL_FRAMEBUFFER_SRGB);glDisable(GL_DITHER);
+      glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);glDisable(GL_BLEND);
+      glClearColor(0,0,0,0);glClear(GL_COLOR_BUFFER_BIT);
+    };
+    const auto save=[&](const std::string& name) {
+      if (std::filesystem::exists(fixtureDirectory/name))
+        throw FormatError("choose fresh particle raster image outputs");
+      std::array<float,width*height*4> pixels;
+      glReadPixels(0,0,width,height,GL_RGBA,GL_FLOAT,pixels.data());GlCheck("particle raster readback");
+      std::ofstream file(fixtureDirectory/name,std::ios::binary);
+      file.write(reinterpret_cast<const char*>(pixels.data()),sizeof(pixels));
+      if (!file) throw FormatError("particle raster output write failed");
+    };
+    for (uint32_t i=0;i<count;++i) {
+      ParticleProjectionUniforms projection;
+      for (auto* matrix:{&projection.View,&projection.Projection,&projection.World}) for (auto& value:*matrix) value=scalar();
+      projection.Aspect=scalar();std::array<float,52> referenceUniforms;
+      for (auto& value:referenceUniforms) value=scalar();
+      ParticleDrawPacket packet;
+      for (auto& value:packet.Size) value=reader.U32();
+      for (auto& value:packet.Source) value=reader.I32();
+      for (auto* vector:{&packet.Position,&packet.Angles}) for (auto& value:*vector) value=scalar();
+      const auto color=reader.U32();for (size_t c=0;c<4;++c) packet.Bgra[c]=uint8_t(color>>(8*c));
+      packet.RenderMode=reader.I32();packet.Intensity=scalar();
+      ParticleFragmentState fragment;fragment.BlendIndex=reader.U32();fragment.AlphaFamily=reader.U32();fragment.AlphaThreshold=scalar();
+      if (fragment.BlendIndex!=0 || fragment.AlphaFamily>6) throw FormatError("unsupported reference raster state");
+      std::array<float,80> expanded;for (auto& value:expanded) value=scalar();
+      reset();glUseProgram(0);glBindVertexArray(0);glBindBuffer(GL_ARRAY_BUFFER,0);
+      const auto before=UiGlState();
+      actual.Draw(packet,target.Image,4,4,projection,fragment,{});
+      if (before!=UiGlState()) throw FormatError("particle raster disturbed UI GL state");
+      const auto actualName="actual"+std::to_string(i)+".rgba32f";save(actualName);
+      if (!references.contains(fragment.AlphaFamily))
+        references.emplace(fragment.AlphaFamily,std::make_unique<Reference>(referenceVertex,
+            readText("reference"+std::to_string(fragment.AlphaFamily)+".frag")));
+      auto& ref=*references.at(fragment.AlphaFamily);reset();glUseProgram(ref.Program);
+      glBindVertexArray(ref.Vao);glBindBuffer(GL_ARRAY_BUFFER,ref.Buffer);
+      glBufferData(GL_ARRAY_BUFFER,sizeof(expanded),expanded.data(),GL_STREAM_DRAW);
+      for (GLuint attribute=0;attribute<5;++attribute) {
+        glEnableVertexAttribArray(attribute);glVertexAttribPointer(attribute,4,GL_FLOAT,GL_FALSE,
+            20*sizeof(float),reinterpret_cast<const void*>(attribute*4*sizeof(float)));
+      }
+      glUniform4fv(glGetUniformLocation(ref.Program,"referenceUniforms"),13,referenceUniforms.data());
+      glUniform4f(glGetUniformLocation(ref.Program,"renderVertInfo.viewport_flip"),1,-1,1,1);
+      glUniform1f(glGetUniformLocation(ref.Program,"renderVertInfo.viewport_flag"),1);
+      glUniform1f(glGetUniformLocation(ref.Program,"renderVertInfo.screen_width"),960);
+      glUniform1f(glGetUniformLocation(ref.Program,"renderVertInfo.screen_height"),544);
+      glUniform1f(glGetUniformLocation(ref.Program,"renderVertInfo.z_offset"),.5f);
+      glUniform1f(glGetUniformLocation(ref.Program,"renderVertInfo.z_scale"),.5f);
+      glUniform1i(glGetUniformLocation(ref.Program,"image"),0);
+      glUniform1f(glGetUniformLocation(ref.Program,"nativeAlphaThreshold"),fragment.AlphaThreshold);
+      glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,target.Image);
+      glDrawArrays(GL_TRIANGLE_STRIP,0,4);
+      const auto referenceName="reference"+std::to_string(i)+".rgba32f";save(referenceName);
+      report<<"{\"case\":"<<i<<",\"actual\":\""<<actualName<<"\",\"reference\":\""<<referenceName
+            <<"\",\"ui_state_restored\":true}\n";
+    }
+    if (reader.Remaining()) throw FormatError("trailing particle raster fixture");
+    return 0;
+  } catch (const std::exception& error) {
+    std::ofstream failure(output.string()+".error.txt");failure<<std::string(error.what()).substr(0,2048)<<'\n';
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano particle raster: %s",error.what());return 1;
   }
 }
 int RunParticleProjectionProbe(const std::filesystem::path& fixtureDirectory,
