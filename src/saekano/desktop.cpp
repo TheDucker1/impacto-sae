@@ -866,7 +866,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                       const std::filesystem::path& capturePlan = {}) {
   const bool capture = !captureDirectory.empty();
   const bool captureParticles=captureMenuInput==4;
-  const bool captureResult=captureMenuInput==5 || captureMenuInput==6;
+  const bool captureChapter=captureMenuInput==7;
+  const bool captureResult=captureMenuInput==5 || captureMenuInput==6 || captureChapter;
   const bool captureResultPointer=captureMenuInput==6;
   std::vector<std::array<size_t,2>> choicePlan;size_t choicePlanIndex=0;
   if(!capturePlan.empty()) {
@@ -910,6 +911,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                                 SceneRead(root / "env/env_message_window.dat"));
   const auto utility =
       GameUtilityFont::Decode(SceneRead(root / "env/env_game_utility.dat"));
+  const auto chapterVisual=ChapterTitleVisualEnvironment::Decode(SceneRead(root/"env/env_script.dat"),SceneRead(root/"env/env_system_menu.dat"));
   ArchiveSceneImages images(resources);
   ArchiveCharacterPoses poses(resources);
   ArchiveApproachResources approachAssets(resources);
@@ -936,6 +938,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   SceneMessageBackend backend(format, timing, *owner.TextSpeed, owner.AutoSpeed);
   backend.ApproachResultSettings=ApproachResultEnvironment::Decode(SceneRead(root/"env/env_approach.dat"));
   backend.ResultConsumer=&resultHost;
+  backend.ChapterSettings=ChapterEnvironment::Decode(SceneRead(root/"env/env_script.dat"));
   backend.ParticleReset=[&](bool fresh) {
     if(!fresh)throw UnsupportedCommand("restored particle manager state is unavailable");
     particles.ResetForScript(capture?particleClock:SDL_GetTicks());
@@ -978,6 +981,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   bool targetCompleted = false, targetWaitingReached = false;
   bool captureActive = !captureFromCommand && !captureConfirmInput && !captureParticles && !captureResult;
   bool resultConfirmationDue=false,resultConfirmationSent=false,resultCompleted=false;
+  bool chapterCompleted=false;
   size_t resultPointerCaptureStage=0;
   bool confirmDue=false,confirmSent=false;
   bool menuMissionDue=false,menuMissionSent=false;
@@ -1073,7 +1077,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   std::vector<WidgetEventHistory> menuParents,menuChildren,menuArrows;
   std::pair<int32_t,int32_t> menuIdentity{-1,-1};
   int32_t menuChildParent=-1;
-  const uint32_t frameBudget = (captureParticles || captureResult)?100000:(captureFromCommand ? (captureBranch?40000:20000) : 2000);
+  const uint32_t frameBudget = captureChapter?200000:(captureParticles || captureResult)?100000:(captureFromCommand ? (captureBranch?40000:20000) : 2000);
   for (uint32_t frame = 0; !quit && (!capture || frame < frameBudget); ++frame) {
     const uint64_t now =
         capture ? uint64_t(frame) * 16 : SDL_GetTicks() - epoch;
@@ -1377,7 +1381,18 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         ++choicePlanIndex;
       }
       if(captureParticles && particleCaptureRequested)captureActive=true;
-      if(captureResult && step.Opcode==0x3f8)captureActive=true;
+      if(captureResult && !captureChapter && step.Opcode==0x3f8)captureActive=true;
+      if(captureChapter && step.Opcode==0x3ec)captureActive=true;
+      if(capture && captureActive && step.Opcode==0x3ec) {
+        const auto* chapter=vm->CurrentChapter();
+        if(chapter && chapter->Started)events << "{\"kind\":\"chapter_state\",\"now\":" << now
+          << ",\"script\":" << step.Script << ",\"command\":" << step.Command << ",\"boundary\":" << int(step.Boundary)
+          << ",\"advance\":" << acceptedInput << ",\"stage\":" << chapter->Stage
+          << ",\"pending\":" << (chapter->PendingStage?int32_t(*chapter->PendingStage):-1)
+          << ",\"visible\":" << vm->State().TitleDisplay.value_or(false) << ",\"id\":" << vm->State().ChapterId
+          << ",\"fade\":" << vm->State().ScreenFade.value_or(-1) << ",\"hold\":" << chapter->Hold.Current
+          << ",\"done\":" << chapter->Completed << "}\n";
+      }
       if(capture && captureActive && step.Opcode==0x3f8) {
         const auto& r=vm->State().ApproachResult;
         events << "{\"kind\":\"approach_result_state\",\"now\":" << now << ",\"script\":" << step.Script
@@ -1407,11 +1422,13 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         firstMessage = now;
         laidOut = false;
         capturePointerStage = 0;
-        if(captureResult && resultCompleted){targetCompleted=true;quit=true;}
+        if((captureResult && !captureChapter && resultCompleted) || (captureChapter && chapterCompleted)){targetCompleted=true;quit=true;}
         break;
       }
       if(captureResult && step.Opcode==0x3f8 && step.Boundary==VmBoundary::CommandCompletedBeforeDispatch)
         resultCompleted=true;
+      if(captureChapter && step.Opcode==0x3ec && step.Boundary==VmBoundary::CommandCompletedBeforeDispatch)
+        chapterCompleted=true;
       if (step.Boundary == VmBoundary::CommandCompletedBeforeDispatch && capture && !captureParticles && !captureResult &&
           (captureUntilMessage
                ? step.Script == captureScript && size_t(step.Command) == *captureUntilMessage
@@ -1456,7 +1473,12 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         if(request.Id<0)throw FormatError("invalid trophy request");
         if(sessionTrophies.insert(request.Id).second)
           SDL_Log("Saekano session trophy %d",request.Id);
-      } else if (!backend.ConsumeVoiceEvent(request)) playback.Submit(request);
+      } else if (!backend.ConsumeVoiceEvent(request)) {
+        try{playback.Submit(request);}catch(const std::exception& error) {
+          throw UnsupportedCommand("audio at dispatch script " + std::to_string(vm->State().ScriptFileId) +
+              " command " + std::to_string(vm->State().CurrentCommandIndex) + " time " + std::to_string(now) + ": " + error.what());
+        }
+      }
       if (capture && captureActive)
         events << "{\"kind\":\"audio\",\"frame\":" << frame
                << ",\"now\":" << now << ",\"event\":" << int(request.Kind)
@@ -1526,7 +1548,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     renderer.SetFilter(*state.ScreenFilter.Mode, *state.ScreenFilter.Intensity);
     const auto* activeMessage = backend.CurrentMessage();
     const bool approach=state.ApproachMode.Enabled.value_or(false);
-    if (!activeMessage && !approach) {
+    if (!activeMessage && !approach && !state.TitleDisplay.value_or(false)) {
       UiSpriteBlit white;
       white.Destination = {0, 0, 960, 544};
       white.Color = {255, 255, 255, 255};
@@ -1699,6 +1721,14 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       }
     }
     renderer.SetFilter(0, 0.0f);  // Native resets after queued callbacks, before later HUD.
+    if(state.TitleDisplay.value_or(false)) {
+      for(const auto& text:BuildChapterTitleText(chapterVisual,state.Titles,uint32_t(utility.Size))) {
+        fontTextures.DrawString(renderer,font,text.Text,text.Position[0],text.Position[1],text.Size,text.Color);
+        textDraws.push_back(text);
+      }
+      const auto banner=BuildChapterTitleBanner(chapterVisual,state.ChapterId);
+      uploadMain(banner.Texture.Entry);drawSprite(banner);spriteDraws.push_back(banner);
+    }
     if(approach) {
       if(!state.ApproachMode.Id || !state.Approach.Known)
         throw UnsupportedCommand("approach HUD owning inputs are unknown");
@@ -1775,6 +1805,11 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       signature=std::to_string(result.Visible)+':'+std::to_string(result.Phase)+':'+
           std::to_string(result.PendingPhase.value_or(-1))+':'+std::to_string(result.Cursor)+':'+
           std::to_string(resultHost.Text().Reveal.Revealed)+':'+std::to_string(result.Completed)+':'+std::to_string(quit);
+    }
+    if(captureChapter) {
+      const auto* chapter=vm->CurrentChapter();
+      signature=std::to_string(state.TitleDisplay.value_or(false))+':'+std::to_string(chapter?chapter->Stage:99)+':'+
+          std::to_string(state.ScreenFade.value_or(-1)/64)+':'+std::to_string(quit);
     }
     if(!captureResult)for (const auto& fill : state.SceneImages.Slots.FillRects)
       signature += ':' + std::to_string(fill.Opacity / 16);

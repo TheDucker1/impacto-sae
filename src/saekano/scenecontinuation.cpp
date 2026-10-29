@@ -26,14 +26,15 @@ class DiscoveryBuffer final : public std::streambuf {
  public:
   std::streambuf* Target;
   bool Enabled;
+  bool Suppressed=false;
   DiscoveryBuffer(std::streambuf* target,bool enabled):Target(target),Enabled(enabled){}
  protected:
   std::streamsize xsputn(const char* data,std::streamsize size) override {
-    return Enabled?Target->sputn(data,size):size;
+    return Enabled && !Suppressed?Target->sputn(data,size):size;
   }
   int_type overflow(int_type value) override {
     if(traits_type::eq_int_type(value,traits_type::eof()))return traits_type::not_eof(value);
-    return Enabled?Target->sputc(traits_type::to_char_type(value)):value;
+    return Enabled && !Suppressed?Target->sputc(traits_type::to_char_type(value)):value;
   }
 };
 Bytes Read(const std::filesystem::path& path) {
@@ -56,11 +57,12 @@ void String(std::ostream& out, std::string_view value) {
 }
 int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
                          std::optional<size_t> untilMessage, std::ostream& report,bool confirmFirstMission,bool chooseFirstApproach,
-                           std::span<const std::array<size_t,2>> approachPlan,bool confirmApproachResult) {
+                           std::span<const std::array<size_t,2>> approachPlan,bool confirmApproachResult,bool followPostResult) {
   const std::array<std::array<size_t,2>,1> firstChoice{{{0,0}}};
   if(chooseFirstApproach && approachPlan.empty())approachPlan=firstChoice;
   chooseFirstApproach=!approachPlan.empty();
   DiscoveryBuffer output(report.rdbuf(),!confirmFirstMission && !chooseFirstApproach);std::ostream out(&output);
+  output.Suppressed=followPostResult;
   if (!frameBudget || frameBudget > 1000000)
     throw FormatError("scene continuation frame budget outside1..1000000");
   GameResources resources(Read(root / "resource.dat"));
@@ -105,6 +107,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   backend.MissionSettings=ApproachMissionEnvironment::Decode(Read(root/"env/env_approach.dat"));
   backend.SelectionSettings=ApproachSelectionEnvironment::Decode(Read(root/"env/env_approach.dat"));
   backend.ApproachConfig = ApproachGaugeEnvironment::Decode(Read(root / "env/env_approach.dat"));
+  backend.ChapterSettings=ChapterEnvironment::Decode(Read(root/"env/env_script.dat"));
   backend.MusicResources = &music; backend.SeArchives = &sounds;
 #ifdef SAEKANO_SCENE_CUBISM2
   backend.SceneModels = &models;
@@ -174,6 +177,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   size_t choiceIndex=0;
   const auto finish = [&](std::string_view reason, bool success) {
     output.Enabled=true;  // A failure before the requested gate still reports its exact boundary.
+    output.Suppressed=false;
     out << "{\"kind\":\"result\",\"success\":" << (success ? "true" : "false") << ",\"reason\":";
     String(out, reason);
     out << ",\"now\":" << now << ",\"script\":" << vm->State().ScriptFileId
@@ -243,6 +247,11 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
       for (size_t work = 0; work < 256; ++work) {
         sync();
         const auto event = vm->Step(now,commandInput);commandInput.Advance=false;commandInput.Approach={};
+        if(followPostResult && resultCompleted && event.Script!=entryScript && output.Suppressed) {
+          output.Suppressed=false;output.Enabled=true;
+          out << "{\"kind\":\"post_result_entry\",\"now\":" << now << ",\"script\":" << event.Script
+              << ",\"command\":" << event.Command << ",\"prior_range_omitted\":true}\n";
+        }
         if(event.Opcode==0x3f8 && event.Boundary==VmBoundary::CommandCompletedBeforeDispatch) {
           resultCompleted=true;
           out << "{\"kind\":\"approach_result_completed\",\"now\":" << now
@@ -329,7 +338,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
               << ",\"revealed\":" << (message->Reveal.Revealed ? "true" : "false") << "}\n";
           if (event.Boundary == VmBoundary::CommandStarted) {
             ++messages;
-            if(confirmApproachResult && resultCompleted && event.Script!=entryScript) {
+            if(confirmApproachResult && !followPostResult && resultCompleted && event.Script!=entryScript) {
               finish("post_result_message_started",true);return 0;
             }
             if (!firstMessage) firstMessage = now;

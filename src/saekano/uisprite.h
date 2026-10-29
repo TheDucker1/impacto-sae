@@ -226,6 +226,18 @@ struct UiTextBlit {
   uint32_t Size = 0;
   std::array<uint8_t, 4> Color{};
 };
+struct ChapterTitleVisualEnvironment {
+  std::array<std::array<int32_t,2>,2> TextPositions{};
+  float TextScale=0;
+  UiSpriteDefinition Banner;
+  std::vector<std::array<uint8_t,4>> Colors;
+  size_t MenuPrefixBytes=0;
+  static ChapterTitleVisualEnvironment Decode(std::span<const uint8_t> script,
+                                              std::span<const uint8_t> systemMenu);
+};
+std::array<UiTextBlit,2> BuildChapterTitleText(const ChapterTitleVisualEnvironment& environment,
+    std::span<const std::u16string> titles,uint32_t utilitySize);
+UiSpriteBlit BuildChapterTitleBanner(const ChapterTitleVisualEnvironment& environment,int32_t id);
 // Native50372..50472, with the factory's initial eight widget positions.
 // Subsequent carousel movement must supply its updated widget geometry.
 std::vector<UiRenderCommand> BuildProfileItemFramePass(

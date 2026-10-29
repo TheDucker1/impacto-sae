@@ -300,7 +300,9 @@ void MusicPlayback::Submit(const GameEvent& event) {
         std::make_unique<HcaPlaybackStream>(impl_->Resources, request.Track);
     const bool loop = impl_->Resources.Info(request.Track).Loop;
     if (impl_->BgmFade.Active())
-      throw UnsupportedCommand("overlapping BGM crossfade playback is not bound");
+      throw UnsupportedCommand("overlapping BGM crossfade playback is not bound: new track " + std::to_string(request.Track) +
+          " old phase " + std::to_string(impl_->BgmFade.Phase) + " elapsed " + std::to_string(impl_->BgmFade.Elapsed) +
+          " duration " + std::to_string(impl_->BgmFade.Duration) + " weight " + std::to_string(impl_->BgmFade.Weight));
     impl_->BgmFade = {};
     impl_->BgmFadeFraction = 0;
     impl_->BgmFadeFrameRemainder = 0;

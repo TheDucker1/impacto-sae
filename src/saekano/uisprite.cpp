@@ -2,6 +2,7 @@
 
 #include "commands.h"
 #include "approachmission.h"
+#include "chapter.h"
 
 #include <bit>
 #include <cmath>
@@ -9,6 +10,42 @@
 #include <algorithm>
 
 namespace Impacto::Saekano {
+ChapterTitleVisualEnvironment ChapterTitleVisualEnvironment::Decode(std::span<const uint8_t> script,
+    std::span<const uint8_t> menu) {
+  ChapterTitleVisualEnvironment e;
+  const auto prefix=ChapterEnvironment::Decode(script).PrefixBytes;
+  PayloadReader text(script.subspan(prefix-24,20));
+  for(auto& p:e.TextPositions)p={text.I32(),text.I32()};
+  e.TextScale=std::bit_cast<float>(text.U32());
+  if(!std::isfinite(e.TextScale) || e.TextScale<0)throw FormatError("invalid chapter text scale");
+  if(menu.size()<3)throw FormatError("truncated system menu header");
+  PayloadReader r(menu.subspan(3));
+  const auto words=[&](size_t count){for(size_t i=0;i<count;++i)r.U32();};
+  const auto sprites=[&](size_t count){for(size_t i=0;i<count;++i)UiSpriteDefinition::ReadLegacy(r);};
+  words(3);sprites(2);words(1);sprites(1);words(4);sprites(1);words(4);
+  for(size_t i=0;i<4;++i){const auto count=r.U32();r.CheckCount(count,34);sprites(count);}
+  words(3);const auto tableCount=r.U32();r.CheckCount(tableCount,4);words(tableCount);words(5);
+  sprites(3);words(9);sprites(1);e.Banner=UiSpriteDefinition::ReadLegacy(r);
+  words(4);sprites(2);words(3);
+  const auto count=r.U32();r.CheckCount(count,4);
+  for(uint32_t i=0;i<count;++i){const auto c=r.U32();e.Colors.push_back({uint8_t(c>>16),uint8_t(c>>8),uint8_t(c),uint8_t(c>>24)});}
+  e.MenuPrefixBytes=menu.size()-r.Remaining();return e;
+}
+std::array<UiTextBlit,2> BuildChapterTitleText(const ChapterTitleVisualEnvironment& e,
+    std::span<const std::u16string> titles,uint32_t utilitySize) {
+  if(titles.size()!=2)throw FormatError("chapter title strings are unavailable");
+  const float scaled=float(utilitySize)*e.TextScale;
+  if(!std::isfinite(scaled) || scaled<0 || scaled>1024)throw FormatError("chapter font size outside display budget");
+  const auto size=uint32_t(scaled);std::array<UiTextBlit,2> draws;
+  for(size_t i=0;i<2;++i)draws[i]={titles[i],{e.TextPositions[i][0],
+      std::bit_cast<int32_t>(uint32_t(e.TextPositions[i][1])-size/2)},size,{0,0,0,255}};
+  return draws;
+}
+UiSpriteBlit BuildChapterTitleBanner(const ChapterTitleVisualEnvironment& e,int32_t id) {
+  if(id<0 || size_t(id)>=e.Colors.size())throw FormatError("chapter color ID outside authored palette");
+  auto sprite=e.Banner;sprite.Color=e.Colors[size_t(id)];
+  return ResolveUiSprite({ProfileTextureSection::MainUi,-1,50},sprite);
+}
 namespace {
 int32_t Subtract(int32_t a, int32_t b) {
   return std::bit_cast<int32_t>(uint32_t(a) - uint32_t(b));

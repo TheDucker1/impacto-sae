@@ -302,6 +302,8 @@ int main(int argc, char* argv[]) {
       return Saekano::RunFirstSceneViewer(argv[2],argv[4],true,false,true,{}, {},1,false,false,5);
     if(argc==6 && std::string_view(argv[3])=="--capture-result-plan")
       return Saekano::RunFirstSceneViewer(argv[2],argv[5],true,false,true,{}, {},1,false,false,6,argv[4]);
+    if(argc==5 && std::string_view(argv[3])=="--capture-chapter")
+      return Saekano::RunFirstSceneViewer(argv[2],argv[4],true,false,true,{}, {},1,false,false,7);
     if ((argc==8 || (argc==9 && (std::string_view(argv[8])=="--wait" || std::string_view(argv[8])=="--confirm" || std::string_view(argv[8])=="--menu" || std::string_view(argv[8])=="--menu-pointer" || std::string_view(argv[8])=="--branch"))) &&
         std::string_view(argv[3])=="--capture-script-range") {
       int32_t script=0;size_t first=0,last=0;
