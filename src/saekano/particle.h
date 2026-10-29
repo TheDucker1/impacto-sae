@@ -154,6 +154,11 @@ struct ParticleEffectProgram {
   ParticleEffectHeader Header;
   std::vector<ParticlePointEmitter> Points;
 };
+// Plan due emissions in native row order. The caller executes each event with
+// Emit (which advances its row count); this planner does not mutate storage.
+std::vector<size_t> DueParticleEmissions(const ParticleEffectProgram& program,
+    std::span<const ParticleEmitterState> rows, int32_t counter,
+    int32_t startOffset, bool initializing);
 struct ParticleEffectCatalog {
   std::vector<ParticleEffectProgram> Programs;
   std::map<std::string, size_t> Names;

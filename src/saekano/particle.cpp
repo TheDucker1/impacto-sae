@@ -550,6 +550,30 @@ void ParticleEmitterState::Emit(const ParticlePointEmitter& point,
   }
   Emitted = std::bit_cast<int32_t>(uint32_t(Emitted) + 1);
 }
+std::vector<size_t> DueParticleEmissions(const ParticleEffectProgram& program,
+    std::span<const ParticleEmitterState> rows, int32_t counter,
+    int32_t startOffset, bool initializing) {
+  if (rows.size() != program.Points.size()) throw FormatError("particle schedule row mismatch");
+  const auto add = [](int32_t a, int32_t b) { return std::bit_cast<int32_t>(uint32_t(a) + uint32_t(b)); };
+  std::vector<size_t> result;
+  for (size_t row = 0; row < rows.size(); ++row) {
+    const auto& command = program.Points[row];
+    int32_t emitted = rows[row].Emitted;
+    const int32_t start = add(startOffset, command.Integers[0]);
+    if (initializing) {
+      if (uint32_t(start) > uint32_t(counter)) continue;
+      result.push_back(row);
+      emitted = add(emitted, 1);
+    }
+    while (emitted < command.Integers[2]) {
+      const auto interval = std::bit_cast<int32_t>(uint32_t(command.Integers[1]) * uint32_t(emitted));
+      if (uint32_t(add(start, interval)) > uint32_t(counter)) break;
+      result.push_back(row);
+      emitted = add(emitted, 1);
+    }
+  }
+  return result;
+}
 uint32_t ParticleDefinition::Bits(size_t nativeOffset) const {
   if (nativeOffset < 0x20 || nativeOffset >= 0x298 || nativeOffset % 4)
     throw FormatError("particle parameter offset outside native record");
