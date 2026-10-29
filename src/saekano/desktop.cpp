@@ -862,10 +862,24 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                       std::optional<size_t> captureUntilMessage = {},
                       std::optional<size_t> captureFromCommand = {},
                       std::optional<int32_t> captureScriptOverride = {},
-                      bool captureWaitingInput = false,bool captureConfirmInput = false,int32_t captureMenuInput = 0) {
+                      bool captureWaitingInput = false,bool captureConfirmInput = false,int32_t captureMenuInput = 0,
+                      const std::filesystem::path& capturePlan = {}) {
   const bool capture = !captureDirectory.empty();
   const bool captureParticles=captureMenuInput==4;
-  const bool captureResult=captureMenuInput==5;
+  const bool captureResult=captureMenuInput==5 || captureMenuInput==6;
+  const bool captureResultPointer=captureMenuInput==6;
+  std::vector<std::array<size_t,2>> choicePlan;size_t choicePlanIndex=0;
+  if(!capturePlan.empty()) {
+    if(!capture || !captureResult)throw FormatError("choice plan requires a result capture");
+    std::ifstream plan(capturePlan);if(!plan)throw FormatError("cannot read capture choice plan");
+    size_t parent=0,child=0;
+    while(plan>>parent) {
+      if(!(plan>>child) || parent>=6 || child>=3 || choicePlan.size()>=64)
+        throw FormatError("invalid capture choice plan row");
+      choicePlan.push_back({parent,child});
+    }
+    if(!plan.eof() || choicePlan.empty())throw FormatError("invalid capture choice plan");
+  }
   const bool captureMenuPointer=captureMenuInput==2,captureBranch=captureMenuInput==3 || captureParticles || captureResult;
   if (!owner.WindowOpacity || !owner.ReadColorEnabled || !owner.TextSpeed ||
       !owner.AutoSpeed)
@@ -880,6 +894,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   const auto inputEnvironment = WidgetInputEnvironment::DecodeUtility(
       SceneRead(root / "env/env_game_utility.dat"));
   OrdinaryWidgetInput sceneInput(visual.Window, inputEnvironment.HoldFrames);
+  WidgetInputHistory resultPointer;
+  WidgetEventHistory resultTouch(inputEnvironment.HoldFrames);
   const auto skipAutoEnvironment = SkipAutoEnvironment::Decode(
       SceneRead(root / "env/env_global.dat"));
   SkipAutoState skipAuto;
@@ -962,6 +978,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   bool targetCompleted = false, targetWaitingReached = false;
   bool captureActive = !captureFromCommand && !captureConfirmInput && !captureParticles && !captureResult;
   bool resultConfirmationDue=false,resultConfirmationSent=false,resultCompleted=false;
+  size_t resultPointerCaptureStage=0;
   bool confirmDue=false,confirmSent=false;
   bool menuMissionDue=false,menuMissionSent=false;
   uint32_t menuCaptureStep=0;
@@ -1074,11 +1091,20 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         }
       }
       SDL_Keycode key=0;
-      if(resultConfirmationDue){key=SDLK_RETURN;resultConfirmationDue=false;resultConfirmationSent=true;}
+      if(resultConfirmationDue && !captureResultPointer){key=SDLK_RETURN;resultConfirmationDue=false;resultConfirmationSent=true;}
       else if(menuMissionDue){key=SDLK_RETURN;menuMissionDue=false;menuMissionSent=true;}
       else if(!captureMenuPointer && menu.Visible && vm->State().ScriptFileId==captureScript &&
-          (captureBranch || size_t(vm->State().CurrentCommandIndex)==*captureUntilMessage) && !menu.PendingPhase) {
-        if(menuCaptureStep==0 && menu.Phase==4){key=SDLK_DOWN;++menuCaptureStep;}
+          (captureBranch || size_t(vm->State().CurrentCommandIndex)==*captureUntilMessage) && !menu.PendingPhase &&
+          (choicePlan.empty() || menu.Phase==4 || menu.Phase==7)) {
+        if(!choicePlan.empty()) {
+          if(choicePlanIndex>=choicePlan.size())throw FormatError("capture choice plan exhausted");
+          const auto target=choicePlan.at(choicePlanIndex);
+          const auto found=std::find(menu.OriginalOrdinals.begin(),menu.OriginalOrdinals.end(),target[0]);
+          if(found==menu.OriginalOrdinals.end() || target[1]>=menu.ChildCounts.at(size_t(found-menu.OriginalOrdinals.begin())) ||
+              vm->State().ApproachFlags.at(target[0]*3+target[1]))throw FormatError("capture choice is disabled or used");
+          if(menu.Phase==4)key=menu.ParentUnselected || menu.Parent!=int32_t(found-menu.OriginalOrdinals.begin())?SDLK_DOWN:SDLK_RETURN;
+          else if(menu.Phase==7)key=menu.ChildUnselected || menu.Child!=int32_t(target[1])?SDLK_DOWN:SDLK_RETURN;
+        } else if(menuCaptureStep==0 && menu.Phase==4){key=SDLK_DOWN;++menuCaptureStep;}
         else if(menuCaptureStep==1 && menu.Phase==4) {
           bool available=true;
           if((captureParticles || captureResult) && !menu.ParentUnselected && menu.Parent>=0) {
@@ -1120,6 +1146,16 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
             << ",\"down\":" << e.button.down << ",\"now\":" << now << ",\"logical_position\":["
             << r[0]+r[2]/2 << ',' << r[1]+r[3]/2 << "]}\n";
       }
+    }
+    if(captureResultPointer && resultConfirmationDue) {
+      int w=0,h=0;SdlCheck(SDL_GetWindowSize(window.Window,&w,&h),"result pointer capture viewport");
+      SDL_Event e{};e.type=resultPointerCaptureStage==0?SDL_EVENT_MOUSE_BUTTON_DOWN:SDL_EVENT_MOUSE_BUTTON_UP;
+      e.button.windowID=SDL_GetWindowID(window.Window);e.button.button=SDL_BUTTON_LEFT;e.button.down=resultPointerCaptureStage==0;
+      e.button.x=40.0f*float(w)/960;e.button.y=40.0f*float(h)/544;
+      SdlCheck(SDL_PushEvent(&e),"result capture explicit pointer");
+      events << "{\"kind\":\"result_pointer_input\",\"source\":\"SDL_mouse\",\"now\":" << now
+        << ",\"down\":" << e.button.down << ",\"logical_position\":[40,40]}\n";
+      if(++resultPointerCaptureStage==2){resultConfirmationDue=false;resultConfirmationSent=true;}
     }
     if(capture && confirmDue) {
       // Explicit capture input, delivered through the same SDL key handler as
@@ -1291,7 +1327,13 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         }
       } else if(menuState.Phase==7)input.Approach.ChildReleased=released(menuChildren,regions.Children);
     } else {menuIdentity={-1,-1};menuChildParent=-1;}
-    const bool pointerAdvance = !menuState.Visible && sceneInput.UpdatePrimary();
+    resultPointer.BeginFrame(pointerSnapshot);
+    resultTouch.Update(SampleWidgetContact({0,0,960,544},resultPointer.Current[0],resultPointer.Previous[0],
+        resultTouch.TrackedId,resultPointer.Velocity(0)));
+    resultPointer.Publish(resultTouch.Flags);
+    const bool ordinaryRelease=!menuState.Visible && sceneInput.UpdatePrimary();
+    const bool resultInput=vm->Opcode()==0x3f8;
+    const bool pointerAdvance=resultInput ? resultTouch.Enabled && (resultTouch.Flags&8) : ordinaryRelease;
     input.Advance = input.Advance || pointerAdvance;
     if (capture && captureActive) {
       const auto& point = pointerSnapshot[0];
@@ -1326,6 +1368,14 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       syncMouths();
       const bool acceptedInput=input.Advance;
       const auto step = vm->Step(now, input);
+      if(!choicePlan.empty() && step.Opcode==0x3f6 && step.Boundary==VmBoundary::CommandCompletedBeforeDispatch) {
+        const auto chosen=CompletedApproachChoice(vm->State().ApproachSelection);
+        if(!chosen || choicePlanIndex>=choicePlan.size() || *chosen!=choicePlan[choicePlanIndex])
+          throw FormatError("capture controller committed a different choice");
+        events << "{\"kind\":\"planned_choice_committed\",\"now\":" << now << ",\"script\":" << step.Script
+          << ",\"command\":" << step.Command << ",\"parent\":" << (*chosen)[0] << ",\"child\":" << (*chosen)[1] << "}\n";
+        ++choicePlanIndex;
+      }
       if(captureParticles && particleCaptureRequested)captureActive=true;
       if(captureResult && step.Opcode==0x3f8)captureActive=true;
       if(capture && captureActive && step.Opcode==0x3f8) {
@@ -3656,7 +3706,8 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
                         bool captureAuto, bool captureButtonAuto, bool captureVoiced,
                         std::optional<size_t> captureUntilMessage,
                         std::optional<size_t> captureFromCommand,
-                        std::optional<int32_t> captureScriptOverride,bool captureWaitingInput,bool captureConfirmInput,int32_t captureMenuInput) {
+                          std::optional<int32_t> captureScriptOverride,bool captureWaitingInput,bool captureConfirmInput,int32_t captureMenuInput,
+                          const std::filesystem::path& capturePlan) {
   bool created = false;
   try {
     const bool capture = !captureDirectory.empty();
@@ -3722,7 +3773,7 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
     return RunCompletedScene(window, renderer, fontTextures, font, resources,
                              playback, music, sounds, std::move(owner), mode,
                              usrdir, captureDirectory, captureAuto, captureButtonAuto, captureVoiced,
-                             captureUntilMessage, captureFromCommand,captureScriptOverride,captureWaitingInput,captureConfirmInput,captureMenuInput);
+                             captureUntilMessage, captureFromCommand,captureScriptOverride,captureWaitingInput,captureConfirmInput,captureMenuInput,capturePlan);
   } catch (const std::exception& error) {
     if (created) {
       std::ofstream out(captureDirectory / "error.txt");
