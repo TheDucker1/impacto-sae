@@ -140,6 +140,8 @@ void VirtualMachine::Load(bool preserveOwnerState) {
       command.Live2d = DecodeLive2d(script_->Payload(i));
     } else if(opcode==0x2c6) {
       command.LipAction=LipActionCommand::Decode(script_->Payload(i));
+    } else if(opcode==0x3ef) {
+      command.BattleEntry=BattleEntryCommand::Decode(script_->Payload(i));
     } else if (opcode == 0x3f4) {
       command.BattleGauge = BattleGaugeCommand::Decode(script_->Payload(i));
     } else if (opcode == 0x3f5) {
@@ -194,7 +196,11 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     state_.ApproachResult = {};
     if (auto* resources = backend_.ApproachAssets()) resources->Reset();
     state_.BattleGauge = 50;
-    state_.Battle = {};  // Mode entry must initialize its display and sides.
+    // Fresh neutral display offset0 deliberately initializes a scalar that
+    // the Vita context constructor leaves unwritten. Restored inputs stay exact.
+    state_.Battle = {true,0,{0,0},{1,1}};
+    state_.BattleEntry={};state_.BattleEntry.Known=true;
+    if(auto* resources=backend_.BattleAssets())resources->Reset();
     state_.BgmTrack.reset();
     state_.BgmCommandVolume.reset();
     // Reset801a015c/0164/016c: remembered SE ID=-1, volume100, channel0.
@@ -234,6 +240,13 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     messageContext_ = {};
     messageContext_.KeywordSuppressed = keywordSuppressed;  // owner S survives
     dispatcher_ = {};
+    // Native payload loading has context writes before any command Start.
+    // Reapply only for a fresh context, never over a restored manager snapshot.
+    for(size_t i=0;i<commands_.size();++i) {
+      if(commands_[i].BattleEntry)LoadBattleEntryFields(state_,*commands_[i].BattleEntry);
+      if(script_->Records()[i].Opcode==0x3f2)++state_.BattleEntry.SelectLoadedCount;
+    }
+    if(state_.BattleEntry.Enabled){messageContext_.SplitDialogue=true;messageContext_.Side0Character=state_.Battle.SideCharacters[0];}
   }
   messageKeywords_ = {};
   // Native LoadScriptInit prepares/reseeds the particle manager. A bound
@@ -366,6 +379,12 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
     if (lane || !command.Routing.QueueForLane) SetupMessage(index, now);
   } else if(opcode==0x2c6) {
     if(!lane)StartLipAction(state_,*command.LipAction);
+  } else if(opcode==0x3ef) {
+    if(!lane) {
+      auto* resources=backend_.BattleAssets();if(!resources)throw UnsupportedCommand("battle entry resources are unavailable");
+      StartBattleEntry(state_,*command.BattleEntry,*resources);
+      messageContext_.SplitDialogue=true;messageContext_.Side0Character=state_.Battle.SideCharacters[0];
+    }
   } else if (opcode == 0x3ee && !lane) {
     auto* resources = backend_.ApproachAssets();
     if (!resources) throw UnsupportedCommand("approach entry resource backend is unavailable");
@@ -694,6 +713,11 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
     return false;
   }
   if(opcode==0x2c6)return true; // Shared main/skip/lane updates only mark completion.
+  if(opcode==0x3ef) {
+    if(lane)return true;
+    auto* resources=backend_.BattleAssets();if(!resources)throw UnsupportedCommand("battle entry resources are unavailable");
+    return UpdateBattleEntry(state_,*resources,input.Route==UpdateRoute::Skipping);
+  }
   if (opcode == 0x2c0) {
     if (input.Route == UpdateRoute::Skipping && command.WaitHonorSkip == 0) return true;
     if (!command.Started)

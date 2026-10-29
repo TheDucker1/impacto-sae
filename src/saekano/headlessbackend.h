@@ -26,6 +26,8 @@ class HeadlessBackend : public VmBackend {
   CharacterPoseDriver* Poses() override { return CharacterPoses; }
   ApproachResources* ApproachResourceBank = nullptr;
   ApproachResources* ApproachAssets() override { return ApproachResourceBank; }
+  BattleResources* BattleResourceBank=nullptr;
+  BattleResources* BattleAssets() override { return BattleResourceBank; }
   ApproachMissionAudio* MissionVoiceBank=nullptr;
   std::optional<ApproachMissionEnvironment> MissionSettings;
   std::optional<ApproachSelectionEnvironment> SelectionSettings;

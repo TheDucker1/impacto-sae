@@ -6,6 +6,7 @@
 #include "profiletexture.h"
 
 #include <array>
+#include <functional>
 
 namespace Impacto::Saekano {
 
@@ -98,6 +99,7 @@ class GameResources final : public ScriptSource {
   std::vector<ProfileMenuAsset> LoadProfileMenu() const;
   ProfileMenuAsset LoadProfileTexture(ProfileTextureKey key) const;
   std::vector<ResourceAsset> LoadApproachTextures(size_t id) const;
+  std::vector<ResourceAsset> LoadBattleFaces(size_t group,size_t costume,size_t side) const;
   size_t EffectCount() const;
   EffectResourceAssets LoadEffect(size_t id) const;
   ProfileVoiceAssets LoadProfileVoice(size_t characterId, size_t entry) const;
@@ -117,11 +119,30 @@ class GameResources final : public ScriptSource {
   std::optional<GpdaArchive> profileVoices_;
   std::optional<GpdaArchive> profilePortraits_, profileCharacterUi_, profileUi_;
   std::optional<GpdaArchive> mainUi_;
+  std::optional<GpdaArchive> battleFaces_;
   std::optional<GpdaArchive> effects_;
   std::map<ImageSection, GpdaArchive> images_;
 };
 
 // Native140f2->9dfc8 prepares the root3/child2 character UI bank.
+class ArchiveBattleResources final : public BattleResources {
+ public:
+  explicit ArchiveBattleResources(GameResources& resources):resources_(resources){}
+  void Begin(const BattleEntryCommand& command) override;
+  void Pump() override;
+  ApproachResourceStatus Status() const override { return status_; }
+  void Reset() override { request_.reset();textures_={};status_={};++generation_; }
+  const std::array<std::vector<PreparedProfileTexture>,2>& Textures() const { return textures_; }
+  uint64_t Generation() const { return generation_; }
+  std::function<void(const PreparedProfileTexture&)> Upload;
+ private:
+  GameResources& resources_;
+  std::optional<BattleEntryCommand> request_;
+  ApproachResourceStatus status_;
+  std::array<std::vector<PreparedProfileTexture>,2> textures_;
+  uint64_t generation_=0;
+};
+
 class ArchiveApproachResources final : public ApproachResources {
  public:
   explicit ArchiveApproachResources(GameResources& resources) : resources_(resources) {}

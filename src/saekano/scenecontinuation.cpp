@@ -76,6 +76,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   ArchiveProfileServices services(resources, ScriptNameIndex::FromFirstArchive(Read(root / "first.dat")), format, timing);
   SemanticState owner;
   InitializeFreshAudioOwner(owner);
+  InitializeFreshBattleOwner(owner);
   InitializeFreshMessageOwner(owner);
   InitializeFreshCgHistory(owner, LoadAlbumConfiguration(Read(root / "first.dat"),
       Read(root / "env/env_omake.dat")).RequiredImages);
@@ -94,6 +95,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
     throw FormatError("scene continuation profile entry did not complete");
   ArchiveSceneImages images(resources);
   ArchiveApproachResources approachAssets(resources);
+  ArchiveBattleResources battleAssets(resources);
   ClockedMissionVoice missionVoice(root);
 #ifdef SAEKANO_SCENE_CUBISM2
   SdkLive2dDriver models(resources, Live2dEnvironment::Decode(Read(root / "env/env_live2d.dat")));
@@ -105,6 +107,8 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   backend.AutoReveal = backend.AutoAdvance = false;
   backend.SceneImages = &images; backend.CharacterPoses = &poses;
   backend.ApproachResourceBank = &approachAssets;
+  backend.BattleResourceBank=&battleAssets;
+  backend.BattleConfig=BattleGaugeEnvironment::Decode(Read(root/"env/env_tukkomi.dat"));
   backend.MissionVoiceBank=&missionVoice;
   backend.MissionSettings=ApproachMissionEnvironment::Decode(Read(root/"env/env_approach.dat"));
   backend.SelectionSettings=ApproachSelectionEnvironment::Decode(Read(root/"env/env_approach.dat"));
@@ -293,6 +297,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
             << ",\"source\":\"explicit_probe_Advance\",\"script\":" << vm->State().ScriptFileId
             << ",\"command\":" << vm->State().CurrentCommandIndex << "}\n";
       }
+      battleAssets.Pump();
       for (size_t work = 0; work < 256; ++work) {
         sync();
         const auto event = vm->Step(now,commandInput);commandInput.Advance=false;commandInput.Approach={};
@@ -314,6 +319,15 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
           out << "{\"kind\":\"lip_action\",\"now\":" << now << ",\"script\":" << event.Script << ",\"command\":" << event.Command
               << ",\"enabled\":" << control.OverrideEnabled << ",\"ids\":[";
           for(size_t i=0;i<5;++i){if(i)out << ',';out << control.OverrideIds[i];}out << "]}\n";
+        }
+        if(event.Opcode==0x3ef && (event.Boundary==VmBoundary::CommandStarted || event.Boundary==VmBoundary::CommandCompletedBeforeDispatch)) {
+          const auto status=battleAssets.Status();
+          out << "{\"kind\":\"battle_entry\",\"now\":" << now << ",\"script\":" << event.Script << ",\"command\":" << event.Command
+              << ",\"boundary\":" << int(event.Boundary) << ",\"gauge\":" << vm->State().BattleGauge << ",\"display\":" << vm->State().Battle.Display
+              << ",\"sides\":[" << vm->State().Battle.SideCharacters[0] << ',' << vm->State().Battle.SideCharacters[1]
+              << "],\"textures\":[" << battleAssets.Textures()[0].size() << ',' << battleAssets.Textures()[1].size()
+              << "],\"selection_counts\":[" << vm->State().BattleEntry.SelectLoadedCount << ',' << vm->State().BattleEntry.SelectStartedCount
+              << "],\"queued\":" << status.QueuedJobs << ",\"idle\":" << status.Idle() << "}\n";
         }
         if(event.Opcode==0x3ec && event.Boundary==VmBoundary::CommandCompletedBeforeDispatch)
           chapterCompleted=true;

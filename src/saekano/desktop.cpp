@@ -872,7 +872,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   const bool captureParticles=captureMenuInput==4;
   const bool captureChapter=captureMenuInput==7;
   const bool captureLip=captureMenuInput==9;
-  const bool captureProfile=captureMenuInput==8 || captureLip;
+  const bool captureBattle=captureMenuInput==10;
+  const bool captureProfile=captureMenuInput==8 || captureLip || captureBattle;
   const bool captureResult=captureMenuInput==5 || captureMenuInput==6 || captureChapter || captureProfile;
   const bool captureResultPointer=captureMenuInput==6;
   std::vector<std::array<size_t,2>> choicePlan;size_t choicePlanIndex=0;
@@ -927,6 +928,20 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   ArchiveSceneImages images(resources);
   ArchiveCharacterPoses poses(resources);
   ArchiveApproachResources approachAssets(resources);
+  ArchiveBattleResources battleAssets(resources);
+  size_t battleUploadsChecked=0;
+  battleAssets.Upload=[&](const PreparedProfileTexture& texture){
+    renderer.Upload(texture.Key,texture.Pixels);
+    if(captureBattle) {
+      std::vector<uint8_t> actual(texture.Pixels.Rgba.size());GLint previousTexture=0;
+      glGetIntegerv(GL_TEXTURE_BINDING_2D,&previousTexture);
+      glBindTexture(GL_TEXTURE_2D,renderer.Textures.at(texture.Key).Handle);
+      glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_UNSIGNED_BYTE,actual.data());
+      glBindTexture(GL_TEXTURE_2D,GLuint(previousTexture));GlCheck("battle texture storage readback");
+      if(actual!=texture.Pixels.Rgba)throw FormatError("battle texture upload differs from decoded source");
+      ++battleUploadsChecked;
+    }
+  };
   const auto approachVisual=ApproachVisualEnvironment::Decode(SceneRead(root/"env/env_approach.dat"));
   const auto particleEnvironment=ParticleEnvironment::Decode(SceneRead(root/"env/env_particle.dat"));
   ParticleManager particles(0); ParticleGlRenderer particleRenderer;
@@ -974,6 +989,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   backend.SceneImages = &images;
   backend.CharacterPoses = &poses;
   backend.ApproachResourceBank = &approachAssets;
+  backend.BattleResourceBank=&battleAssets;
+  backend.BattleConfig=BattleGaugeEnvironment::Decode(SceneRead(root/"env/env_tukkomi.dat"));
   backend.SceneModels = &models;
   backend.MissionVoiceBank=&missionVoice;
   backend.MissionSettings=ApproachMissionEnvironment::Decode(SceneRead(root/"env/env_approach.dat"));
@@ -1050,7 +1067,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     events.open(captureDirectory / "scene-events.jsonl");
     if (!report || !pcm || !events)
       throw FormatError("cannot create scene capture output");
-    if(captureProfile && !captureLip){profileFrames.open(captureDirectory/"profile-frames.jsonl");if(!profileFrames)throw FormatError("cannot create profile frame output");}
+    if(captureProfile && !captureLip && !captureBattle){profileFrames.open(captureDirectory/"profile-frames.jsonl");if(!profileFrames)throw FormatError("cannot create profile frame output");}
   }
   const auto drawSprite = [&](const UiSpriteBlit& sprite) {
     renderer.DrawQuad(sprite, renderer.Textures.at(sprite.Texture), false);
@@ -1399,6 +1416,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       }
     }
     previous = now;
+    battleAssets.Pump();
     for (size_t work = 0; work < 256; ++work) {
       bindScriptVoices();
       syncMouths();
@@ -1415,8 +1433,20 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       if(captureParticles && particleCaptureRequested)captureActive=true;
       if(captureResult && !captureChapter && !captureProfile && step.Opcode==0x3f8)captureActive=true;
       if(captureChapter && step.Opcode==0x3ec)captureActive=true;
-      if(captureProfile && !captureLip && step.Opcode==0x3ed)captureActive=true;
+      if(captureProfile && !captureLip && !captureBattle && step.Opcode==0x3ed)captureActive=true;
       if(captureLip && step.Opcode==0x2c6)captureActive=true;
+      if(captureBattle && step.Opcode==0x3ef)captureActive=true;
+      if(captureBattle && step.Opcode==0x3ef && step.Boundary==VmBoundary::CommandCompletedBeforeDispatch) {
+        const auto& state=vm->State();std::ofstream out(captureDirectory/"battle-entry.json");
+        out << "{\"script\":" << step.Script << ",\"command\":" << step.Command << ",\"now\":" << now
+            << ",\"enabled\":" << state.BattleEntry.Enabled << ",\"sides\":[" << state.Battle.SideCharacters[0] << ',' << state.Battle.SideCharacters[1]
+            << "],\"gauge\":" << state.BattleGauge << ",\"display\":" << state.Battle.Display << ",\"history\":" << ExactMusicStatus(state.BattleHistory,size_t(state.BattleEntry.Request->History))
+            << ",\"selection_counts\":[" << state.BattleEntry.SelectLoadedCount << ',' << state.BattleEntry.SelectStartedCount
+            << "],\"textures\":[" << battleAssets.Textures()[0].size() << ',' << battleAssets.Textures()[1].size()
+            << "],\"gpu_uploads_checked\":" << battleUploadsChecked << ",\"idle\":" << battleAssets.Status().Idle()
+            << ",\"battle_hud_pixels_claimed\":false}\n";
+        targetCompleted=true;quit=true;break;
+      }
       if(capture && captureActive && step.Opcode==0x2c6 && step.Boundary==VmBoundary::CommandStarted) {
         const auto& control=*vm->State().MouthControl;
         events << "{\"kind\":\"lip_action\",\"now\":" << now << ",\"script\":" << step.Script << ",\"command\":" << step.Command
@@ -1467,7 +1497,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         laidOut = false;
         capturePointerStage = 0;
         if((captureResult && !captureChapter && !captureProfile && resultCompleted) || (captureChapter && chapterCompleted) ||
-            (captureProfile && !captureLip && profileReturned)){targetCompleted=true;quit=true;}
+            (captureProfile && !captureLip && !captureBattle && profileReturned)){targetCompleted=true;quit=true;}
         break;
       }
       if(captureResult && step.Opcode==0x3f8 && step.Boundary==VmBoundary::CommandCompletedBeforeDispatch)
@@ -1540,7 +1570,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         int w=0,h=0;SdlCheck(SDL_GetWindowSizeInPixels(window.Window,&w,&h),"profile scene viewport");
         profilePresenter.Draw(*mode,vm->State(),w,h);
         const auto signature=profilePresenter.Signature(*mode);
-        if(captureProfile && !captureLip && (signature!=profileSignature || now-profileLastSaved>=2000)) {
+        if(captureProfile && !captureLip && !captureBattle && (signature!=profileSignature || now-profileLastSaved>=2000)) {
           const auto file="profile-"+std::to_string(profileSaved++)+".bmp";
           Capture(captureDirectory/file,w,h);profilePresenter.Write(profileFrames,*mode,vm->State(),now,file);
           profileSignature=signature;profileLastSaved=now;
@@ -1553,6 +1583,10 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         SdlCheck(SDL_GL_SwapWindow(window.Window),"profile scene swap");
       }
       if(!capture)SDL_Delay(16);
+      continue;
+    }
+    if(captureBattle && captureActive) { // Resource/GPU diagnostic omits the unbound battle HUD.
+      if(targetCompleted)break;
       continue;
     }
     const auto spriteClock = capture ? uint32_t(now) : uint32_t(SDL_GetTicks());
@@ -3843,6 +3877,7 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
         SceneRead(usrdir / "env/env_config.dat"), true);
     SemanticState owner;
     InitializeFreshAudioOwner(owner);
+    InitializeFreshBattleOwner(owner);
     InitializeFreshMessageOwner(owner);
     InitializeFreshCgHistory(owner, LoadAlbumConfiguration(SceneRead(usrdir / "first.dat"),
         SceneRead(usrdir / "env/env_omake.dat")).RequiredImages);

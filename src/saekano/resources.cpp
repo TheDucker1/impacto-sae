@@ -89,6 +89,7 @@ GameResources::GameResources(const GpdaArchive& root)
   if (root.Entries().size() > 1) mainUi_.emplace(ResourceSection(root, 1));
   if (root.Entries().size() > 6)
     characterPoses_.emplace(ResourceSection(root, 6));
+  if(root.Entries().size()>7)battleFaces_.emplace(ResourceSection(root,7));
   if (root.Entries().size() > 8)
     effects_.emplace(ResourceSection(root, 8));
   if (root.Entries().size() > 3) {
@@ -197,6 +198,36 @@ std::vector<ResourceAsset> GameResources::LoadApproachTextures(size_t id) const 
   for (size_t i = 0; i < pack.Entries().size(); ++i)
     result.push_back({pack.Entries()[i].Name, CompressedEntry(pack, i, 1)});
   return result;
+}
+std::vector<ResourceAsset> GameResources::LoadBattleFaces(size_t group,size_t costume,size_t side) const {
+  if(!battleFaces_ || group>=battleFaces_->Entries().size() || side>=2)throw FormatError("battle face group/side outside archive");
+  const GpdaArchive costumes(RawEntry(*battleFaces_,group));
+  if(costume>=costumes.Entries().size())throw FormatError("battle costume outside archive");
+  const GpdaArchive sides(RawEntry(costumes,costume));
+  if(side>=sides.Entries().size())throw FormatError("battle side outside archive");
+  const GpdaArchive textures(RawEntry(sides,side));std::vector<ResourceAsset> out;
+  if(textures.Entries().empty() || textures.Entries().size()>256)throw FormatError("battle texture count outside budget");
+  for(size_t i=0;i<textures.Entries().size();++i)out.push_back({textures.Entries()[i].Name,CompressedEntry(textures,i,1)});
+  return out;
+}
+void ArchiveBattleResources::Begin(const BattleEntryCommand& command) {
+  if(command.Groups[0]<0 || command.Groups[1]<0 || command.Entries[0]<0 || command.Entries[1]<0)
+    throw FormatError("negative battle face resource index");
+  Reset();request_=command;status_.QueuedJobs=2;
+}
+void ArchiveBattleResources::Pump() {
+  if(!status_.QueuedJobs)return;
+  if(!request_)throw FormatError("battle resource queue has no request");
+  // Execute actual archive reads, gzip and GXT decoding. Publish/upload each
+  // native side bank before acknowledging its queued job; no timer readiness.
+  while(status_.QueuedJobs) {
+    const size_t side=2-status_.QueuedJobs;std::vector<PreparedProfileTexture> prepared;
+    for(auto& asset:resources_.LoadBattleFaces(size_t(request_->Groups[side]),size_t(request_->Entries[side]),side))
+      prepared.push_back({{side?ProfileTextureSection::BattleRight:ProfileTextureSection::BattleLeft,
+          request_->Groups[side],uint32_t(prepared.size())},std::move(asset.Name),DecodeSceneImage(asset.Data)});
+    if(Upload)for(const auto& texture:prepared)Upload(texture);
+    textures_[side]=std::move(prepared);--status_.QueuedJobs;
+  }
 }
 void ArchiveApproachResources::Begin(int32_t id) {
   if (id < 0) throw FormatError("negative approach resource ID");

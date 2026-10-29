@@ -50,6 +50,7 @@ class VmBackend {
   virtual SceneImageDriver* Images() { return nullptr; }
   virtual CharacterPoseDriver* Poses() { return nullptr; }
   virtual ApproachResources* ApproachAssets() { return nullptr; }
+  virtual BattleResources* BattleAssets() { return nullptr; }
   virtual ApproachMissionAudio* MissionVoices() { return nullptr; }
   virtual const ApproachMissionEnvironment* MissionConfig() const { return nullptr; }
   virtual const ApproachSelectionEnvironment* SelectionConfig() const { return nullptr; }
@@ -142,6 +143,7 @@ class VirtualMachine {
     size_t MessageSide = 0;
     std::optional<Live2dCommand> Live2d;
     std::optional<LipActionCommand> LipAction;
+    std::optional<BattleEntryCommand> BattleEntry;
     std::optional<BattleGaugeCommand> BattleGauge;
     BattleGaugeAnimation BattleAnimation;
     std::optional<ApproachGaugeCommand> ApproachGauge;
