@@ -3,6 +3,8 @@
 #include <optional>
 
 namespace Impacto::Saekano {
+struct SemanticState;
+struct SkipAutoState;
 struct ApproachResultCommand {
   struct Outcome { int32_t Destination=0, Voice=-1; std::u16string Text; };
   int32_t RequiredGauge=0;
@@ -44,8 +46,19 @@ void StartApproachResult(ApproachResultState& state,
                          int32_t gauge,uint64_t now);
 // Normal and skip wrappers share this processor; skip does not imply Accept.
 // The owner must consume presentation/audio requests and apply the existing
-// semantic completion exactly once after Complete. This alone is not playback.
+// owner policy and destination exactly once after Complete. The compact semantic
+// handler is not a substitute for this ownership. This alone is not playback.
 bool UpdateApproachResult(ApproachResultState& state,
                           const ApproachResultEnvironment& environment,
                           const ApproachResultInput& input,uint64_t now);
+void CompleteApproachResultPolicy(SemanticState& owner,SkipAutoState& policy);
+class ApproachResultHost {
+ public:
+  virtual ~ApproachResultHost()=default;
+  virtual void Validate(const SemanticState& owner) const=0;
+  virtual void Tick(uint64_t) {}
+  virtual bool Revealed(uint64_t now)=0;
+  virtual void Act(const ApproachResultRequest& request,const ApproachResultState& result,
+                   SemanticState& owner,uint64_t now)=0;
+};
 }

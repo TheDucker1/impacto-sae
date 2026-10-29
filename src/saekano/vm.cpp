@@ -188,6 +188,7 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     state_.ApproachMode = {};
     state_.ApproachMission = {};
     state_.ApproachSelection = {};
+    state_.ApproachResult = {};
     if (auto* resources = backend_.ApproachAssets()) resources->Reset();
     state_.BattleGauge = 50;
     state_.Battle = {};  // Mode entry must initialize its display and sides.
@@ -365,6 +366,13 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
   } else if(opcode==0x3f6 && !lane) {
     if(!backend_.SelectionConfig())throw UnsupportedCommand("approach selection environment is unavailable");
     StartApproachSelection(state_.ApproachSelection,state_,*command.ApproachEntries,now);
+  } else if(opcode==0x3f8) {
+    auto* host=backend_.ResultHost();const auto* env=backend_.ApproachResultConfig();
+    if(lane || !host || !env)throw UnsupportedCommand("approach result presentation/audio/input lifecycle is not bound");
+    host->Validate(state_);
+    ApproachResultState next;StartApproachResult(next,ApproachResultCommand::Decode(script_->Payload(index)),*env,state_.ApproachGauge,now);
+    for(const auto& request:next.Requests)host->Act(request,next,state_,now);
+    next.Requests.clear();state_.ApproachResult=std::move(next);
   } else if (opcode == 0x3f7 && !lane) {
     auto* audio=backend_.MissionVoices();const auto* environment=backend_.MissionConfig();
     if(!audio || !environment)throw UnsupportedCommand("approach mission resources/environment are unavailable");
@@ -550,6 +558,18 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
       CompleteCommand(state_,opcode,script_->Payload(index),commit);
     }
     return done;
+  }
+  if(opcode==0x3f8) {
+    auto* host=backend_.ResultHost();const auto* env=backend_.ApproachResultConfig();
+    if(lane || !host || !env)throw UnsupportedCommand("approach result presentation/audio/input lifecycle is not bound");
+    auto& result=state_.ApproachResult;
+    host->Tick(now);
+    const auto phase=result.PendingPhase.value_or(result.Phase);
+    const bool revealed=phase==3?host->Revealed(now):false;
+    const bool done=UpdateApproachResult(result,*env,{revealed,input.Advance,false},now);
+    if(result.Phase==6)state_.ScreenFade=result.FadeOpacity;
+    for(const auto& request:result.Requests)host->Act(request,result,state_,now);
+    result.Requests.clear();return done;
   }
   if (opcode == 0x3f7) {
     if(lane)return true;
@@ -773,7 +793,8 @@ VmEvent VirtualMachine::Step(uint64_t now, const CommandInput& input) {
       const auto& selection=state_.ApproachSelection;
       boundary_ = (Opcode() == 0x65 || Opcode() == 0x3f2 ||
                    (Opcode()==0x3f6 && !selection.PendingPhase && (selection.Phase==4 || selection.Phase==7)) ||
-                   (Opcode()==0x3f7 && state_.ApproachMission.Stage==2))
+                   (Opcode()==0x3f7 && state_.ApproachMission.Stage==2) ||
+                   (Opcode()==0x3f8 && state_.ApproachResult.Phase==5 && !state_.ApproachResult.PendingPhase))
           ? VmBoundary::WaitingInput : VmBoundary::WaitingBackend;
       UpdateLanes(now);
     }

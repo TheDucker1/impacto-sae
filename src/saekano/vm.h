@@ -51,6 +51,8 @@ class VmBackend {
   virtual ApproachMissionAudio* MissionVoices() { return nullptr; }
   virtual const ApproachMissionEnvironment* MissionConfig() const { return nullptr; }
   virtual const ApproachSelectionEnvironment* SelectionConfig() const { return nullptr; }
+  virtual const ApproachResultEnvironment* ApproachResultConfig() const { return nullptr; }
+  virtual ApproachResultHost* ResultHost() { return nullptr; }
   virtual BgmResources* Music() { return nullptr; }
   virtual SeResources* SoundEffects() { return nullptr; }
   virtual const BattleGaugeEnvironment* BattleEnvironment() const { return nullptr; }

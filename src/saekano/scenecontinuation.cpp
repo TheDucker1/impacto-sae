@@ -7,6 +7,7 @@
 #include "skipauto.h"
 #include "album.h"
 #include "missionvoice.h"
+#include "approachresulttext.h"
 #ifdef SAEKANO_SCENE_CUBISM2
 #include "live2ddriver.h"
 #endif
@@ -146,6 +147,13 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   };
   const auto policyConfig = SkipAutoEnvironment::Decode(Read(root / "env/env_global.dat"));
   SkipAutoState policy;
+  const auto resultFont=GsfFont::Decode(Read(root/"Font.gsf"));
+  ArchiveApproachResultHost resultHost(resources,missionVoice,policy,format,timing,
+      ModeResultVisualEnvironment::DecodeApproach(Read(root/"env/env_approach.dat")),resultFont,
+      TextLayoutMetrics::Decode(Read(root/"env/env_global.dat"),Read(root/"env/env_message_window.dat")),
+      uint32_t(GameUtilityFont::Decode(Read(root/"env/env_game_utility.dat")).Size),36);
+  backend.ApproachResultSettings=ApproachResultEnvironment::Decode(Read(root/"env/env_approach.dat"));
+  backend.ResultConsumer=&resultHost;
   std::optional<uint64_t> firstMessage;
   std::set<uint16_t> opcodes;
   size_t messages = 0, completedMessages = 0, boundaries = 0, audioEvents = 0, spriteSubmissions = 0;
@@ -162,6 +170,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   };
   std::optional<std::pair<int32_t, uint32_t>> previousFilter;
   std::optional<std::tuple<int32_t,int32_t,int32_t>> previousMission;
+  std::optional<std::tuple<int32_t,int32_t,bool>> previousResult;
   size_t choiceIndex=0;
   const auto finish = [&](std::string_view reason, bool success) {
     output.Enabled=true;  // A failure before the requested gate still reports its exact boundary.
@@ -193,7 +202,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
       vm->UpdateSkipAuto(policy, policyInput, policyConfig.AutoKeyDuration, now);
       backend.AutoAdvance = policy.Auto;
       voices.Update(now);
-      bool ended = false, reached = false, waitingMission=false,waitingSelection=false;
+      bool ended = false, reached = false, waitingMission=false,waitingSelection=false,waitingResult=false;
       CommandInput commandInput;
       if(choiceIndex<approachPlan.size()) {
         const auto& menu=vm->State().ApproachSelection;
@@ -228,6 +237,22 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
       for (size_t work = 0; work < 256; ++work) {
         sync();
         const auto event = vm->Step(now,commandInput);commandInput.Advance=false;commandInput.Approach={};
+        if(event.Opcode==0x3f8 && vm->State().ApproachResult.Started) {
+          const auto& r=vm->State().ApproachResult;
+          const auto sample=std::tuple(r.Phase,r.PendingPhase.value_or(-1),r.Completed);
+          if(previousResult!=sample) {
+            out << "{\"kind\":\"approach_result_state\",\"now\":" << now << ",\"script\":" << event.Script
+                << ",\"command\":" << event.Command << ",\"phase\":" << r.Phase << ",\"pending\":" << r.PendingPhase.value_or(-1)
+                << ",\"done\":" << r.Completed << ",\"outcome\":" << r.Outcome << ",\"gauge\":" << vm->State().ApproachGauge
+                << ",\"auto\":" << policy.Auto << ",\"mode\":" << vm->State().SkipMode << ",\"skip_phase\":" << vm->State().SkipPhase
+                << ",\"common\":" << vm->State().Effects.CurrentValue << ",\"screen_fade\":" << vm->State().ScreenFade.value_or(-1)
+                << ",\"voice\":" << missionVoice.CurrentId() << ",\"voice_ready\":" << missionVoice.Ready()
+                << ",\"voice_playing\":" << missionVoice.Playing() << ",\"voice_frames\":" << missionVoice.FramesConsumed().value_or(0)
+                << ",\"revealed\":" << resultHost.Text().Reveal.Revealed << ",\"destination\":" << vm->State().PendingCommandIndex
+                << ",\"tweens\":[";
+            for(size_t i=0;i<7;++i){if(i)out << ',';out << r.Tweens[i].Current;}out << "]}\n";previousResult=sample;
+          }
+        }
         if(chooseFirstApproach && event.Opcode==0x3f6 && event.Boundary==VmBoundary::CommandCompletedBeforeDispatch) {
           const auto actual=CompletedApproachChoice(vm->State().ApproachSelection);
           if(choiceIndex>=approachPlan.size() || !actual || *actual!=approachPlan[choiceIndex])
@@ -303,12 +328,26 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
             vm->State().ApproachMission.Stage==2 && !vm->State().ApproachMission.PendingStage)waitingMission=true;
         if(event.Boundary==VmBoundary::WaitingInput && (event.Opcode==0x65 || event.Opcode==0x3f6))
           waitingSelection=true;
+        if(event.Boundary==VmBoundary::WaitingInput && event.Opcode==0x3f8 && vm->State().ApproachResult.Phase==5) {
+          const auto& r=vm->State().ApproachResult;
+          out << "{\"kind\":\"approach_result_ready\",\"now\":" << now << ",\"script\":" << event.Script
+              << ",\"command\":" << event.Command << ",\"phase\":" << r.Phase << ",\"outcome\":" << r.Outcome
+              << ",\"voice\":" << r.Selected.Voice << ",\"revealed\":" << resultHost.Text().Reveal.Revealed
+              << ",\"mission_frames\":" << missionVoice.FramesConsumed().value_or(0)
+              << ",\"pending_destination\":" << vm->State().PendingCommandIndex << "}\n";
+          waitingResult=true;
+        }
         if (event.Boundary == VmBoundary::WaitingInput || event.Boundary == VmBoundary::WaitingBackend) break;
         if (event.Boundary == VmBoundary::Ended) { ended = true; break; }
         if (work == 255) throw UnsupportedCommand("continuation per-frame command budget exceeded");
       }
       for (const auto& event : vm->TakeEvents()) {
         ++audioEvents;
+        if(vm->Opcode()==0x3f8) {
+          const bool carryover=now==vm->State().ApproachResult.Tweens[0].Epoch;
+          out << "{\"kind\":\"" << (carryover?"approach_result_entry_carryover_event":"approach_result_event")
+              << "\",\"now\":" << now << ",\"event\":" << int(event.Kind) << ",\"id\":" << event.Id << "}\n";
+        }
         (void)backend.ConsumeVoiceEvent(event);
       }
       for (auto& [lane, previous] : inlineLanes) {
@@ -336,6 +375,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
           out << "]}\n";previousMission=sample;
         }
       }
+      if(waitingResult) {finish("approach_result_confirmation_required",false);return 1;}
       if(waitingMission) {
         if((confirmFirstMission || chooseFirstApproach) && !confirmationSent) {
           output.Enabled=!chooseFirstApproach;confirmationDue=true;

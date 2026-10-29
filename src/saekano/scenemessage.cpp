@@ -4,11 +4,13 @@
 
 namespace Impacto::Saekano {
 void InitializeFreshMessageOwner(SemanticState& owner) {
-  if (owner.WindowOpacity || owner.ReadColorEnabled)
+  if (owner.WindowOpacity || owner.ReadColorEnabled || owner.ContinueAutoAfterSelection || owner.ContinueSkipAfterSelection)
     throw UnsupportedCommand(
         "fresh message settings would overwrite known owner state");
   owner.WindowOpacity = 10;
   owner.ReadColorEnabled = true;
+  owner.ContinueAutoAfterSelection=true;
+  owner.ContinueSkipAfterSelection=true;
 }
 SceneMessageBackend::SceneMessageBackend(const TextFormatEnvironment& format,
                                          const TextTimingEnvironment& timing,

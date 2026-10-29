@@ -15,6 +15,7 @@
 #include "approachentry.h"
 #include "approachmission.h"
 #include "approachselection.h"
+#include "approachresult.h"
 
 #include <array>
 #include <map>
@@ -63,6 +64,7 @@ struct SemanticState {
   ProfileOwnerState ProfileOwner;
   std::optional<uint8_t> TextSpeed;  // Owner S6022c, omitted from SAS1.
   std::optional<uint8_t> AutoSpeed;  // Owner S6022d, omitted from SAS1.
+  std::optional<bool> ContinueAutoAfterSelection,ContinueSkipAfterSelection; // S60230/31.
   std::optional<uint8_t> WindowOpacity;  // Owner S6022f, omitted from SAS1.
   std::optional<bool>
       ReadColorEnabled;  // Owner S60232; read history is separate.
@@ -78,6 +80,7 @@ struct SemanticState {
   ApproachEntryState ApproachMode;
   ApproachMissionState ApproachMission;
   ApproachSelectionState ApproachSelection;
+  ApproachResultState ApproachResult;
   std::optional<int32_t> BgmTrack;  // C+15a4; absent from the portable restore schema.
   std::optional<int32_t> BgmCommandVolume;  // C+15a8.
   std::optional<int32_t> BgmMasterVolume;  // Service master setting, percentage.

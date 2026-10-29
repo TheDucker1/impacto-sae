@@ -22,6 +22,12 @@ class HeadlessBackend : public VmBackend {
   ApproachMissionAudio* MissionVoiceBank=nullptr;
   std::optional<ApproachMissionEnvironment> MissionSettings;
   std::optional<ApproachSelectionEnvironment> SelectionSettings;
+  std::optional<ApproachResultEnvironment> ApproachResultSettings;
+  ApproachResultHost* ResultConsumer=nullptr;
+  const ApproachResultEnvironment* ApproachResultConfig() const override {
+    return ApproachResultSettings?&*ApproachResultSettings:nullptr;
+  }
+  ApproachResultHost* ResultHost() override { return ResultConsumer; }
   const ApproachSelectionEnvironment* SelectionConfig() const override {
     return SelectionSettings?&*SelectionSettings:nullptr;
   }

@@ -1,7 +1,21 @@
 #include "approachresult.h"
 #include "commands.h"
+#include "skipauto.h"
 
 namespace Impacto::Saekano {
+void CompleteApproachResultPolicy(SemanticState& owner,SkipAutoState& policy) {
+  if(!owner.ContinueAutoAfterSelection || !owner.ContinueSkipAfterSelection)
+    throw UnsupportedCommand("result completion policy settings are unavailable");
+  if(owner.SkipMode==2 && !*owner.ContinueSkipAfterSelection && !owner.Effects.Known)
+    throw UnsupportedCommand("result skip cleanup context is unavailable");
+  if(policy.Auto)policy.Auto=*owner.ContinueAutoAfterSelection;
+  if(owner.SkipMode==2 && !*owner.ContinueSkipAfterSelection) {
+    owner.Effects.CurrentValue=owner.Effects.RestoreValue;
+    for(uint32_t i=0;i<2;++i)
+      owner.PendingEvents.push_back({GameEventKind::StopChannel,owner.Effects.FirstAudioChannel+int32_t(i)});
+    owner.SkipMode=owner.SkipPhase=0;
+  }
+}
 ApproachResultCommand ApproachResultCommand::Decode(std::span<const uint8_t> bytes) {
   PayloadReader reader(bytes);ApproachResultCommand result;
   result.RequiredGauge=reader.I32();

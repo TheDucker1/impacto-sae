@@ -48,8 +48,8 @@ class SceneMessageBackend : public HeadlessBackend {
   SceneMessageBackend(const TextFormatEnvironment& format,
                       const TextTimingEnvironment& timing, uint8_t textSpeed,
                       std::optional<uint8_t> autoSpeed = std::nullopt);
-  // Intercept owning result entry so the compact semantic destination fallback
-  // cannot masquerade as a completed scene presentation.
+  // The VM owns typed result entry when ResultHost/config are bound. Direct
+  // presentation fallback stays rejected, including the still-unbound PC host.
   bool Supports(uint16_t opcode) const override { return opcode==0x3f8 || HeadlessBackend::Supports(opcode); }
   void StartPresentation(size_t command,uint16_t opcode,std::span<const uint8_t> payload,bool lane,uint64_t now) override;
   void BeginMessage(size_t command, const MessageCommand& message, size_t side,
