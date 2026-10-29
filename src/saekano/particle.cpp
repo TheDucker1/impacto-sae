@@ -620,6 +620,24 @@ ParticleBlendConfiguration ParticleBlend(size_t index) {
 std::array<float,16> ApproachParticleWorld() {
   return {1,0,0,0, 0,-1,0,0, 0,0,1,0, 0,0,0,1};
 }
+void ParticleFragmentState::SetBlendMode(int32_t mode) {
+  switch (mode) {
+    case 0: case 1: case 2: BlendIndex = uint32_t(mode); break;
+    case 3: break;
+    case 4: case 5: case 6: BlendIndex = uint32_t(mode - 1); break;
+    default: BlendIndex = 1; break;
+  }
+}
+void ParticleFragmentState::SetAlphaTest(bool enabled, int32_t comparison, uint8_t reference) {
+  if (!enabled) { AlphaFamily = 0; return; }
+  if (comparison == 0 || comparison == 1) {
+    AlphaFamily = comparison == 0 ? 3 : 4;
+    AlphaThreshold = 0;
+  } else if (comparison >= 2 && comparison <= 7) {
+    AlphaFamily = uint32_t(comparison - 1);
+    AlphaThreshold = float(reference) * (1.0f / 256.0f);
+  }
+}
 std::array<float, 52> ParticleProjectionUniforms::Pack() const {
   std::array<float, 52> result{};
   std::copy(View.begin(), View.end(), result.begin());

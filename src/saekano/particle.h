@@ -168,6 +168,14 @@ struct ParticleBlendConfiguration {
 };
 // Fragment-program table index (0..5), not the public native blend-mode value.
 ParticleBlendConfiguration ParticleBlend(size_t index);
+// State inherited by particle and ordinary textured draws. These are separate
+// selectors from definition48's shader mode; setters preserve native retention.
+struct ParticleFragmentState {
+  uint32_t BlendIndex = 0, AlphaFamily = 0;
+  float AlphaThreshold = 0;
+  void SetBlendMode(int32_t mode);
+  void SetAlphaTest(bool enabled, int32_t comparison, uint8_t reference);
+};
 std::array<float,16> ApproachParticleWorld();
 // Native c1818/c0ed0: centered local corners and half-texel UVs. Position and
 // rotation remain separate attributes; the vertex shader applies projection.

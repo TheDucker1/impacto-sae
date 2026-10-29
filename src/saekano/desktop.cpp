@@ -70,6 +70,13 @@ void ApplyParticleBlend(size_t index) {
                       ParticleGlFactor(blend.AlphaSource, true),
                       ParticleGlFactor(blend.AlphaDestination, true));
 }
+void ApplyParticleFragmentState(const ParticleFragmentState& state, GLuint program) {
+  // The owning renderer selects ParticleFragmentShaders[state.AlphaFamily].
+  if (state.AlphaFamily > 6 || !std::isfinite(state.AlphaThreshold))
+    throw FormatError("invalid particle alpha state");
+  ApplyParticleBlend(state.BlendIndex);
+  glUniform1f(glGetUniformLocation(program, "nativeAlphaThreshold"), state.AlphaThreshold);
+}
 struct ViewerWindow {
   SDL_Window* Window = nullptr;
   SDL_GLContext Context = nullptr;
@@ -1870,14 +1877,24 @@ int RunParticleFragmentProbe(const std::filesystem::path& fixtureDirectory,
     if (std::filesystem::exists(output)) throw FormatError("choose a fresh particle fragment output");
     const auto bytes = SceneRead(fixtureDirectory / "cases.bin");
     PayloadReader reader(bytes);
-    if (reader.U32() != 0x31465050) throw FormatError("invalid particle fragment fixture");
+    const auto magic = reader.U32();
+    if (magic != 0x31465050 && magic != 0x32465050) throw FormatError("invalid particle fragment fixture");
+    const bool alphaFamilies = magic == 0x32465050;
     const auto count = reader.U32();
     if (!count || count > 32) throw FormatError("particle fragment case budget exceeded");
-    reader.CheckCount(count, 36);
-    const auto fragmentBytes = SceneRead(fixtureDirectory / "reference.frag");
-    const std::string fragment(fragmentBytes.begin(), fragmentBytes.end());
+    reader.CheckCount(count, alphaFamilies ? 44 : 36);
     ViewerWindow window(true);
-    UiBlitRenderer actual(ParticleMode0FragmentShader), reference(fragment.c_str());
+    std::map<uint32_t, std::unique_ptr<UiBlitRenderer>> actualPrograms;
+    std::map<uint32_t, std::unique_ptr<UiBlitRenderer>> references;
+    const auto getReference = [&](uint32_t family) -> UiBlitRenderer& {
+      if (!references.contains(family)) {
+        const auto fragmentBytes = SceneRead(fixtureDirectory / (alphaFamilies
+            ? "reference" + std::to_string(family) + ".frag" : "reference.frag"));
+        const std::string fragment(fragmentBytes.begin(), fragmentBytes.end());
+        references.emplace(family, std::make_unique<UiBlitRenderer>(fragment.c_str()));
+      }
+      return *references.at(family);
+    };
     struct Target {
       GLuint Framebuffer = 0, Texture = 0;
       ~Target() {
@@ -1903,6 +1920,18 @@ int RunParticleFragmentProbe(const std::filesystem::path& fixtureDirectory,
       const bool referenceEnabled = referenceFactors[0] != UINT32_MAX;
       const auto destination = reader.U32();
       const auto alpha = std::bit_cast<float>(reader.U32());
+      ParticleFragmentState state;
+      state.BlendIndex = blendIndex;
+      if (alphaFamilies) {
+        state.AlphaFamily = reader.U32();
+        state.AlphaThreshold = std::bit_cast<float>(reader.U32());
+        if (state.AlphaFamily > 6) throw FormatError("unknown particle alpha family");
+      }
+      if (!actualPrograms.contains(state.AlphaFamily))
+        actualPrograms.emplace(state.AlphaFamily,
+            std::make_unique<UiBlitRenderer>(ParticleFragmentShaders[state.AlphaFamily]));
+      auto& actual = *actualPrograms.at(state.AlphaFamily);
+      auto& reference = getReference(state.AlphaFamily);
       const ProfileTextureKey key{ProfileTextureSection::MainUi, -1, i};
       const ImagePixels pixels{1, 1, {uint8_t(pixel), uint8_t(pixel >> 8), uint8_t(pixel >> 16), uint8_t(pixel >> 24)}};
       UiSpriteBlit draw;
@@ -1915,11 +1944,13 @@ int RunParticleFragmentProbe(const std::filesystem::path& fixtureDirectory,
         glClearColor(float(destination & 255)/255, float((destination >> 8) & 255)/255,
                      float((destination >> 16) & 255)/255, alpha);
         glClear(GL_COLOR_BUFFER_BIT);
-        if (production) ApplyParticleBlend(blendIndex);
+        if (production) ApplyParticleFragmentState(state, renderer.Program);
         else if (referenceEnabled) {
           glEnable(GL_BLEND); glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
           glBlendFuncSeparate(referenceFactors[0], referenceFactors[1], referenceFactors[2], referenceFactors[3]);
         } else glDisable(GL_BLEND);
+        if (!production)
+          glUniform1f(glGetUniformLocation(renderer.Program, "nativeAlphaThreshold"), state.AlphaThreshold);
         renderer.DrawQuad(draw, renderer.Textures.at(key), false);
         std::array<float,4> result;
         glReadPixels(0,0,1,1,GL_RGBA,GL_FLOAT,result.data());
