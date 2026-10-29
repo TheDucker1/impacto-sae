@@ -882,4 +882,65 @@ ConfiguredParticleEffect ConfiguredParticleEffect::Load(const GameResources& res
   }
   throw FormatError("configured particle effect name not found");
 }
+ParticleManager::ParticleManager(uint64_t nativeClock) {
+  random_.Initialize(nativeClock);
+  for (auto& group : groups_)
+    for (auto& handle : group)
+      handle.State.Enabled = handle.State.Running = handle.State.Emitting = false;
+}
+void ParticleManager::LoadEffect(const GameResources& resources,
+    const ParticleEnvironment& environment, size_t effectId) {
+  if (!HasEffect(effectId)) RegisterEffect(effectId, ConfiguredParticleEffect::Load(resources, environment, effectId));
+}
+void ParticleManager::RegisterEffect(size_t effectId, ConfiguredParticleEffect effect) {
+  effect.Program();  // Validate the owned program index before installing it.
+  effects_.try_emplace(effectId, std::move(effect));
+}
+bool ParticleManager::Request(size_t effectId, const ParticleEffectRequest& request, int32_t prewarmMilliseconds) {
+  if (request.Group >= GroupCount) throw FormatError("particle request group outside manager");
+  const auto effect = effects_.find(effectId);
+  if (effect == effects_.end()) return false;
+  for (auto& handle : groups_[request.Group]) {
+    auto& state = handle.State;
+    if (state.Running) continue;
+    // Native reset clears row storage/flags, but retains repeat index80.
+    state.Rows.clear(); state.Enabled = state.Running = state.Emitting = false;
+    handle.EffectId = effectId;
+    state.StartOffset = request.StartOffset; state.Owner = request.Owner;
+    state.Start(effect->second.Program(), effect->second.Assets, random_.Generator);
+    state.SetOriginOffset(origins_[request.Group]);  // Native applies this AFTER Start.
+    break;
+  }
+  // Negative prewarm is invalid authored input; avoid native sign-extension
+  // followed by unsigned comparison, which would attempt nearly2^64 ms.
+  for (int64_t elapsed = 0; elapsed < prewarmMilliseconds; elapsed += ParticleGroupClock::TickMilliseconds)
+    Update();
+  return true;
+}
+void ParticleManager::Update() {
+  for (size_t group = 0; group < GroupCount; ++group) {
+    const auto delta = clock_.Delta(group);
+    if (!delta) continue;
+    for (auto& handle : groups_[group]) {
+      if (!handle.EffectId) continue;
+      const auto& effect = effects_.at(*handle.EffectId);
+      // Supported catalogs have no nested effects, so native's nested restart
+      // fallback cannot apply. EffectState owns ordinary point repeat behavior.
+      handle.State.Update(effect.Program(), effect.Assets, *delta, random_.Generator);
+    }
+  }
+}
+void ParticleManager::SetPaused(size_t group, bool paused) {
+  if (group >= GroupCount) throw FormatError("particle pause group outside manager");
+  clock_.Paused[group] = paused;
+}
+void ParticleManager::SetOriginOffset(size_t group, const std::array<float, 2>& offset) {
+  if (group >= GroupCount) throw FormatError("particle origin group outside manager");
+  origins_[group] = offset;
+  for (auto& handle : groups_[group]) handle.State.SetOriginOffset(offset);
+}
+const ParticleManager::GroupHandles& ParticleManager::Handles(size_t group) const {
+  if (group >= GroupCount) throw FormatError("particle handle group outside manager");
+  return groups_[group];
+}
 }  // namespace Impacto::Saekano

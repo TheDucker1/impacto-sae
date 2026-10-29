@@ -202,4 +202,39 @@ struct ConfiguredParticleEffect {
   static ConfiguredParticleEffect Load(const GameResources& resources,
       const ParticleEnvironment& environment, size_t effectId);
 };
+struct ParticleEffectRequest {
+  int32_t StartOffset = 0;
+  uint32_t Group = 0;
+  std::array<float, 14> Owner{};  // Exact native request words2..15.
+};
+struct ParticleEffectHandle {
+  std::optional<size_t> EffectId;
+  ParticleEffectState State;
+};
+class ParticleManager {
+ public:
+  static constexpr size_t GroupCount = 8, HandlesPerGroup = 25;
+  using GroupHandles = std::array<ParticleEffectHandle, HandlesPerGroup>;
+  explicit ParticleManager(uint64_t nativeClock);
+  // Cache once before requests. Existing IDs retain their original resources.
+  void LoadEffect(const GameResources& resources, const ParticleEnvironment& environment, size_t effectId);
+  void RegisterEffect(size_t effectId, ConfiguredParticleEffect effect);
+  bool HasEffect(size_t effectId) const { return effects_.contains(effectId); }
+  // Like native dcc6, true means a known resource, even if the pool was full.
+  // Prewarm advances the entire manager in16ms steps, not only the new handle.
+  bool Request(size_t effectId, const ParticleEffectRequest& request, int32_t prewarmMilliseconds = 0);
+  void Update();  // Simulation only; GPU preparation remains a separate consumer.
+  void SetPaused(size_t group, bool paused);
+  void SetOriginOffset(size_t group, const std::array<float, 2>& offset);
+  const GroupHandles& Handles(size_t group) const;
+  const ConfiguredParticleEffect& Effect(size_t id) const { return effects_.at(id); }
+  const GameRandom& Random() const { return random_.Generator; }
+
+ private:
+  std::map<size_t, ConfiguredParticleEffect> effects_;
+  std::array<GroupHandles, GroupCount> groups_;
+  std::array<std::array<float, 2>, GroupCount> origins_{};
+  ParticleRandomState random_;
+  ParticleGroupClock clock_;
+};
 }  // namespace Impacto::Saekano
