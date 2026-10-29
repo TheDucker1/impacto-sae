@@ -2,6 +2,10 @@
 #include "commands.h"
 #include <algorithm>
 #include <bit>
+#include <cerrno>
+#include <cmath>
+#include <cstdlib>
+#include <limits>
 
 namespace Impacto::Saekano {
 ParticleEnvironment ParticleEnvironment::Decode(std::span<const uint8_t> bytes) {
@@ -90,6 +94,48 @@ ParticleDefinition ParticleDefinition::Decode(std::span<const uint8_t> bytes) {
   read(0x288, 0x294);
   result.PrefixBytes = bytes.size() - reader.Remaining();
   result.Tail.assign(bytes.begin() + result.PrefixBytes, bytes.end());
+  return result;
+}
+ParticlePointEmitter ParticlePointEmitter::DecodeRow(std::span<const uint8_t> bytes) {
+  std::vector<std::string> fields;
+  std::string field;
+  bool quoted = false, ended = false;
+  for (uint8_t byte : bytes) {
+    if (!byte) throw FormatError("NUL in particle CSV row");
+    if (ended) {
+      if (byte != '\r' && byte != '\n') throw FormatError("multiple particle CSV rows");
+    } else if (byte == '"') quoted = !quoted;
+    else if (!quoted && (byte == '\r' || byte == '\n')) ended = true;
+    else if (!quoted && byte == ',') { fields.push_back(std::move(field)); field.clear(); }
+    else field.push_back(char(byte));
+  }
+  if (quoted) throw FormatError("unterminated particle CSV quote");
+  fields.push_back(std::move(field));
+  if (!fields.empty() && fields.back().empty()) fields.pop_back();
+  if (fields.size() != 16 || fields[0] != "ON" || fields[1] != "ADD_POINT_POINT")
+    throw FormatError("unsupported particle point row");
+  ParticlePointEmitter result;
+  result.ParticleName = fields[2]; result.TextureName = fields[3];
+  if (result.ParticleName.empty() || result.TextureName.empty())
+    throw FormatError("empty particle point resource name");
+  for (size_t i = 0; i < 3; ++i) {
+    const auto& text = fields[4 + i];
+    char* end = nullptr; errno = 0;
+    const auto value = std::strtol(text.c_str(), &end, 10);
+    if (end == text.c_str() || *end || errno == ERANGE ||
+        value < INT32_MIN || value > INT32_MAX)
+      throw FormatError("invalid particle point integer");
+    result.Integers[i] = int32_t(value);
+  }
+  for (size_t i = 0; i < 9; ++i) {
+    const auto& text = fields[7 + i];
+    char* end = nullptr; errno = 0;
+    const auto value = std::strtod(text.c_str(), &end);
+    if (end == text.c_str() || *end || errno == ERANGE || !std::isfinite(value) ||
+        std::abs(value) > std::numeric_limits<float>::max())
+      throw FormatError("invalid particle point float");
+    result.Values[i] = float(value);  // Native strtod then VCVT.f32.f64.
+  }
   return result;
 }
 }  // namespace Impacto::Saekano

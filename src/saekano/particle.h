@@ -26,4 +26,12 @@ struct ParticleDefinition {
   uint32_t Bits(size_t nativeOffset) const;
   static ParticleDefinition Decode(std::span<const uint8_t> bytes);
 };
+struct ParticlePointEmitter {
+  // Native ADD_POINT_POINT callback8000ef4c, command type5. Names are raw
+  // narrow bytes. Consumer meanings/timing units of the numeric fields follow.
+  std::string ParticleName, TextureName;
+  std::array<int32_t, 3> Integers{};
+  std::array<float, 9> Values{};
+  static ParticlePointEmitter DecodeRow(std::span<const uint8_t> bytes);
+};
 }  // namespace Impacto::Saekano
