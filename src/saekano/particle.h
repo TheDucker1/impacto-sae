@@ -230,6 +230,7 @@ struct ParticleEmitterState {
 struct ParticleEffectProgram {
   ParticleEffectHeader Header;
   std::vector<ParticlePointEmitter> Points;
+  bool Batched = false;  // Native runtime resource28; header construction initializes0.
 };
 // Plan due emissions in native row order. The caller executes each event with
 // Emit (which advances its row count); this planner does not mutate storage.
@@ -248,6 +249,7 @@ struct PreparedParticleEffects {
   ParticleEffectCatalog Catalog;
   std::map<std::string, ParticleDefinition> Definitions;
   std::map<std::string, Bytes> Textures;  // Inflated original GXT, before GPU upload.
+  std::vector<std::string> TextureOrder;  // Native first registration order, never map order.
   static PreparedParticleEffects Prepare(const EffectResourceAssets& assets);
 };
 struct ParticleEffectState {
@@ -281,11 +283,31 @@ struct ParticleEffectHandle {
   std::optional<size_t> EffectId;
   ParticleEffectState State;
 };
+struct ParticleEffectDrawOwner {
+  const ParticleEffectState* State = nullptr;
+  const ParticleEffectProgram* Program = nullptr;  // Null matches an unbound native resource.
+  const PreparedParticleEffects* Assets = nullptr;
+};
+struct ParticleDrawSource {
+  const ParticleRuntimeState* Particle = nullptr;
+  const ParticleDefinition* Definition = nullptr;
+  std::optional<size_t> TextureIndex;
+};
+// Supported point-owner traversal: handle, emitter row, particle list order.
+// Enabled gates drawing independently of Running. Retired/unresolved particles
+// remain candidates; the batch collector alone caps the shared list at300.
+// Returned references expire on owner update/reset/resource replacement.
+std::vector<ParticleDrawSource> CollectParticleDrawSources(
+    std::span<const ParticleEffectDrawOwner> owners, bool batched,
+    std::span<const std::string> textureOrder);
 class ParticleManager {
  public:
   static constexpr size_t GroupCount = 8, HandlesPerGroup = 25;
   using GroupHandles = std::array<ParticleEffectHandle, HandlesPerGroup>;
   explicit ParticleManager(uint64_t nativeClock);
+  // Native145f0 loads every effect pack in archive order before requests. This
+  // texture-only catalog does not interpret unrelated unsupported CSV families.
+  void LoadTextureCatalog(const GameResources& resources);
   // Cache once before requests. Existing IDs retain their original resources.
   void LoadEffect(const GameResources& resources, const ParticleEnvironment& environment, size_t effectId);
   void RegisterEffect(size_t effectId, ConfiguredParticleEffect effect);
@@ -298,10 +320,16 @@ class ParticleManager {
   void SetOriginOffset(size_t group, const std::array<float, 2>& offset);
   const GroupHandles& Handles(size_t group) const;
   const ConfiguredParticleEffect& Effect(size_t id) const { return effects_.at(id); }
+  std::span<const std::string> TextureOrder() const { return textureOrder_; }
+  const Bytes& TextureData(size_t index) const;
+  std::vector<ParticleDrawSource> CollectDrawSources(size_t group, bool batched) const;
   const GameRandom& Random() const { return random_.Generator; }
 
  private:
   std::map<size_t, ConfiguredParticleEffect> effects_;
+  std::map<std::string, Bytes> textures_;
+  std::vector<std::string> textureOrder_;
+  bool textureCatalogLoaded_ = false;
   std::array<GroupHandles, GroupCount> groups_;
   std::array<std::array<float, 2>, GroupCount> origins_{};
   ParticleRandomState random_;

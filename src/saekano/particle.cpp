@@ -949,11 +949,37 @@ void ParticleEffectCatalog::AppendCsv(std::span<const uint8_t> bytes) {
   if (quoted) throw FormatError("unterminated particle CSV quote");
   if (start < bytes.size()) append(bytes.subspan(start));
 }
+namespace {
+// Native c7ce uses FLS rows as names for matching archive indices, ignoring the
+// archive directory's counted names. Retain the basename; b0b2 strips its suffix.
+std::vector<std::string> ParticleAssetNames(const EffectResourceAssets& assets) {
+  if (assets.Files.empty()) throw FormatError("empty particle asset archive");
+  const auto& raw = assets.Files.front().Data;
+  const std::string text(raw.begin(), raw.end());
+  if (text.find('\0') != std::string::npos) throw FormatError("NUL in particle file list");
+  std::vector<std::string> names;
+  size_t start = 0;
+  while (start < text.size()) {
+    const auto end = text.find("\r\n", start);
+    auto name = text.substr(start, end == std::string::npos ? end : end - start);
+    if (const auto slash = name.find_last_of("\\/"); slash != std::string::npos) name.erase(0, slash + 1);
+    if (name.empty() || name.find_first_of("\r\n") != std::string::npos)
+      throw FormatError("invalid particle file list row");
+    names.push_back(std::move(name));
+    if (end == std::string::npos) break;  // Safe final row, without native pointer overrun.
+    start = end + 2;
+  }
+  if (names.size() != assets.Files.size() || !names.front().ends_with(".fls"))
+    throw FormatError("particle file list does not match archive entries");
+  return names;
+}
+}  // namespace
 PreparedParticleEffects PreparedParticleEffects::Prepare(const EffectResourceAssets& assets) {
   PreparedParticleEffects result;
-  for (const auto& file : assets.Files) {
-    std::string name(file.Name.begin(), file.Name.end());
-    while (!name.empty() && name.back() == ' ') name.pop_back();
+  const auto names = ParticleAssetNames(assets);
+  for (size_t index = 1; index < assets.Files.size(); ++index) {
+    const auto& file = assets.Files[index];
+    const auto& name = names[index];
     const auto dot = name.rfind('.');
     if (dot == std::string::npos) throw FormatError("particle asset has no extension");
     const auto stem = name.substr(0, dot), extension = name.substr(dot);
@@ -961,7 +987,9 @@ PreparedParticleEffects PreparedParticleEffects::Prepare(const EffectResourceAss
       if (!result.Definitions.emplace(stem, ParticleDefinition::Decode(file.Data)).second)
         throw FormatError("duplicate particle definition name");
     } else if (extension == ".gxt") {
-      if (!result.Textures.emplace(stem, file.Data).second) throw FormatError("duplicate particle texture name");
+      // Native b5e2 appends only on a new key. A repeated key retains its first
+      // texture and its original position in manager+d8's registration vector.
+      if (result.Textures.emplace(stem, file.Data).second) result.TextureOrder.push_back(stem);
     } else if (extension == ".csv") result.Catalog.AppendCsv(file.Data);
     else if (extension != ".fls") throw FormatError("unbound particle asset type");
   }
@@ -984,11 +1012,11 @@ ConfiguredParticleEffect ConfiguredParticleEffect::Load(const GameResources& res
   }
   for (size_t archive = 0; archive < resources.EffectCount(); ++archive) {
     auto raw = resources.LoadEffect(archive);
+    const auto names = ParticleAssetNames(raw);
     bool found = false;
-    for (const auto& file : raw.Files) {
-      std::string filename(file.Name.begin(), file.Name.end());
-      while (!filename.empty() && filename.back() == ' ') filename.pop_back();
-      if (!filename.ends_with(".csv")) continue;
+    for (size_t index = 1; index < raw.Files.size(); ++index) {
+      const auto& file = raw.Files[index];
+      if (!names[index].ends_with(".csv")) continue;
       const auto inspect = [&](std::span<const uint8_t> row) {
         const auto fields = ParticleFields(row);
         if (fields.size() >= 3 && fields[0] == "ON" && fields[1] == "EFFECT" && fields[2] == requested) {
@@ -1023,11 +1051,44 @@ ParticleManager::ParticleManager(uint64_t nativeClock) {
 }
 void ParticleManager::LoadEffect(const GameResources& resources,
     const ParticleEnvironment& environment, size_t effectId) {
-  if (!HasEffect(effectId)) RegisterEffect(effectId, ConfiguredParticleEffect::Load(resources, environment, effectId));
+  if (HasEffect(effectId)) return;
+  LoadTextureCatalog(resources);
+  RegisterEffect(effectId, ConfiguredParticleEffect::Load(resources, environment, effectId));
+}
+void ParticleManager::LoadTextureCatalog(const GameResources& resources) {
+  if (textureCatalogLoaded_) return;
+  if (!textureOrder_.empty()) throw FormatError("cannot replace manually registered particle texture order");
+  std::map<std::string, Bytes> textures;
+  std::vector<std::string> order;
+  for (size_t index = 0; index < resources.EffectCount(); ++index) {
+    const auto raw = resources.LoadEffect(index);
+    const auto names = ParticleAssetNames(raw);
+    for (size_t file = 1; file < names.size(); ++file) {
+      if (names[file].ends_with(".dds")) throw FormatError("unbound particle DDS texture");
+      if (!names[file].ends_with(".gxt")) continue;
+      const auto key = names[file].substr(0, names[file].size() - 4);
+      if (textures.emplace(key, raw.Files[file].Data).second) order.push_back(key);
+    }
+  }
+  textures_ = std::move(textures); textureOrder_ = std::move(order);
+  textureCatalogLoaded_ = true;
 }
 void ParticleManager::RegisterEffect(size_t effectId, ConfiguredParticleEffect effect) {
+  if (effects_.contains(effectId)) return;
   effect.Program();  // Validate the owned program index before installing it.
-  effects_.try_emplace(effectId, std::move(effect));
+  if (effect.Assets.TextureOrder.size() != effect.Assets.Textures.size())
+    throw FormatError("particle texture registration order missing");
+  std::vector<std::string> localNames;
+  for (const auto& name : effect.Assets.TextureOrder) {
+    if (!effect.Assets.Textures.contains(name) || std::find(localNames.begin(), localNames.end(), name) != localNames.end())
+      throw FormatError("invalid particle texture registration order");
+    localNames.push_back(name);
+  }
+  effects_.emplace(effectId, std::move(effect));
+  for (const auto& name : localNames) {
+    if (textures_.emplace(name, effects_.at(effectId).Assets.Textures.at(name)).second)
+      textureOrder_.push_back(name);
+  }
 }
 bool ParticleManager::Request(size_t effectId, const ParticleEffectRequest& request, int32_t prewarmMilliseconds) {
   if (request.Group >= GroupCount) throw FormatError("particle request group outside manager");
@@ -1075,5 +1136,41 @@ void ParticleManager::SetOriginOffset(size_t group, const std::array<float, 2>& 
 const ParticleManager::GroupHandles& ParticleManager::Handles(size_t group) const {
   if (group >= GroupCount) throw FormatError("particle handle group outside manager");
   return groups_[group];
+}
+const Bytes& ParticleManager::TextureData(size_t index) const {
+  return textures_.at(textureOrder_.at(index));
+}
+std::vector<ParticleDrawSource> CollectParticleDrawSources(
+    std::span<const ParticleEffectDrawOwner> owners, bool batched,
+    std::span<const std::string> textureOrder) {
+  std::vector<ParticleDrawSource> result;
+  for (const auto& owner : owners) {
+    if (!owner.State) throw FormatError("missing particle draw owner");
+    if (!owner.Program || owner.Program->Batched != batched || !owner.State->Enabled) continue;
+    if (!owner.Assets || owner.State->Rows.size() != owner.Program->Points.size())
+      throw FormatError("particle draw owner resources mismatch");
+    for (size_t row = 0; row < owner.State->Rows.size(); ++row) {
+      const auto& point = owner.Program->Points[row];
+      const auto definition = owner.Assets->Definitions.find(point.ParticleName);
+      const auto texture = std::find(textureOrder.begin(), textureOrder.end(), point.TextureName);
+      for (const auto& particle : owner.State->Rows[row].Particles) {
+        if (batched && result.size() == 300) return result;
+        result.push_back({&particle,
+            definition == owner.Assets->Definitions.end() ? nullptr : &definition->second,
+            texture == textureOrder.end() ? std::nullopt : std::optional<size_t>(size_t(texture - textureOrder.begin()))});
+      }
+    }
+  }
+  return result;
+}
+std::vector<ParticleDrawSource> ParticleManager::CollectDrawSources(size_t group, bool batched) const {
+  std::array<ParticleEffectDrawOwner, HandlesPerGroup> owners;
+  const auto& handles = Handles(group);
+  for (size_t slot = 0; slot < handles.size(); ++slot) {
+    const auto& handle = handles[slot];
+    const auto* effect = handle.EffectId ? &effects_.at(*handle.EffectId) : nullptr;
+    owners[slot] = {&handle.State, effect ? &effect->Program() : nullptr, effect ? &effect->Assets : nullptr};
+  }
+  return CollectParticleDrawSources(owners, batched, textureOrder_);
 }
 }  // namespace Impacto::Saekano
