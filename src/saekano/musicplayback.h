@@ -7,6 +7,12 @@
 
 namespace Impacto::Saekano {
 class SystemSoundAssets;
+struct BgmPlaybackSnapshot {
+  uint64_t Current=0,Outgoing=0;
+  float CurrentGain=0,OutgoingGain=0;
+  uint32_t FadeOutDuration=500;
+  std::vector<uint64_t> Retired; // Retirements since the last BGM request.
+};
 // Saekano's audio host uses Impacto's existing OpenAL channel and the same
 // streaming HCA reader as headless verification. One host owns the AL context.
 class MusicPlayback {
@@ -21,6 +27,7 @@ class MusicPlayback {
   bool SoundPlaying(size_t logicalChannel) const;
   BgmStopFade BgmFadeState() const;
   float BgmOutputGain() const;
+  BgmPlaybackSnapshot BgmVoices() const;
   // Native UI channel6 is independent of SE2..5 and profile voice7.
   // Caller supplies a known effective gain and preserves the asset lifetime.
   void BindUiSounds(SystemSoundAssets& resources, float gain);
@@ -122,6 +129,8 @@ int RunMusicSession(const std::filesystem::path& usrdir, uint32_t track,
                     std::optional<uint32_t> soundChannel = std::nullopt);
 int RunBgmFadeSession(const std::filesystem::path& usrdir, uint32_t track,
                        const std::filesystem::path& captureDirectory);
+int RunBgmReplacementSession(const std::filesystem::path& usrdir,
+                            const std::filesystem::path& captureDirectory);
 int RunProfileVoiceSession(const std::filesystem::path& usrdir,
                            uint32_t character, uint32_t entry,
                            const std::filesystem::path& captureDirectory = {});

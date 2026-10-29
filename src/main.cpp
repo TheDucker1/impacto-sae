@@ -269,6 +269,8 @@ int main(int argc, char* argv[]) {
     if (parsed.ec == std::errc{} && parsed.ptr == text.data()+text.size() && track <= INT32_MAX)
       return Saekano::RunBgmFadeSession(argv[2],track,argv[4]);
   }
+  if(argc==4 && std::string_view(argv[1])=="--saekano-bgm-replacement")
+    return Saekano::RunBgmReplacementSession(argv[2],argv[3]);
   if (argc >= 2 && std::string_view(argv[1]) == "--saekano-audio") {
     uint32_t track = 0;
     if (argc == 4 || (argc == 6 && std::string_view(argv[4]) == "--capture")) {

@@ -517,7 +517,9 @@ void main(){
             std::span<const UiRenderCommand> commands = {}) {
     if (width <= 0 || height <= 0) return;
     glViewport(0, 0, width, height);
-    glClearColor(0, 0, 0, 1);
+    // ScenarioGameWrapper::Draw (8003110e) clears RGBA ffffffff before HUD drawing.
+    // The native chapter loader capture also observes this clear, before 800764e4.
+    glClearColor(1, 1, 1, 1);
     glDisable(GL_SCISSOR_TEST);
     glDisable(GL_STENCIL_TEST);
     glStencilMask(0xff);

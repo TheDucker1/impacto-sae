@@ -172,6 +172,10 @@ struct MusicPlayback::Impl {
   ALCcontext* Context = nullptr;
   LPALCRENDERSAMPLESSOFT RenderSamples = nullptr;
   std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> Channel;
+  std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> OutgoingBgm;
+  uint64_t BgmSerial=0,CurrentBgmSerial=0,OutgoingBgmSerial=0;
+  uint32_t BgmFadeOutDuration=500;
+  std::vector<uint64_t> RetiredBgm;
   std::array<std::unique_ptr<Audio::OpenAL::OpenALAudioChannel>,4> SeChannels;
   std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> ProfileVoice;
   std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> SecondaryVoice;
@@ -185,11 +189,20 @@ struct MusicPlayback::Impl {
   float BgmGain = 1.0f;
   double BgmFadeFraction = 0;
   uint32_t BgmFadeFrameRemainder = 0;
+  void RetireOutgoingBgm() {
+    if(OutgoingBgmSerial)RetiredBgm.push_back(OutgoingBgmSerial);
+    OutgoingBgmSerial=0;OutgoingBgm->Stop(0);
+  }
+  void BeginOutgoingFade(uint32_t duration) {
+    BgmFade={};BgmFade.Request(int32_t(duration));BgmFade.Tick(0);BgmFade.Tick(0);
+    BgmFadeFraction=0;BgmFadeFrameRemainder=0;
+    OutgoingBgm->SetVolume(BgmGain*BgmFade.Weight);
+  }
   void AdvanceBgmFade(uint32_t milliseconds) {
     if (!BgmFade.Active()) return;
     BgmFade.Tick(milliseconds);
-    Channel->SetVolume(BgmGain * BgmFade.Weight);
-    if (!BgmFade.Active()) Channel->Stop(0);
+    OutgoingBgm->SetVolume(BgmGain * BgmFade.Weight);
+    if (!BgmFade.Active()) RetireOutgoingBgm();
   }
   std::unique_ptr<HcaPlaybackStream> PreparedProfileVoice;
   std::array<std::unique_ptr<HcaPlaybackStream>, 2> PreparedOrdinaryVoices;
@@ -236,6 +249,8 @@ struct MusicPlayback::Impl {
       Audio::GroupVolumes[Audio::ACG_Voice] = 1;
       Channel = std::make_unique<Audio::OpenAL::OpenALAudioChannel>(
           Audio::AC_BGM0, Audio::ACG_BGM);
+      OutgoingBgm = std::make_unique<Audio::OpenAL::OpenALAudioChannel>(
+          Audio::AC_BGM1, Audio::ACG_BGM);
       ProfileVoice = std::make_unique<Audio::OpenAL::OpenALAudioChannel>(
           Audio::AC_VOICE0, Audio::ACG_Voice);
       SecondaryVoice = std::make_unique<Audio::OpenAL::OpenALAudioChannel>(
@@ -255,6 +270,7 @@ struct MusicPlayback::Impl {
   }
   void Cleanup() {
     Channel.reset();
+    OutgoingBgm.reset();
     ProfileVoice.reset();
     SecondaryVoice.reset();
     MissionVoice.reset();
@@ -299,31 +315,33 @@ void MusicPlayback::Submit(const GameEvent& event) {
     auto stream =
         std::make_unique<HcaPlaybackStream>(impl_->Resources, request.Track);
     const bool loop = impl_->Resources.Info(request.Track).Loop;
-    if (impl_->BgmFade.Active())
-      throw UnsupportedCommand("overlapping BGM crossfade playback is not bound: new track " + std::to_string(request.Track) +
-          " old phase " + std::to_string(impl_->BgmFade.Phase) + " elapsed " + std::to_string(impl_->BgmFade.Elapsed) +
-          " duration " + std::to_string(impl_->BgmFade.Duration) + " weight " + std::to_string(impl_->BgmFade.Weight));
+    // Native cf002 resets an active fader and retires its outgoing voice,
+    // then rotates the current voice into that slot. Fade-in is authored0.
+    impl_->RetiredBgm.clear();impl_->RetireOutgoingBgm();
     impl_->BgmFade = {};
     impl_->BgmFadeFraction = 0;
     impl_->BgmFadeFrameRemainder = 0;
     impl_->BgmGain = request.Volume->Gain;
+    if(impl_->Channel->GetState()!=Audio::ACS_Stopped) {
+      std::swap(impl_->Channel,impl_->OutgoingBgm);
+      impl_->OutgoingBgmSerial=impl_->CurrentBgmSerial;impl_->CurrentBgmSerial=0;
+      impl_->BeginOutgoingFade(impl_->BgmFadeOutDuration);
+    }
     impl_->Channel->SetVolume(request.Volume->Gain);
     impl_->Channel->Play(std::move(stream), loop, 0);
+    impl_->CurrentBgmSerial=++impl_->BgmSerial;
   } else if (event.Kind == GameEventKind::StopBgm) {
     if (event.Parameter < 0)
       throw UnsupportedCommand("negative BGM fade duration is not bound");
-    if (impl_->Channel->GetState() != Audio::ACS_Stopped) {
-      if (impl_->BgmFade.Request(event.Parameter)) {
-        impl_->Channel->SetVolume(0); impl_->Channel->Stop(0);
-      }
-      else {
-        // The attached fader is already ready. Pump its zero-time arm/sample;
-        // duration0 silences immediately, while retaining its retirement delay.
-        impl_->BgmFade.Tick(0); impl_->BgmFade.Tick(0);
-        impl_->BgmFadeFraction = 0;
-        impl_->BgmFadeFrameRemainder = 0;
-        impl_->Channel->SetVolume(impl_->BgmGain * impl_->BgmFade.Weight);
-      }
+    impl_->BgmFadeOutDuration=uint32_t(event.Parameter);impl_->RetiredBgm.clear();
+    if(impl_->BgmFade.Active()) {
+      impl_->BgmFade.Request(event.Parameter); // Existing host terminal phase3.
+      impl_->OutgoingBgm->SetVolume(0);impl_->RetireOutgoingBgm();
+    }
+    if(impl_->Channel->GetState()!=Audio::ACS_Stopped) {
+      std::swap(impl_->Channel,impl_->OutgoingBgm);
+      impl_->OutgoingBgmSerial=impl_->CurrentBgmSerial;impl_->CurrentBgmSerial=0;
+      impl_->BeginOutgoingFade(uint32_t(event.Parameter));
     }
   } else if (event.Kind == GameEventKind::PlaySe) {
     if (!impl_->Sounds || !event.Se || event.Se->Track != event.Id)
@@ -382,6 +400,7 @@ void MusicPlayback::Update(float seconds) {
     impl_->AdvanceBgmFade(uint32_t(std::min(whole, 67.0)));
   }
   impl_->Channel->Update(seconds);
+  impl_->OutgoingBgm->Update(seconds);
   for (auto& channel : impl_->SeChannels) if (channel) channel->Update(seconds);
   impl_->ProfileVoice->Update(seconds);
   impl_->SecondaryVoice->Update(seconds);
@@ -391,6 +410,7 @@ void MusicPlayback::Update(float seconds) {
 }
 bool MusicPlayback::Playing() const {
   if (impl_->Channel->GetState() != Audio::ACS_Stopped) return true;
+  if (impl_->OutgoingBgm->GetState() != Audio::ACS_Stopped) return true;
   if (impl_->ProfileVoice->GetState() != Audio::ACS_Stopped) return true;
   if (impl_->SecondaryVoice->GetState() != Audio::ACS_Stopped) return true;
   if (MissionVoicePlaying()) return true;
@@ -404,7 +424,17 @@ bool MusicPlayback::SoundPlaying(size_t logicalChannel) const {
   return channel && channel->GetState() != Audio::ACS_Stopped;
 }
 BgmStopFade MusicPlayback::BgmFadeState() const { return impl_->BgmFade; }
-float MusicPlayback::BgmOutputGain() const { return impl_->Channel->GetVolume(); }
+float MusicPlayback::BgmOutputGain() const {
+  return impl_->Channel->GetState()!=Audio::ACS_Stopped || impl_->BgmFade.Phase==0 ?
+      impl_->Channel->GetVolume():impl_->OutgoingBgm->GetVolume();
+}
+BgmPlaybackSnapshot MusicPlayback::BgmVoices() const {
+  const bool current=impl_->Channel->GetState()!=Audio::ACS_Stopped;
+  const bool outgoing=impl_->OutgoingBgm->GetState()!=Audio::ACS_Stopped;
+  return {current?impl_->CurrentBgmSerial:0,outgoing?impl_->OutgoingBgmSerial:0,
+      current?impl_->Channel->GetVolume():0,outgoing?impl_->OutgoingBgm->GetVolume():0,
+      impl_->BgmFadeOutDuration,impl_->RetiredBgm};
+}
 void MusicPlayback::BindUiSounds(SystemSoundAssets& resources, float gain) {
   if (!std::isfinite(gain) || gain < 0 || gain > 1)
     throw FormatError("UI sound gain outside supported range");
@@ -817,6 +847,47 @@ int RunUiSoundSession(const std::filesystem::path& usrdir,
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Saekano UI sound: %s",
                  error.what());
     return 1;
+  }
+}
+int RunBgmReplacementSession(const std::filesystem::path& usrdir,const std::filesystem::path& captureDirectory) {
+  bool created=false;
+  try {
+    CreateCaptureDirectory(usrdir,captureDirectory);created=true;
+    if(!SDL_Init(SDL_INIT_EVENTS))throw FormatError(SDL_GetError());
+    struct Cleanup { ~Cleanup(){SDL_Quit();} } cleanup;
+    ArchiveBgmResources resources(usrdir);resources.Prepare(8);MusicPlayback playback(resources,true);
+    std::ofstream report(captureDirectory/"replacement.jsonl");std::vector<int16_t> samples;
+    const auto play=[&](int32_t volume=100){GameEvent e{GameEventKind::PlayBgm,8};
+      e.Bgm=BgmRequest(8,volume,100,resources.Coefficient());playback.Submit(e);};
+    const auto render=[&](size_t ms){const auto at=samples.size();samples.resize(at+ms*96);
+      playback.Render(std::span(samples).subspan(at));};
+    const auto snapshot=[&](const char* label){const auto s=playback.BgmVoices();const auto f=playback.BgmFadeState();
+      report << "{\"label\":\"" << label << "\",\"current\":" << s.Current << ",\"outgoing\":" << s.Outgoing
+        << ",\"current_gain\":" << s.CurrentGain << ",\"outgoing_gain\":" << s.OutgoingGain
+        << ",\"duration\":" << s.FadeOutDuration << ",\"phase\":" << f.Phase << ",\"elapsed\":" << f.Elapsed
+        << ",\"retired\":[";
+      for(size_t i=0;i<s.Retired.size();++i){if(i)report << ',';report << s.Retired[i];}report << "]}\n";};
+    play();render(100);snapshot("initial");
+    playback.Submit({GameEventKind::StopBgm,0,{},500});render(512);snapshot("silent_retirement");
+    play();snapshot("replace_silent");render(0);
+    play();render(100);snapshot("overlap_current");
+    play();snapshot("replace_active_overlap");
+    playback.Submit({GameEventKind::StopBgm,0,{},500});snapshot("stop_overlap");
+    playback.Submit({GameEventKind::StopBgm,0,{},500});snapshot("repeat_stop");render(32);
+    if(playback.Playing())throw FormatError("repeated BGM stop retained a voice");
+    play();render(16);play(50);snapshot("shared_volume");
+    const auto before=playback.BgmVoices();GameEvent invalid{GameEventKind::PlayBgm,8};
+    invalid.Bgm=BgmRequest(8,100,100,resources.Coefficient());invalid.Bgm->Volume->Gain=2;
+    bool rejected=false;try{playback.Submit(invalid);}catch(const UnsupportedCommand&){rejected=true;}
+    const auto after=playback.BgmVoices();
+    if(!rejected || before.Current!=after.Current || before.Outgoing!=after.Outgoing ||
+        before.Retired!=after.Retired || before.CurrentGain!=after.CurrentGain || before.OutgoingGain!=after.OutgoingGain)
+      throw FormatError("rejected BGM input disturbed live voices");
+    snapshot("rejected_input_preserved");SaveWav(captureDirectory/"replacement.wav",samples);
+    return 0;
+  } catch(const std::exception& error) {
+    if(created){std::ofstream out(captureDirectory/"error.txt");out << error.what() << '\n';}
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano BGM replacement: %s",error.what());return 1;
   }
 }
 int RunBgmFadeSession(const std::filesystem::path& usrdir, uint32_t track,
