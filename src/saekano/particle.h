@@ -95,6 +95,28 @@ struct ParticleGeometrySample {
 };
 ParticleGeometrySample EvaluateParticleGeometry(const ParticleDefinition& definition,
     const ParticleBirthState& birth, float progress);
+struct ParticleColorSample {
+  std::array<uint8_t, 4> Bgra{};  // Natived4..d7; alpha byte always255.
+  float Intensity = 0;  // Natived8, upper cap2.
+};
+ParticleColorSample EvaluateParticleColor(const ParticleDefinition& definition,
+    const ParticleBirthState& birth, float progress);
+float EvaluateParticleOpacity(const ParticleDefinition& definition,
+    const ParticleBirthState& birth, float progress, GameRandom& random);
+struct ParticleRuntimeState {
+  ParticleBirthState Birth;
+  std::array<float, 3> AddedAngles{}, Angles{}, Acceleration{}, Scatter{};
+  std::array<float, 2> OriginOffset{};  // Native184/188, interpreted as float.
+  ParticleMotionSample Motion;
+  ParticleColorSample Color;
+  ParticleGeometrySample Geometry;
+  float Progress = 0, Opacity = 0;
+  int32_t Frame = 0;
+};
+// Native92b6: active-byte gate, elapsed update, all consumers, frame and retirement.
+// A missing definition preserves active state; inactive returns false unchanged.
+bool AdvanceParticle(ParticleRuntimeState& state, const ParticleDefinition* definition,
+                     uint64_t elapsedDelta, GameRandom& random);
 struct ParticlePointEmitter {
   // Native ADD_POINT_POINT callback8000ef4c, command type5. Names are raw
   // narrow bytes. Consumer meanings/timing units of the numeric fields follow.

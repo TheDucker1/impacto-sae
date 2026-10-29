@@ -311,6 +311,179 @@ ParticleGeometrySample EvaluateParticleGeometry(const ParticleDefinition& defini
                   ParticleModulation(scalePulse * field(0x24c)) * scale};
   return result;
 }
+ParticleColorSample EvaluateParticleColor(const ParticleDefinition& definition,
+    const ParticleBirthState& birth, float progress) {
+  const auto field = [&](size_t offset) { return std::bit_cast<float>(definition.Bits(offset)); };
+  const auto integer = [&](size_t offset) { return std::bit_cast<int32_t>(definition.Bits(offset)); };
+  const auto add = [](int32_t a, int32_t b) { return std::bit_cast<int32_t>(uint32_t(a) + uint32_t(b)); };
+  const bool negative = field(0x1c4) < 0;
+  volatile float reduction = std::abs(field(0x1c4)) * .25f;
+  const float attenuation = 1.0f - reduction;
+  const float ramp = ParticleRamp(progress, field(0x1c8)), fromWeight = 1.0f - ramp;
+  std::array<int32_t, 3> channels;
+  for (size_t axis = 0; axis < 3; ++axis) {
+    std::array<int32_t, 2> pairs;
+    for (size_t pair = 0; pair < 2; ++pair) {
+      const size_t base = 0x184 + pair * 32 + axis * 4;
+      float a = float(integer(base)), b = float(integer(base + 16));
+      if (negative) b = b * attenuation; else a = a * attenuation;
+      const float weight = pair ? ramp : fromWeight;
+      const auto sum = add(ParticleSignedWord(a * weight), ParticleSignedWord(b * weight));
+      pairs[pair] = negative ? sum : sum / 2;
+    }
+    channels[axis] = add(pairs[0], pairs[1]);
+  }
+  const auto maximum = *std::max_element(channels.begin(), channels.end());
+  // Native caps infinity to1 for black. Avoid the divide-by-zero directly.
+  const float normalization = maximum == 0 ? 1.0f : std::min(255.0f / float(maximum), 1.0f);
+  std::array<uint32_t, 3> rgb;
+  for (size_t axis = 0; axis < 3; ++axis) {
+    const float normalized = float(channels[axis]) * normalization;
+    const float gain = float(integer(0x278 + axis * 4)) / 255.0f;
+    rgb[axis] = uint16_t(ParticleSignedWord(normalized * gain));
+  }
+  float a = field(0x190), b = field(0x1a0), c = field(0x1b0), d = field(0x1c0);
+  if (negative) { b = b * attenuation; d = d * attenuation; }
+  else { a = a * attenuation; c = c * attenuation; }
+  const float from = ParticleAddProduct(b * fromWeight, a, fromWeight);
+  const float to = ParticleAddProduct(d * ramp, c, ramp);
+  const float half = (to + from) * .5f;
+  float intensity = half * field(0x284);
+  const auto multiply = [&](float gain) {
+    intensity = intensity * gain;
+    for (auto& channel : rgb) channel = uint8_t(NativeUnsignedWord(double(float(channel) * gain)));
+  };
+  if (field(0x1d4) > 0 && ramp < field(0x1d4) / 10.0f) multiply(field(0x1cc));
+  if (field(0x1d8) > 0 && ramp > 1.0f - field(0x1d8) / 10.0f) multiply(field(0x1d0));
+  const float phase = ParticlePhase(birth.Elapsed, birth.Prefix.LifetimeMilliseconds, field(0x21c));
+  const float pulse = ParticleTriangle(phase, field(0x214), field(0x218));
+  const float modulation = std::max(ParticleModulation(pulse), 0.0f);
+  intensity = modulation * intensity;
+  std::array<float, 3> creation{birth.Prefix.Creation[10], birth.Prefix.Creation[11], birth.Prefix.Creation[12]};
+  const float creationMaximum = *std::max_element(creation.begin(), creation.end());
+  if (creationMaximum == 0) creation = {1, 1, 1};
+  else for (auto& channel : creation) channel = channel / creationMaximum;
+  ParticleColorSample result;
+  result.Intensity = intensity > 2 ? 2.0f : intensity;
+  result.Bgra[3] = 255;
+  for (size_t axis = 0; axis < 3; ++axis) {
+    const auto channel = uint16_t(std::min(ParticleSignedWord(float(rgb[axis]) * modulation), 255));
+    result.Bgra[2 - axis] = uint8_t(NativeUnsignedWord(double(float(channel) * creation[axis])));
+  }
+  return result;
+}
+float EvaluateParticleOpacity(const ParticleDefinition& definition,
+    const ParticleBirthState& birth, float progress, GameRandom& random) {
+  const auto field = [&](size_t offset) { return std::bit_cast<float>(definition.Bits(offset)); };
+  const float ramp = ParticleRamp(progress, field(0x1f0));
+  const float firstSample = random.Normal(field(0x1ec), 1.0f);
+  const float first = ParticleAddProduct(field(0x1dc), field(0x1e0), firstSample);
+  const float secondSample = random.Normal(field(0x1ec), 1.0f);
+  const float second = ParticleAddProduct(field(0x1e4), field(0x1e8), secondSample);
+  const float blend = ParticleAddProduct(second * ramp, first, 1.0f - ramp);
+  const float delta = field(0x1f8) - field(0x1f4);
+  const float scalarProduct = delta * ramp;
+  const float scalar = field(0x1f4) + scalarProduct;
+  const float base = field(0x288) * blend;
+  const float scaled = base * scalar;
+  const float phase = ParticlePhase(birth.Elapsed, birth.Prefix.LifetimeMilliseconds, field(0x22c));
+  const float shifted = phase + birth.Field5c;
+  const float fractional = shifted - float(ParticleSignedWord(shifted));
+  const float pulse = ParticleTriangle(fractional, field(0x224), field(0x228));
+  const float modulated = ParticleModulation(pulse) * scaled;
+  const float opacity = modulated * birth.Prefix.Creation[13];
+  return opacity > 1 ? 1.0f : opacity;
+}
+bool AdvanceParticle(ParticleRuntimeState& state, const ParticleDefinition* definition,
+                     uint64_t elapsedDelta, GameRandom& random) {
+  auto& birth = state.Birth;
+  if (!birth.Flags[0]) return false;
+  if (!definition) return true;
+  birth.Elapsed += elapsedDelta;
+  const auto lifetime = birth.Prefix.LifetimeMilliseconds;
+  // Avoid native zero-lifetime division/modulo; an empty lifetime expires now.
+  if (!lifetime) { birth.Flags[0] = false; return true; }
+  const auto field = [&](size_t offset) { return std::bit_cast<float>(definition->Bits(offset)); };
+  const float lifetimeFloat = ParticleClockFloat(lifetime);
+  const float progress = ParticleClockFloat(birth.Elapsed) / lifetimeFloat;
+  state.Progress = progress;
+  for (size_t i = 0; i < 3; ++i) {
+    const float base = state.AddedAngles[i] + birth.Rotation.InitialAngles[i];
+    const float angle = ParticleAddProduct(base, progress, birth.Rotation.Scaled[i]);
+    state.Angles[i] = angle + birth.Prefix.Creation[3 + i];
+  }
+  const std::array<float, 3> origin{birth.Prefix.Position[0] + state.OriginOffset[0],
+      birth.Prefix.Position[1] + state.OriginOffset[1], birth.Prefix.Position[2]};
+  state.Motion = EvaluateParticleMotion(*definition, birth, progress, origin);
+  state.Acceleration = birth.Acceleration;
+  const auto& vector = state.Motion.Vector;
+  if (vector[0] != 0 || vector[1] != 0 || vector[2] != 0) {
+    const float angle = birth.Fields90[1] * ParticleRamp(progress, field(0xb0));
+    const float radius = birth.Fields90[0] * ParticleRamp(progress, field(0xc0));
+    float sine = radius * std::sin(angle), cosine = radius * std::cos(angle);
+    float squared = vector[1] * vector[1];
+    squared = ParticleAddProduct(squared, vector[0], vector[0]);
+    squared = ParticleAddProduct(squared, vector[2], vector[2]);
+    const float length = float(std::sqrt(double(squared)));
+    const float y = vector[1] / length, x = vector[0] / length, z = vector[2] / length;
+    const float denominator = ParticleSubtractProduct(1.0f, y, y);
+    const float u = denominator == 0 ? 1.0f : z / denominator;
+    const float v = denominator == 0 ? 0.0f : x / denominator;
+    const float zero = denominator * 0.0f;
+    float vertical;
+    if (z == 0) {
+      const float product = denominator * cosine;
+      cosine = ParticleAddProduct(zero, y, cosine);
+      vertical = -ParticleSubtractProduct(product, y, 0.0f);
+    } else {
+      const float product = denominator * sine;
+      sine = -ParticleSubtractProduct(zero, y, sine);
+      vertical = ParticleAddProduct(product, y, 0.0f);
+    }
+    const float horizontal = -ParticleSubtractProduct(v * sine, u, cosine);
+    const float depth = ParticleAddProduct(u * sine, v, cosine);
+    state.Motion.Position[0] = state.Motion.Position[0] + horizontal;
+    state.Motion.Position[1] = state.Motion.Position[1] + vertical;
+    state.Motion.Position[2] = state.Motion.Position[2] + depth;
+  }
+  const float accelerationTime = (lifetimeFloat * ParticleRamp(progress, field(0x80))) / 1000.0f;
+  const float squaredTime = accelerationTime * accelerationTime;
+  for (size_t i = 0; i < 3; ++i) {
+    const float acceleration = state.Acceleration[i] * squaredTime;
+    state.Motion.Position[i] = ParticleAddProduct(state.Motion.Position[i], acceleration, .5f);
+  }
+  const float phase = ParticleRamp(progress, field(0x90)) * std::bit_cast<float>(0x41490fdbu);
+  const float angle = phase * birth.Transform.Scalar;
+  const float scatter = ParticleRamp(progress, field(0xa0)) * std::sin(angle);
+  for (size_t i = 0; i < 3; ++i) {
+    state.Scatter[i] = birth.Transform.Scatter[i] * scatter;
+    state.Motion.Position[i] = state.Motion.Position[i] + state.Scatter[i];
+  }
+  state.Color = EvaluateParticleColor(*definition, birth, progress);
+  state.Geometry = EvaluateParticleGeometry(*definition, birth, progress);
+  state.Opacity = EvaluateParticleOpacity(*definition, birth, progress, random);
+  const auto columns = std::bit_cast<int32_t>(definition->Bits(0x58));
+  const auto rows = std::bit_cast<int32_t>(definition->Bits(0x5c));
+  const int64_t cells = (int64_t(columns) + 1) * (int64_t(rows) + 1);
+  if (columns < 0 || rows < 0 || cells > INT32_MAX)
+    throw FormatError("invalid particle frame grid");
+  const uint64_t frameDuration = lifetime / uint64_t(cells);
+  // A grid with more cells than milliseconds has no nonzero native duration.
+  // Keep its first frame rather than entering division by zero.
+  if (!frameDuration) state.Frame = 0;
+  else {
+    int32_t frame;
+    if (field(0x60) == 0) frame = std::bit_cast<int32_t>(uint32_t(birth.Elapsed / frameDuration));
+    else {
+      const float time = ParticleClockFloat(birth.Elapsed) * field(0x60);
+      frame = ParticleSignedWord(time / ParticleClockFloat(frameDuration));
+    }
+    state.Frame = int32_t(int64_t(frame) % (int64_t(columns) + 1));
+    if (state.Frame > columns) state.Frame = 0;
+  }
+  if (birth.Elapsed >= lifetime) birth.Flags[0] = false;
+  return true;
+}
 uint32_t ParticleDefinition::Bits(size_t nativeOffset) const {
   if (nativeOffset < 0x20 || nativeOffset >= 0x298 || nativeOffset % 4)
     throw FormatError("particle parameter offset outside native record");
