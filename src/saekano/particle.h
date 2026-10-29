@@ -1,6 +1,7 @@
 #pragma once
 
 #include "formats.h"
+#include "random.h"
 #include <array>
 #include <string>
 #include <map>
@@ -28,6 +29,27 @@ struct ParticleDefinition {
   uint32_t Bits(size_t nativeOffset) const;
   static ParticleDefinition Decode(std::span<const uint8_t> bytes);
 };
+struct ParticleRandomState {
+  GameRandom Generator;  // Separate from script/gauge RNG; no implicit seed.
+  void Initialize(uint64_t nativeClock) { Generator.Seed(uint32_t(nativeClock)); }
+};
+struct ParticleBirthPrefix {
+  std::array<float, 14> Creation{};  // Native instance14c..180.
+  std::array<float, 3> Position{};   // Native instance8..10.
+  uint32_t NominalMilliseconds = 0;
+  uint64_t LifetimeMilliseconds = 0;  // Native instance f8/fc.
+};
+uint32_t ParticleNominalLifetime(int32_t authoredTicks);
+// The native birth prefix before rotation/velocity/scale setup. Missing texture
+// returns false without changing existing state or consuming random words.
+bool PrepareParticleBirthPrefix(ParticleBirthPrefix& state,
+    const ParticleDefinition& definition, int32_t authoredTicks,
+    const std::array<float, 14>& creation, GameRandom& random, bool textureReady);
+struct ParticleRotationSetup {
+  std::array<float, 3> InitialAngles{}, Base{}, Scaled{};  // Native64/38/84 triples.
+};
+ParticleRotationSetup PrepareParticleRotation(const ParticleDefinition& definition,
+                                              GameRandom& random);
 struct ParticlePointEmitter {
   // Native ADD_POINT_POINT callback8000ef4c, command type5. Names are raw
   // narrow bytes. Consumer meanings/timing units of the numeric fields follow.

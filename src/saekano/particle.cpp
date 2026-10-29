@@ -9,6 +9,39 @@
 #include <limits>
 
 namespace Impacto::Saekano {
+namespace {
+uint32_t NativeUnsignedWord(double value) {
+  if (!(value > 0)) return 0;
+  if (value >= double(UINT32_MAX)) return UINT32_MAX;
+  return uint32_t(value);  // VCVT.u32 truncates; saturate before C++ conversion.
+}
+}
+uint32_t ParticleNominalLifetime(int32_t authoredTicks) {
+  const float product = float(authoredTicks) * std::bit_cast<float>(0x4184cccdu);
+  return NativeUnsignedWord(double(product));
+}
+bool PrepareParticleBirthPrefix(ParticleBirthPrefix& state,
+    const ParticleDefinition& definition, int32_t authoredTicks,
+    const std::array<float, 14>& creation, GameRandom& random, bool textureReady) {
+  if (!textureReady) return false;
+  const auto field = [&](size_t offset) { return std::bit_cast<float>(definition.Bits(offset)); };
+  ParticleBirthPrefix next;
+  next.Creation = creation;
+  next.NominalMilliseconds = ParticleNominalLifetime(authoredTicks);
+  const float sample = random.Normal(field(0x2c), 1.0f);
+  volatile float product = field(0x28) * sample;
+  const float coefficient = field(0x24) + product;
+  const float lifetime = coefficient * float(next.NominalMilliseconds);
+  if (!std::isfinite(lifetime)) throw FormatError("nonfinite particle lifetime");
+  const auto high = NativeUnsignedWord(double(lifetime) * 0x1p-32);
+  const auto low = NativeUnsignedWord(double(lifetime) - double(high) * 0x1p32);
+  next.LifetimeMilliseconds = uint64_t(high) << 32 | low;
+  if (!next.LifetimeMilliseconds) next.LifetimeMilliseconds = next.NominalMilliseconds;
+  next.Position = {field(0x250) + creation[0], creation[1] - field(0x254),
+                   field(0x258) + creation[2]};
+  state = next;
+  return true;
+}
 ParticleEnvironment ParticleEnvironment::Decode(std::span<const uint8_t> bytes) {
   if (bytes.size() < 3) throw FormatError("truncated particle environment flags");
   ParticleEnvironment result;
@@ -21,6 +54,32 @@ ParticleEnvironment ParticleEnvironment::Decode(std::span<const uint8_t> bytes) 
   for (uint32_t i = 0; i < count; ++i)
     result.Effects.push_back({reader.String(), reader.I32()});
   if (reader.Remaining()) throw FormatError("trailing particle environment data");
+  return result;
+}
+ParticleRotationSetup PrepareParticleRotation(const ParticleDefinition& definition,
+                                              GameRandom& random) {
+  const auto field = [&](size_t offset) { return std::bit_cast<float>(definition.Bits(offset)); };
+  ParticleRotationSetup result;
+  for (size_t axis = 0; axis < 3; ++axis)
+    if (definition.Bits(0x3c + 4 * axis) == 1)
+      result.InitialAngles[axis] = float(random.Range(0, 360)) * std::bit_cast<float>(0x3c8efa35u);
+  for (size_t axis = 0; axis < 3; ++axis) {
+    if (definition.Bits(0x144)) {
+      const float step = float(random.Range(0, 800) - 400) / 10.0f;
+      result.Base[axis] = step * field(0x148);
+    } else {
+      const size_t base = 0x114 + 16 * axis;
+      const float sample = random.Normal(field(base + 8), 1.0f);
+      volatile float product = field(base + 4) * sample;
+      result.Base[axis] = field(base) + product;
+    }
+  }
+  for (size_t axis = 0; axis < 3; ++axis) {
+    const float authored = field(0x120 + 16 * axis);
+    const float gain = authored == 0 ? 1.0f : authored;
+    const float product = result.Base[axis] * gain;
+    result.Scaled[axis] = product * std::bit_cast<float>(0x40c90fdbu);
+  }
   return result;
 }
 uint32_t ParticleDefinition::Bits(size_t nativeOffset) const {
