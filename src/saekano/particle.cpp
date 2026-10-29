@@ -154,6 +154,19 @@ ParticleEffectHeader ParticleEffectHeader::DecodeRow(std::span<const uint8_t> by
     throw FormatError("unsupported particle effect header");
   return {fields[2], {ParticleInteger(fields[3]), ParticleInteger(fields[4])}, ParticleFloat(fields[5])};
 }
+std::array<float, 3> ParticlePointEmitter::Origin(int32_t emitted) const {
+  if (Integers[2] <= 0 || emitted < 0 || emitted >= Integers[2])
+    throw FormatError("particle emission index outside positive count");
+  std::array<float, 3> result;
+  for (size_t axis = 0; axis < 3; ++axis) {
+    const float delta = Values[6 + axis] - Values[3 + axis];
+    const float product = delta * float(emitted);
+    const float step = product / float(Integers[2]);
+    const float offset = Values[3 + axis] + step;
+    result[axis] = offset + Values[axis];
+  }
+  return result;
+}
 void ParticleEffectCatalog::AppendCsv(std::span<const uint8_t> bytes) {
   size_t start = 0;
   bool quoted = false;
