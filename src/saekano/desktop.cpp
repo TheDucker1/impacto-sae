@@ -23,6 +23,7 @@
 #include "mouthselection.h"
 #include "particle.h"
 #include "scenecamera.h"
+#include "approachresulttext.h"
 #include "particlevertexshader.h"
 #include "particlerastervertexshader.h"
 #include "particlefragmentshader.h"
@@ -864,7 +865,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                       bool captureWaitingInput = false,bool captureConfirmInput = false,int32_t captureMenuInput = 0) {
   const bool capture = !captureDirectory.empty();
   const bool captureParticles=captureMenuInput==4;
-  const bool captureMenuPointer=captureMenuInput==2,captureBranch=captureMenuInput==3 || captureParticles;
+  const bool captureResult=captureMenuInput==5;
+  const bool captureMenuPointer=captureMenuInput==2,captureBranch=captureMenuInput==3 || captureParticles || captureResult;
   if (!owner.WindowOpacity || !owner.ReadColorEnabled || !owner.TextSpeed ||
       !owner.AutoSpeed)
     throw UnsupportedCommand("scene owner display settings are missing");
@@ -904,13 +906,20 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   bool particleCaptureRequested=false;size_t particleCaptureFrames=0;
   struct ParticleRequestLog { int32_t Id;ParticleEffectRequest Request;uint32_t Seed;uint64_t Before; };
   std::vector<ParticleRequestLog> particleRequests;
+  std::set<int32_t> sessionTrophies;
   const auto selectionLayout=ApproachSelectionLayout::Decode(SceneRead(root/"env/env_approach.dat"));
   const auto selectionShared=SharedSelectionEnvironment::Decode(SceneRead(root/"env/env_script_select.dat"));
   std::map<int32_t,std::unique_ptr<ModelTextures>> modelTextures;
   SdkLive2dDriver models(resources, Live2dEnvironment::Decode(SceneRead(root / "env/env_live2d.dat")));
   const auto voiceSettings = MakeFreshOrdinaryVoiceSettings();
   PlaybackMissionVoice missionVoice(playback,root,voiceSettings.Volume,1.0f);
+  const auto resultVisual=ModeResultVisualEnvironment::DecodeApproach(SceneRead(root/"env/env_approach.dat"));
+  const auto resultCursors=MessageCursorEnvironment::Decode(SceneRead(root/"env/env_message_window.dat"));
+  ArchiveApproachResultHost resultHost(resources,missionVoice,skipAuto,format,timing,
+      resultVisual,font.Cached(),metrics,uint32_t(utility.Size),font.NominalSize());
   SceneMessageBackend backend(format, timing, *owner.TextSpeed, owner.AutoSpeed);
+  backend.ApproachResultSettings=ApproachResultEnvironment::Decode(SceneRead(root/"env/env_approach.dat"));
+  backend.ResultConsumer=&resultHost;
   backend.ParticleReset=[&](bool fresh) {
     if(!fresh)throw UnsupportedCommand("restored particle manager state is unavailable");
     particles.ResetForScript(capture?particleClock:SDL_GetTicks());
@@ -951,7 +960,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       throw FormatError("menu capture target requires approach selection");
   }
   bool targetCompleted = false, targetWaitingReached = false;
-  bool captureActive = !captureFromCommand && !captureConfirmInput && !captureParticles;
+  bool captureActive = !captureFromCommand && !captureConfirmInput && !captureParticles && !captureResult;
+  bool resultConfirmationDue=false,resultConfirmationSent=false,resultCompleted=false;
   bool confirmDue=false,confirmSent=false;
   bool menuMissionDue=false,menuMissionSent=false;
   uint32_t menuCaptureStep=0;
@@ -1046,7 +1056,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   std::vector<WidgetEventHistory> menuParents,menuChildren,menuArrows;
   std::pair<int32_t,int32_t> menuIdentity{-1,-1};
   int32_t menuChildParent=-1;
-  const uint32_t frameBudget = captureParticles?100000:(captureFromCommand ? (captureBranch?40000:20000) : 2000);
+  const uint32_t frameBudget = (captureParticles || captureResult)?100000:(captureFromCommand ? (captureBranch?40000:20000) : 2000);
   for (uint32_t frame = 0; !quit && (!capture || frame < frameBudget); ++frame) {
     const uint64_t now =
         capture ? uint64_t(frame) * 16 : SDL_GetTicks() - epoch;
@@ -1064,13 +1074,14 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         }
       }
       SDL_Keycode key=0;
-      if(menuMissionDue){key=SDLK_RETURN;menuMissionDue=false;menuMissionSent=true;}
+      if(resultConfirmationDue){key=SDLK_RETURN;resultConfirmationDue=false;resultConfirmationSent=true;}
+      else if(menuMissionDue){key=SDLK_RETURN;menuMissionDue=false;menuMissionSent=true;}
       else if(!captureMenuPointer && menu.Visible && vm->State().ScriptFileId==captureScript &&
           (captureBranch || size_t(vm->State().CurrentCommandIndex)==*captureUntilMessage) && !menu.PendingPhase) {
         if(menuCaptureStep==0 && menu.Phase==4){key=SDLK_DOWN;++menuCaptureStep;}
         else if(menuCaptureStep==1 && menu.Phase==4) {
           bool available=true;
-          if(captureParticles && !menu.ParentUnselected && menu.Parent>=0) {
+          if((captureParticles || captureResult) && !menu.ParentUnselected && menu.Parent>=0) {
             const auto row=size_t(menu.Parent),original=menu.OriginalOrdinals.at(row);
             available=false;
             for(size_t child=0;child<menu.ChildCounts.at(row);++child)
@@ -1080,7 +1091,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
           else if(frame%4==0)key=SDLK_DOWN;
         } else if(menuCaptureStep==2 && menu.Phase==7){key=SDLK_DOWN;++menuCaptureStep;}
         else if(menuCaptureStep==3 && menu.Phase==7) {
-          const bool used=captureParticles && !menu.ChildUnselected && menu.Parent>=0 && menu.Child>=0 &&
+          const bool used=(captureParticles || captureResult) && !menu.ChildUnselected && menu.Parent>=0 && menu.Child>=0 &&
             vm->State().ApproachFlags.at(menu.OriginalOrdinals.at(size_t(menu.Parent))*3+size_t(menu.Child))!=0;
           if(!menu.ChildUnselected && !used){key=SDLK_RETURN;++menuCaptureStep;}
           else if(frame%4==0)key=SDLK_DOWN;
@@ -1313,8 +1324,25 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     for (size_t work = 0; work < 256; ++work) {
       bindScriptVoices();
       syncMouths();
+      const bool acceptedInput=input.Advance;
       const auto step = vm->Step(now, input);
       if(captureParticles && particleCaptureRequested)captureActive=true;
+      if(captureResult && step.Opcode==0x3f8)captureActive=true;
+      if(capture && captureActive && step.Opcode==0x3f8) {
+        const auto& r=vm->State().ApproachResult;
+        events << "{\"kind\":\"approach_result_state\",\"now\":" << now << ",\"script\":" << step.Script
+          << ",\"command\":" << step.Command << ",\"boundary\":" << int(step.Boundary)
+          << ",\"accept\":" << acceptedInput << ",\"phase\":" << r.Phase << ",\"pending\":" << r.PendingPhase.value_or(-1)
+          << ",\"visible\":" << r.Visible << ",\"cursor\":" << r.Cursor << ",\"done\":" << r.Completed
+          << ",\"outcome\":" << r.Outcome << ",\"gauge\":" << vm->State().ApproachGauge
+          << ",\"voice\":" << resultHost.Text().Voice << ",\"voice_playing\":" << playback.MissionVoicePlaying()
+          << ",\"voice_position_ms\":" << playback.MissionVoicePosition()
+          << ",\"revealed\":" << resultHost.Text().Reveal.Revealed
+          << ",\"screen_fade\":" << vm->State().ScreenFade.value_or(-1)
+          << ",\"destination\":" << vm->State().PendingCommandIndex << ",\"auto\":" << skipAuto.Auto
+          << ",\"mode\":" << vm->State().SkipMode << ",\"skip_phase\":" << vm->State().SkipPhase << ",\"tweens\":[";
+        for(size_t i=0;i<7;++i){if(i)events << ',';events << r.Tweens[i].Current;}events << "]}\n";
+      }
       if (!captureConfirmInput && captureFromCommand && step.Script == captureScript &&
           size_t(step.Command) == *captureFromCommand) captureActive = true;
       input.Advance = false;
@@ -1329,9 +1357,12 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         firstMessage = now;
         laidOut = false;
         capturePointerStage = 0;
+        if(captureResult && resultCompleted){targetCompleted=true;quit=true;}
         break;
       }
-      if (step.Boundary == VmBoundary::CommandCompletedBeforeDispatch && capture && !captureParticles &&
+      if(captureResult && step.Opcode==0x3f8 && step.Boundary==VmBoundary::CommandCompletedBeforeDispatch)
+        resultCompleted=true;
+      if (step.Boundary == VmBoundary::CommandCompletedBeforeDispatch && capture && !captureParticles && !captureResult &&
           (captureUntilMessage
                ? step.Script == captureScript && size_t(step.Command) == *captureUntilMessage
                : step.Opcode == 0x64 && (!captureVoiced || step.Command >= 67))) {
@@ -1343,6 +1374,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
           step.Boundary == VmBoundary::WaitingBackend) {
         if(captureMenuInput && !menuMissionSent && step.Opcode==0x3f7 && step.Boundary==VmBoundary::WaitingInput)
           menuMissionDue=true;
+        if(captureResult && !resultConfirmationSent && step.Opcode==0x3f8 && step.Boundary==VmBoundary::WaitingInput)
+          resultConfirmationDue=true;
         if(capture && (captureWaitingInput || captureConfirmInput) && captureUntilMessage &&
             step.Script==captureScript && size_t(step.Command)==*captureUntilMessage &&
             step.Boundary==VmBoundary::WaitingInput) {
@@ -1369,7 +1402,11 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     particleRequests.clear();
     particles.Update();  // Native749fe: fixed16ms after command work, before drawing.
     for (const auto& request : vm->TakeEvents()) {
-      if (!backend.ConsumeVoiceEvent(request)) playback.Submit(request);
+      if(request.Kind==GameEventKind::Trophy) {
+        if(request.Id<0)throw FormatError("invalid trophy request");
+        if(sessionTrophies.insert(request.Id).second)
+          SDL_Log("Saekano session trophy %d",request.Id);
+      } else if (!backend.ConsumeVoiceEvent(request)) playback.Submit(request);
       if (capture && captureActive)
         events << "{\"kind\":\"audio\",\"frame\":" << frame
                << ",\"now\":" << now << ",\"event\":" << int(request.Kind)
@@ -1629,6 +1666,32 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       for(const auto& sprite:BuildApproachMissionSprites(approachVisual,*state.ApproachMode.Id,state.ApproachMission)) {
         uploadMain(sprite.Texture.Entry);drawSprite(sprite);spriteDraws.push_back(sprite);
       }
+      const auto& result=state.ApproachResult;
+      const auto layers=BuildApproachResultLayers(resultVisual,result,*state.ApproachMode.Id,960,544);
+      for(const auto& command:layers)if(command.Kind==UiRenderKind::Sprite) {
+        const auto key=command.Sprite.Texture;
+        if(key.Section==ProfileTextureSection::MainUi)uploadMain(key.Entry);
+        else if(key.Section==ProfileTextureSection::Character) {
+          if(approachAssets.Id()!=state.ApproachMode.Id)
+            throw UnsupportedCommand("result character bank does not match the loaded approach resource");
+          upload(key,approachAssets.Textures().at(key.Entry).Pixels);
+        } else throw UnsupportedCommand("unbound approach result texture bank");
+        spriteDraws.push_back(command.Sprite);
+      }
+      // Preserve native logical state separately from the physical UI pipeline.
+      for(const auto& command:layers)if(command.Kind==UiRenderKind::AlphaTest)
+        particleFragment.SetAlphaTest(command.TestEnabled.value_or(true),command.Mode,0);
+      renderer.Execute(layers);
+      if(result.Visible) {
+        const auto draws=BuildApproachResultTextDraws(resultHost.Text(),format,resultVisual.TextPosition,uint32_t(utility.Size));
+        for(const auto& text:draws) {
+          fontTextures.DrawString(renderer,font,text.Text,text.Position[0],text.Position[1],text.Size,text.Color);
+          textDraws.push_back(text);
+        }
+        for(const auto& sprite:BuildApproachResultOverlays(resultVisual,resultCursors,result,messageCursor.Current)) {
+          uploadMain(sprite.Texture.Entry);drawSprite(sprite);spriteDraws.push_back(sprite);
+        }
+      }
     }
     // Native HUD tail8007708c draws white after queued presentation/HUD.
     if (const auto fade = BuildScreenFade(*state.ScreenFade)) {
@@ -1657,9 +1720,15 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       if(captureBranch)for(const auto& record:state.Live2d.Records)
         if(record.ResourceId)signature+=':'+std::to_string(models.Observe(*record.ResourceId).MouthActive);
     }
-    for (const auto& fill : state.SceneImages.Slots.FillRects)
+    if(captureResult) {
+      const auto& result=state.ApproachResult;
+      signature=std::to_string(result.Visible)+':'+std::to_string(result.Phase)+':'+
+          std::to_string(result.PendingPhase.value_or(-1))+':'+std::to_string(result.Cursor)+':'+
+          std::to_string(resultHost.Text().Reveal.Revealed)+':'+std::to_string(result.Completed)+':'+std::to_string(quit);
+    }
+    if(!captureResult)for (const auto& fill : state.SceneImages.Slots.FillRects)
       signature += ':' + std::to_string(fill.Opacity / 16);
-    for (const auto& [id, actor] : state.Characters) {
+    if(!captureResult)for (const auto& [id, actor] : state.Characters) {
       if (!captureVoiced) signature += ':' + std::to_string(vm->SpriteBlink(id)->Phase);
       if (captureUntilMessage) signature += ':' + std::to_string(actor.Pose.Current) + ':' +
           std::to_string(actor.Tweens[size_t(CharacterTween::PreviousPose)].Current / 64);
@@ -1877,7 +1946,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     report.close();
     pcm.close();
     events.close();
-    if (!quit || firstMessage == UINT64_MAX || (captureUntilMessage && !targetCompleted) ||
+    if (!quit || firstMessage == UINT64_MAX || ((captureUntilMessage || captureResult) && !targetCompleted) ||
         ((captureWaitingInput || captureConfirmInput) && !targetWaitingReached) ||
         (captureConfirmInput && !confirmSent))
       throw UnsupportedCommand("scene preview budget exhausted");
