@@ -579,6 +579,36 @@ std::vector<size_t> DueParticleEmissions(const ParticleEffectProgram& program,
   }
   return result;
 }
+std::optional<ParticleDrawPacket> BuildParticleDrawPacket(const ParticleRuntimeState& state,
+    const ParticleDefinition& definition, uint32_t textureWidth, uint32_t textureHeight,
+    float groupOpacity, bool textureReady, bool batched) {
+  if (!state.Birth.Flags[0] || !textureReady) return std::nullopt;
+  const auto columns = std::bit_cast<int32_t>(definition.Bits(0x4c));
+  const auto rows = std::bit_cast<int32_t>(definition.Bits(0x50));
+  if (columns <= 0 || rows <= 0) throw FormatError("invalid particle draw grid");
+  const auto field = [&](size_t offset) { return std::bit_cast<float>(definition.Bits(offset)); };
+  const uint32_t width = textureWidth / uint32_t(columns), height = textureHeight / uint32_t(rows);
+  const float xScale = field(0x17c) == 0 ? 1.0f : state.Geometry.Scale[0] * field(0x17c);
+  const float yScale = field(0x180) == 0 ? 1.0f : state.Geometry.Scale[1] * field(0x180);
+  const float xBase = float(width) * state.Geometry.FieldDc, yBase = float(height) * state.Geometry.FieldDc;
+  ParticleDrawPacket result;
+  result.Size = {NativeUnsignedWord(double(xBase * xScale)), NativeUnsignedWord(double(yBase * yScale))};
+  const int32_t frameX = state.Frame % columns, frameY = state.Frame / columns;
+  if (batched) {
+    result.Source = {ParticleSignedWord(float(width) * float(frameX)), ParticleSignedWord(float(height) * float(frameY)),
+                     ParticleSignedWord(float(width)), ParticleSignedWord(float(height))};
+  } else {
+    result.Source = {std::bit_cast<int32_t>(width * uint32_t(frameX)), std::bit_cast<int32_t>(height * uint32_t(frameY)),
+                     std::bit_cast<int32_t>(width), std::bit_cast<int32_t>(height)};
+  }
+  result.Position = state.Motion.Position; result.Angles = state.Angles;
+  result.Bgra = state.Color.Bgra;
+  const float alpha = state.Opacity * 255.0f;
+  result.Bgra[3] = uint8_t(NativeUnsignedWord(double(alpha * groupOpacity)));
+  result.Intensity = state.Color.Intensity;
+  result.BlendMode = std::bit_cast<int32_t>(definition.Bits(0x48));
+  return result;
+}
 namespace {
 void EmitEffectRow(ParticleEffectState& state, const ParticleEffectProgram& program,
     const PreparedParticleEffects& assets, size_t row, GameRandom& random) {

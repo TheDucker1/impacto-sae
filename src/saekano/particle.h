@@ -130,6 +130,19 @@ struct ParticleRuntimeState {
 // A missing definition preserves active state; inactive returns false unchanged.
 bool AdvanceParticle(ParticleRuntimeState& state, const ParticleDefinition* definition,
                      uint64_t elapsedDelta, GameRandom& random);
+struct ParticleDrawPacket {
+  std::array<uint32_t, 2> Size{};
+  std::array<int32_t, 4> Source{};  // Cell X/Y/width/height in texture pixels.
+  std::array<float, 3> Position{}, Angles{};
+  std::array<uint8_t, 4> Bgra{};
+  float Intensity = 0;
+  int32_t BlendMode = 0;  // Native definition48; renderer state binding follows.
+};
+// Native98c8 (immediate) /9b22 (batch) fields at submission boundary. Vertex
+// projection/UV construction and batch sorting are separate consumers.
+std::optional<ParticleDrawPacket> BuildParticleDrawPacket(const ParticleRuntimeState& state,
+    const ParticleDefinition& definition, uint32_t textureWidth, uint32_t textureHeight,
+    float groupOpacity, bool textureReady, bool batched);
 struct ParticlePointEmitter {
   // Native ADD_POINT_POINT callback8000ef4c, command type5. Names are raw
   // narrow bytes. Consumer meanings/timing units of the numeric fields follow.
