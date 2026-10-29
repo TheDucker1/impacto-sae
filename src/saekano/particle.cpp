@@ -536,6 +536,20 @@ std::array<float, 14> ParticlePointEmitter::Creation(int32_t emitted,
   std::copy(position.begin(), position.end(), local.begin());
   return ComposeParticleCreation(local, owner, headerScalar);
 }
+void ParticleEmitterState::Emit(const ParticlePointEmitter& point,
+    const ParticleDefinition& definition, const std::array<float, 14>& owner,
+    const ParticleEffectHeader& header, const std::array<float, 2>& originOffset,
+    GameRandom& random) {
+  const auto creation = point.Creation(Emitted, owner, header.Scalar);
+  const auto count = std::bit_cast<int32_t>(definition.Bits(0x290));
+  for (int32_t i = 0; i < count; ++i) {
+    ParticleRuntimeState particle;
+    PrepareParticleBirth(particle.Birth, definition, header.Integers[0], creation, random, true);
+    particle.OriginOffset = originOffset;
+    Particles.push_back(std::move(particle));
+  }
+  Emitted = std::bit_cast<int32_t>(uint32_t(Emitted) + 1);
+}
 uint32_t ParticleDefinition::Bits(size_t nativeOffset) const {
   if (nativeOffset < 0x20 || nativeOffset >= 0x298 || nativeOffset % 4)
     throw FormatError("particle parameter offset outside native record");

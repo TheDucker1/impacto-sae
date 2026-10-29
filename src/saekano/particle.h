@@ -141,6 +141,15 @@ struct ParticleEffectHeader {
   float Scalar = 0;
   static ParticleEffectHeader DecodeRow(std::span<const uint8_t> bytes);
 };
+struct ParticleEmitterState {
+  int32_t Emitted = 0;
+  std::vector<ParticleRuntimeState> Particles;  // Native list traversal/birth order.
+  // Resources must already be resolved and texture-ready. Retirement does not
+  // erase entries; owner initialization and counter reset are separate actions.
+  void Emit(const ParticlePointEmitter& point, const ParticleDefinition& definition,
+      const std::array<float, 14>& owner, const ParticleEffectHeader& header,
+      const std::array<float, 2>& originOffset, GameRandom& random);
+};
 struct ParticleEffectProgram {
   ParticleEffectHeader Header;
   std::vector<ParticlePointEmitter> Points;
