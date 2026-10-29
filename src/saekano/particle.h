@@ -8,6 +8,13 @@
 #include <optional>
 
 namespace Impacto::Saekano {
+struct ParticleGroupClock {
+  static constexpr uint64_t TickMilliseconds = 16;
+  std::array<bool, 8> Paused{};
+  // Intended pause semantics: no owner update while paused; resume with one
+  // normal tick. Do not reproduce native held-time subtraction/underflow.
+  std::optional<uint64_t> Delta(size_t group) const;
+};
 struct ParticleEffectConfiguration {
   std::u16string Name;
   int32_t Parameter = 0;  // Native60-byte record+38; consumer names it later.

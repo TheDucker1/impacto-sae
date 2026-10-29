@@ -9,6 +9,11 @@
 #include <limits>
 
 namespace Impacto::Saekano {
+std::optional<uint64_t> ParticleGroupClock::Delta(size_t group) const {
+  if (group >= Paused.size()) throw FormatError("particle group outside manager");
+  if (Paused[group]) return std::nullopt;
+  return TickMilliseconds;
+}
 namespace {
 uint32_t NativeUnsignedWord(double value) {
   if (!(value > 0)) return 0;
