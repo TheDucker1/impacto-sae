@@ -21,6 +21,8 @@
 #include "widgetinput.h"
 #include "skipauto.h"
 #include "mouthselection.h"
+#include "particle.h"
+#include "particlevertexshader.h"
 #include "../io/memorystream.h"
 #include "../texture/texture.h"
 
@@ -1760,6 +1762,85 @@ int RunResultRenderStateProbe(const std::filesystem::path& output) {
     return 0;
   }catch(const std::exception& e) {
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano result render-state: %s",e.what());return 1;
+  }
+}
+int RunParticleProjectionProbe(const std::filesystem::path& fixtureDirectory,
+                               const std::filesystem::path& output) {
+  try {
+    if (std::filesystem::exists(output)) throw FormatError("choose a fresh particle projection output");
+    const auto bytes = SceneRead(fixtureDirectory / "cases.bin"); PayloadReader reader(bytes);
+    if (reader.U32() != 0x314a5250) throw FormatError("invalid particle projection fixture");
+    const auto count = reader.U32(); if (!count || count > 32) throw FormatError("particle projection case budget exceeded");
+    const auto referenceBytes = SceneRead(fixtureDirectory / "reference.vert");
+    const std::string referenceSource(referenceBytes.begin(), referenceBytes.end());
+    ViewerWindow window(true);
+    struct Program {
+      GLuint Handle = 0, Vao = 0, Input = 0, Feedback = 0;
+      Program(const char* source) {
+        const auto shader = UiBlitRenderer::Compile(GL_VERTEX_SHADER, source);
+        Handle = glCreateProgram(); glAttachShader(Handle, shader);
+        const char* outputs[]{"particleClip", "particleColor", "particleUv"};
+        glTransformFeedbackVaryings(Handle, 3, outputs, GL_INTERLEAVED_ATTRIBS);
+        glLinkProgram(Handle); glDeleteShader(shader);
+        GLint linked = 0; glGetProgramiv(Handle, GL_LINK_STATUS, &linked);
+        if (!linked) { char log[1024]{}; glGetProgramInfoLog(Handle, sizeof(log), nullptr, log); throw FormatError(log); }
+        glGenVertexArrays(1, &Vao); glGenBuffers(1, &Input); glGenBuffers(1, &Feedback);
+      }
+      ~Program() {
+        if (Feedback) glDeleteBuffers(1, &Feedback); if (Input) glDeleteBuffers(1, &Input);
+        if (Vao) glDeleteVertexArrays(1, &Vao); if (Handle) glDeleteProgram(Handle);
+      }
+      std::array<float,10> Sample(const void* vertex, size_t size, bool nativeLayout, const std::array<float,52>& uniforms) {
+        glUseProgram(Handle); glBindVertexArray(Vao); glBindBuffer(GL_ARRAY_BUFFER, Input);
+        glBufferData(GL_ARRAY_BUFFER, GLsizeiptr(size), vertex, GL_STREAM_DRAW);
+        for (GLuint attribute = 0; attribute < 5; ++attribute) {
+          glEnableVertexAttribArray(attribute);
+          if (nativeLayout) {
+            constexpr GLint components[]{3,4,2,3,3}; constexpr size_t offsets[]{0,12,16,24,36};
+            glVertexAttribPointer(attribute, components[attribute], attribute == 1 ? GL_UNSIGNED_BYTE : GL_FLOAT,
+                                  attribute == 1 ? GL_TRUE : GL_FALSE, sizeof(ParticleVertex),
+                                  reinterpret_cast<const void*>(offsets[attribute]));
+          } else glVertexAttribPointer(attribute, 4, GL_FLOAT, GL_FALSE, 20*sizeof(float),
+                                       reinterpret_cast<const void*>(size_t(attribute)*4*sizeof(float)));
+        }
+        const auto location = glGetUniformLocation(Handle, nativeLayout ? "nativeUniforms" : "referenceUniforms");
+        if (location < 0) throw FormatError("particle projection uniforms absent");
+        glUniform4fv(location, 13, uniforms.data());
+        glBindBuffer(GL_TRANSFORM_FEEDBACK_BUFFER, Feedback); glBufferData(GL_TRANSFORM_FEEDBACK_BUFFER, 10*sizeof(float), nullptr, GL_STREAM_READ);
+        glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, Feedback); glEnable(GL_RASTERIZER_DISCARD);
+        glBeginTransformFeedback(GL_POINTS); glDrawArrays(GL_POINTS, 0, 1); glEndTransformFeedback();
+        glDisable(GL_RASTERIZER_DISCARD); std::array<float,10> result;
+        glGetBufferSubData(GL_TRANSFORM_FEEDBACK_BUFFER, 0, sizeof(result), result.data());
+        GlCheck("particle projection feedback"); return result;
+      }
+    } actual(ParticleMode0VertexShader), reference(referenceSource.c_str());
+    static_assert(offsetof(ParticleVertex,Rgba)==12 && offsetof(ParticleVertex,Uv)==16 &&
+                  offsetof(ParticleVertex,Position)==24 && offsetof(ParticleVertex,Angles)==36);
+    std::ofstream report(output); if (!report) throw FormatError("cannot create particle projection report");
+    const auto scalar = [&]() { return std::bit_cast<float>(reader.U32()); };
+    for (uint32_t i = 0; i < count; ++i) {
+      ParticleProjectionUniforms uniforms;
+      for (auto* matrix : {&uniforms.View,&uniforms.Projection,&uniforms.World}) for (auto& value : *matrix) value = scalar();
+      uniforms.Aspect = scalar(); std::array<float,52> referenceUniforms; for (auto& value : referenceUniforms) value = scalar();
+      ParticleVertex vertex; for (auto& value : vertex.LocalPosition) value = scalar();
+      const auto color = reader.U32(); for (size_t j = 0; j < 4; ++j) vertex.Rgba[j] = uint8_t(color >> (j*8));
+      for (auto& value : vertex.Uv) value = scalar();
+      for (auto* values : {&vertex.Position,&vertex.Angles}) for (auto& value : *values) value = scalar();
+      std::array<float,20> referenceVertex; for (auto& value : referenceVertex) value = scalar();
+      const auto obtained = actual.Sample(&vertex,sizeof(vertex),true,uniforms.Pack());
+      const auto expected = reference.Sample(referenceVertex.data(),sizeof(referenceVertex),false,referenceUniforms);
+      report << "{\"case\":" << i << ",\"actual_bits\":[";
+      for (size_t j = 0; j < obtained.size(); ++j) { if (j) report << ','; report << std::bit_cast<uint32_t>(obtained[j]); }
+      report << "],\"reference_bits\":[";
+      for (size_t j = 0; j < expected.size(); ++j) { if (j) report << ','; report << std::bit_cast<uint32_t>(expected[j]); }
+      report << "]}\n";
+    }
+    if (reader.Remaining()) throw FormatError("trailing particle projection fixture");
+    return 0;
+  } catch (const std::exception& error) {
+    const auto diagnostic = output.string()+".error.txt";
+    if (!std::filesystem::exists(diagnostic)) { std::ofstream failure(diagnostic); failure << std::string(error.what()).substr(0,2048) << '\n'; }
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano particle projection: %s",error.what()); return 1;
   }
 }
 int RunScreenFilterProbe(const std::filesystem::path& fixtureDirectory,

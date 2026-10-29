@@ -154,6 +154,12 @@ struct ParticleVertex {
   std::array<float, 3> Position{}, Angles{};
 };
 static_assert(sizeof(ParticleVertex) == 48);
+struct ParticleProjectionUniforms {
+  std::array<float, 16> View{}, Projection{}, World{};
+  float Aspect = 0;
+  // Native GXP default uniform slots0,16,32,48; final padding is zero.
+  std::array<float, 52> Pack() const;
+};
 // Native c1818/c0ed0: centered local corners and half-texel UVs. Position and
 // rotation remain separate attributes; the vertex shader applies projection.
 std::array<ParticleVertex, 4> BuildParticleQuad(const ParticleDrawPacket& packet,

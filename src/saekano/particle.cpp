@@ -609,6 +609,14 @@ std::optional<ParticleDrawPacket> BuildParticleDrawPacket(const ParticleRuntimeS
   result.BlendMode = std::bit_cast<int32_t>(definition.Bits(0x48));
   return result;
 }
+std::array<float, 52> ParticleProjectionUniforms::Pack() const {
+  std::array<float, 52> result{};
+  std::copy(View.begin(), View.end(), result.begin());
+  std::copy(Projection.begin(), Projection.end(), result.begin() + 16);
+  std::copy(World.begin(), World.end(), result.begin() + 32);
+  result[48] = Aspect;
+  return result;
+}
 std::array<ParticleVertex, 4> BuildParticleQuad(const ParticleDrawPacket& packet,
     uint32_t textureWidth, uint32_t textureHeight) {
   if (!textureWidth || !textureHeight) throw FormatError("zero particle texture dimensions");

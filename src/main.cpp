@@ -283,6 +283,8 @@ int main(int argc, char* argv[]) {
   }
     if(argc==3 && std::string_view(argv[1])=="--saekano-result-render-state")
       return Saekano::RunResultRenderStateProbe(argv[2]);
+    if (argc == 4 && std::string_view(argv[1]) == "--saekano-particle-projection")
+      return Saekano::RunParticleProjectionProbe(argv[2], argv[3]);
     if (argc == 4 && std::string_view(argv[1]) == "--saekano-filter-check")
     return Saekano::RunScreenFilterProbe(argv[2], argv[3]);
   if (argc == 4 && std::string_view(argv[1]) == "--saekano-sdk-ui-check")
