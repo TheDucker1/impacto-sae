@@ -3,6 +3,8 @@
 #include "formats.h"
 #include <array>
 #include <string>
+#include <map>
+#include <optional>
 
 namespace Impacto::Saekano {
 struct ParticleEffectConfiguration {
@@ -33,5 +35,29 @@ struct ParticlePointEmitter {
   std::array<int32_t, 3> Integers{};
   std::array<float, 9> Values{};
   static ParticlePointEmitter DecodeRow(std::span<const uint8_t> bytes);
+};
+struct ParticleEffectHeader {
+  std::string Name;
+  std::array<int32_t, 2> Integers{};
+  float Scalar = 0;
+  static ParticleEffectHeader DecodeRow(std::span<const uint8_t> bytes);
+};
+struct ParticleEffectProgram {
+  ParticleEffectHeader Header;
+  std::vector<ParticlePointEmitter> Points;
+};
+struct ParticleEffectCatalog {
+  std::vector<ParticleEffectProgram> Programs;
+  std::map<std::string, size_t> Names;
+  std::optional<size_t> Active;
+  // Native new-name append; duplicate header clears the subsequent-row gate.
+  void AppendCsv(std::span<const uint8_t> bytes);
+};
+struct EffectResourceAssets;
+struct PreparedParticleEffects {
+  ParticleEffectCatalog Catalog;
+  std::map<std::string, ParticleDefinition> Definitions;
+  std::map<std::string, Bytes> Textures;  // Inflated original GXT, before GPU upload.
+  static PreparedParticleEffects Prepare(const EffectResourceAssets& assets);
 };
 }  // namespace Impacto::Saekano

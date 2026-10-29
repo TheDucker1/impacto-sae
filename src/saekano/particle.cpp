@@ -1,5 +1,6 @@
 #include "particle.h"
 #include "commands.h"
+#include "resources.h"
 #include <algorithm>
 #include <bit>
 #include <cerrno>
@@ -96,15 +97,20 @@ ParticleDefinition ParticleDefinition::Decode(std::span<const uint8_t> bytes) {
   result.Tail.assign(bytes.begin() + result.PrefixBytes, bytes.end());
   return result;
 }
-ParticlePointEmitter ParticlePointEmitter::DecodeRow(std::span<const uint8_t> bytes) {
+namespace {
+std::vector<std::string> ParticleFields(std::span<const uint8_t> bytes) {
   std::vector<std::string> fields;
   std::string field;
   bool quoted = false, ended = false;
-  for (uint8_t byte : bytes) {
+  for (size_t i = 0; i < bytes.size(); ++i) {
+    const auto byte = bytes[i];
     if (!byte) throw FormatError("NUL in particle CSV row");
     if (ended) {
       if (byte != '\r' && byte != '\n') throw FormatError("multiple particle CSV rows");
-    } else if (byte == '"') quoted = !quoted;
+    } else if (byte == '"') {
+      if (quoted && i + 1 < bytes.size() && bytes[i + 1] == '"') { field.push_back('"'); ++i; }
+      else quoted = !quoted;
+    }
     else if (!quoted && (byte == '\r' || byte == '\n')) ended = true;
     else if (!quoted && byte == ',') { fields.push_back(std::move(field)); field.clear(); }
     else field.push_back(char(byte));
@@ -112,30 +118,91 @@ ParticlePointEmitter ParticlePointEmitter::DecodeRow(std::span<const uint8_t> by
   if (quoted) throw FormatError("unterminated particle CSV quote");
   fields.push_back(std::move(field));
   if (!fields.empty() && fields.back().empty()) fields.pop_back();
+  return fields;
+}
+int32_t ParticleInteger(const std::string& text) {
+  char* end = nullptr; errno = 0;
+  const auto value = std::strtol(text.c_str(), &end, 10);
+  if (end == text.c_str() || *end || errno == ERANGE || value < INT32_MIN || value > INT32_MAX)
+    throw FormatError("invalid particle CSV integer");
+  return int32_t(value);
+}
+float ParticleFloat(const std::string& text) {
+  char* end = nullptr; errno = 0;
+  const auto value = std::strtod(text.c_str(), &end);
+  if (end == text.c_str() || *end || errno == ERANGE || !std::isfinite(value) ||
+      std::abs(value) > std::numeric_limits<float>::max())
+    throw FormatError("invalid particle CSV float");
+  return float(value);
+}
+}  // namespace
+ParticlePointEmitter ParticlePointEmitter::DecodeRow(std::span<const uint8_t> bytes) {
+  const auto fields = ParticleFields(bytes);
   if (fields.size() != 16 || fields[0] != "ON" || fields[1] != "ADD_POINT_POINT")
     throw FormatError("unsupported particle point row");
   ParticlePointEmitter result;
   result.ParticleName = fields[2]; result.TextureName = fields[3];
   if (result.ParticleName.empty() || result.TextureName.empty())
     throw FormatError("empty particle point resource name");
-  for (size_t i = 0; i < 3; ++i) {
-    const auto& text = fields[4 + i];
-    char* end = nullptr; errno = 0;
-    const auto value = std::strtol(text.c_str(), &end, 10);
-    if (end == text.c_str() || *end || errno == ERANGE ||
-        value < INT32_MIN || value > INT32_MAX)
-      throw FormatError("invalid particle point integer");
-    result.Integers[i] = int32_t(value);
+  for (size_t i = 0; i < 3; ++i) result.Integers[i] = ParticleInteger(fields[4 + i]);
+  for (size_t i = 0; i < 9; ++i) result.Values[i] = ParticleFloat(fields[7 + i]);
+  return result;
+}
+ParticleEffectHeader ParticleEffectHeader::DecodeRow(std::span<const uint8_t> bytes) {
+  const auto fields = ParticleFields(bytes);
+  if (fields.size() != 6 || fields[0] != "ON" || fields[1] != "EFFECT" || fields[2].empty())
+    throw FormatError("unsupported particle effect header");
+  return {fields[2], {ParticleInteger(fields[3]), ParticleInteger(fields[4])}, ParticleFloat(fields[5])};
+}
+void ParticleEffectCatalog::AppendCsv(std::span<const uint8_t> bytes) {
+  size_t start = 0;
+  bool quoted = false;
+  const auto append = [&](std::span<const uint8_t> row) {
+    const auto fields = ParticleFields(row);
+    if (fields.empty() || fields[0].empty() || fields[0] != "ON") return;
+    if (fields.size() < 2) throw FormatError("missing particle command type");
+    if (fields[1] == "EFFECT") {
+      auto header = ParticleEffectHeader::DecodeRow(row);
+      if (Names.contains(header.Name)) { Active.reset(); return; }
+      Active = Programs.size(); Names.emplace(header.Name, *Active);
+      Programs.push_back({std::move(header), {}});
+    } else if (fields[1] == "ADD_POINT_POINT") {
+      auto point = ParticlePointEmitter::DecodeRow(row);
+      if (Active) Programs.at(*Active).Points.push_back(std::move(point));
+    } else throw FormatError("unbound particle CSV command");
+  };
+  for (size_t i = 0; i < bytes.size(); ++i) {
+    if (bytes[i] == '"') {
+      if (quoted && i + 1 < bytes.size() && bytes[i + 1] == '"') ++i;
+      else quoted = !quoted;
+    } else if (!quoted && bytes[i] == '\n') {
+      append(bytes.subspan(start, i + 1 - start)); start = i + 1;
+    }
   }
-  for (size_t i = 0; i < 9; ++i) {
-    const auto& text = fields[7 + i];
-    char* end = nullptr; errno = 0;
-    const auto value = std::strtod(text.c_str(), &end);
-    if (end == text.c_str() || *end || errno == ERANGE || !std::isfinite(value) ||
-        std::abs(value) > std::numeric_limits<float>::max())
-      throw FormatError("invalid particle point float");
-    result.Values[i] = float(value);  // Native strtod then VCVT.f32.f64.
+  if (quoted) throw FormatError("unterminated particle CSV quote");
+  if (start < bytes.size()) append(bytes.subspan(start));
+}
+PreparedParticleEffects PreparedParticleEffects::Prepare(const EffectResourceAssets& assets) {
+  PreparedParticleEffects result;
+  for (const auto& file : assets.Files) {
+    std::string name(file.Name.begin(), file.Name.end());
+    while (!name.empty() && name.back() == ' ') name.pop_back();
+    const auto dot = name.rfind('.');
+    if (dot == std::string::npos) throw FormatError("particle asset has no extension");
+    const auto stem = name.substr(0, dot), extension = name.substr(dot);
+    if (extension == ".prtf") {
+      if (!result.Definitions.emplace(stem, ParticleDefinition::Decode(file.Data)).second)
+        throw FormatError("duplicate particle definition name");
+    } else if (extension == ".gxt") {
+      if (!result.Textures.emplace(stem, file.Data).second) throw FormatError("duplicate particle texture name");
+    } else if (extension == ".csv") result.Catalog.AppendCsv(file.Data);
+    else if (extension != ".fls") throw FormatError("unbound particle asset type");
   }
+  // Defer linking until every file has loaded; the archive can place CSV first.
+  for (const auto& program : result.Catalog.Programs)
+    for (const auto& point : program.Points)
+      if (!result.Definitions.contains(point.ParticleName) || !result.Textures.contains(point.TextureName))
+        throw FormatError("particle point references missing definition or texture");
   return result;
 }
 }  // namespace Impacto::Saekano
