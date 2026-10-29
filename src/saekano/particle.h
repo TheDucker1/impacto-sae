@@ -143,6 +143,19 @@ struct ParticleDrawPacket {
 std::optional<ParticleDrawPacket> BuildParticleDrawPacket(const ParticleRuntimeState& state,
     const ParticleDefinition& definition, uint32_t textureWidth, uint32_t textureHeight,
     float groupOpacity, bool textureReady, bool batched);
+struct ParticleBatchCandidate {
+  const ParticleRuntimeState* Particle = nullptr;
+  std::optional<size_t> TextureIndex;  // Index in the owner's native texture order.
+};
+struct ParticleTextureBatch {
+  size_t TextureIndex = 0;
+  bool Translucent = false;
+  std::vector<size_t> Candidates;  // Indices in the input traversal order.
+};
+// Native d670/d5c2/d456: retain first300 collected entries, partition by the
+// twice-truncated alpha, reproduce depth-sort ties, then emit per-texture lists.
+std::vector<ParticleTextureBatch> BuildParticleBatches(
+    std::span<const ParticleBatchCandidate> candidates, size_t textureCount, float groupOpacity);
 struct ParticlePointEmitter {
   // Native ADD_POINT_POINT callback8000ef4c, command type5. Names are raw
   // narrow bytes. Consumer meanings/timing units of the numeric fields follow.

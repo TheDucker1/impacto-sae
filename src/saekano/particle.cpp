@@ -609,6 +609,47 @@ std::optional<ParticleDrawPacket> BuildParticleDrawPacket(const ParticleRuntimeS
   result.BlendMode = std::bit_cast<int32_t>(definition.Bits(0x48));
   return result;
 }
+std::vector<ParticleTextureBatch> BuildParticleBatches(
+    std::span<const ParticleBatchCandidate> candidates, size_t textureCount, float groupOpacity) {
+  candidates = candidates.first(std::min<size_t>(candidates.size(), 300));
+  std::array<std::vector<size_t>, 2> passes;
+  for (size_t i = 0; i < candidates.size(); ++i) {
+    if (!candidates[i].Particle) throw FormatError("missing particle batch candidate");
+    const auto alpha = ParticleSignedWord(candidates[i].Particle->Opacity * 255.0f);
+    const bool translucent = ParticleSignedWord(float(alpha) * groupOpacity) != 255;
+    passes[size_t(translucent)].push_back(i);
+  }
+  const auto depth = [&](size_t index) { return candidates[index].Particle->Motion.Position[2]; };
+  const auto sort = [&](auto&& self, std::vector<size_t>& list, int32_t begin, int32_t end) -> void {
+    int32_t left = begin, right = end;
+    const float pivot = depth(list[size_t((begin + end) / 2)]);
+    while (true) {
+      if (depth(list[size_t(left)]) < pivot) { ++left; continue; }
+      while (pivot < depth(list[size_t(right)])) --right;
+      if (left >= right) break;
+      std::swap(list[size_t(left)], list[size_t(right)]); ++left; --right;
+    }
+    if (begin < left - 1) self(self, list, begin, left - 1);
+    if (right + 1 < end) self(self, list, right + 1, end);
+  };
+  std::vector<ParticleTextureBatch> result;
+  for (size_t pass = 0; pass < passes.size(); ++pass) {
+    auto& list = passes[pass];
+    if (list.empty()) continue;
+    sort(sort, list, 0, int32_t(list.size()) - 1);
+    if (pass == 0) std::reverse(list.begin(), list.end());
+    for (size_t texture = 0; texture < textureCount; ++texture) {
+      ParticleTextureBatch batch{texture, pass != 0, {}};
+      for (const auto index : list) {
+        const auto& candidate = candidates[index];
+        if (candidate.Particle->Birth.Flags[0] && candidate.TextureIndex == texture)
+          batch.Candidates.push_back(index);
+      }
+      if (!batch.Candidates.empty()) result.push_back(std::move(batch));
+    }
+  }
+  return result;
+}
 namespace {
 void EmitEffectRow(ParticleEffectState& state, const ParticleEffectProgram& program,
     const PreparedParticleEffects& assets, size_t row, GameRandom& random) {
