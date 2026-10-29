@@ -525,6 +525,17 @@ bool AdvanceParticle(ParticleRuntimeState& state, const ParticleDefinition* defi
   if (birth.Elapsed >= lifetime) birth.Flags[0] = false;
   return true;
 }
+std::array<float, 14> ParticlePointEmitter::Creation(int32_t emitted,
+    const std::array<float, 14>& owner, float headerScalar) const {
+  // Native186bc4 defaults, then ADD_POINT_POINT overrides position only in
+  // the local14 block. Its from/to triples feed Origin separately.
+  std::array<float, 14> local{};
+  local[9] = local[13] = 1.0f;
+  const std::array<float, 3> pivot{Values[0], Values[1], Values[2]};
+  const auto position = TransformParticleEmitterPosition(Origin(emitted), pivot, {0, 0, 0});
+  std::copy(position.begin(), position.end(), local.begin());
+  return ComposeParticleCreation(local, owner, headerScalar);
+}
 uint32_t ParticleDefinition::Bits(size_t nativeOffset) const {
   if (nativeOffset < 0x20 || nativeOffset >= 0x298 || nativeOffset % 4)
     throw FormatError("particle parameter offset outside native record");

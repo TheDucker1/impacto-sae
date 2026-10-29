@@ -132,6 +132,8 @@ struct ParticlePointEmitter {
   static ParticlePointEmitter DecodeRow(std::span<const uint8_t> bytes);
   // Native creation type5: base + from + (to-from)*emitted/count, f32 stages.
   std::array<float, 3> Origin(int32_t emitted) const;
+  std::array<float, 14> Creation(int32_t emitted,
+      const std::array<float, 14>& owner, float headerScalar) const;
 };
 struct ParticleEffectHeader {
   std::string Name;
