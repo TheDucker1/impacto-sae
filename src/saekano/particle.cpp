@@ -606,7 +606,7 @@ std::optional<ParticleDrawPacket> BuildParticleDrawPacket(const ParticleRuntimeS
   const float alpha = state.Opacity * 255.0f;
   result.Bgra[3] = uint8_t(NativeUnsignedWord(double(alpha * groupOpacity)));
   result.Intensity = state.Color.Intensity;
-  result.BlendMode = std::bit_cast<int32_t>(definition.Bits(0x48));
+  result.RenderMode = std::bit_cast<int32_t>(definition.Bits(0x48));
   return result;
 }
 ParticleBlendConfiguration ParticleBlend(size_t index) {

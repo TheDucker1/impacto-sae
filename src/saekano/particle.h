@@ -136,7 +136,7 @@ struct ParticleDrawPacket {
   std::array<float, 3> Position{}, Angles{};
   std::array<uint8_t, 4> Bgra{};
   float Intensity = 0;
-  int32_t BlendMode = 0;  // Native definition48; renderer state binding follows.
+  int32_t RenderMode = 0;  // Definition48 selects shader mode, not blend factors.
 };
 // Native98c8 (immediate) /9b22 (batch) fields at submission boundary. Vertex
 // projection/UV construction and batch sorting are separate consumers.
