@@ -20,6 +20,17 @@ uint32_t ParticleNominalLifetime(int32_t authoredTicks) {
   const float product = float(authoredTicks) * std::bit_cast<float>(0x4184cccdu);
   return NativeUnsignedWord(double(product));
 }
+std::array<float, 14> ComposeParticleCreation(const std::array<float, 14>& local,
+    const std::array<float, 14>& owner, float headerScalar) {
+  std::array<float, 14> result;
+  for (size_t i = 0; i < 14; ++i) {
+    if (i == 9) {
+      const float product = local[i] * owner[i];
+      result[i] = product * headerScalar;
+    } else result[i] = local[i] + owner[i];
+  }
+  return result;
+}
 bool PrepareParticleBirthPrefix(ParticleBirthPrefix& state,
     const ParticleDefinition& definition, int32_t authoredTicks,
     const std::array<float, 14>& creation, GameRandom& random, bool textureReady) {

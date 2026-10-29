@@ -39,6 +39,10 @@ struct ParticleBirthPrefix {
   uint32_t NominalMilliseconds = 0;
   uint64_t LifetimeMilliseconds = 0;  // Native instance f8/fc.
 };
+// Native1660 tail2fcc..30ba: compose an already transformed local block with
+// effect-owner34..68. Header scalar multiplies scale slot9 after the owner.
+std::array<float, 14> ComposeParticleCreation(const std::array<float, 14>& local,
+    const std::array<float, 14>& owner, float headerScalar);
 uint32_t ParticleNominalLifetime(int32_t authoredTicks);
 // The native birth prefix before rotation/velocity/scale setup. Missing texture
 // returns false without changing existing state or consuming random words.
