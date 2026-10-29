@@ -16,4 +16,14 @@ struct ParticleEnvironment {
   // Native801d45b8: flags, float, counted UTF16/word records.
   static ParticleEnvironment Decode(std::span<const uint8_t> bytes);
 };
+struct ParticleDefinition {
+  // Native80183390 fills offsets20..294 of a298-byte parameter object. Keep
+  // exact bits until individual simulation/draw consumers establish field names.
+  std::array<uint32_t, 158> Parameters{};
+  std::array<int32_t, 10> SectionVersions{};
+  size_t PrefixBytes = 0;
+  Bytes Tail;  // Native reader leaves the authored file suffix unread.
+  uint32_t Bits(size_t nativeOffset) const;
+  static ParticleDefinition Decode(std::span<const uint8_t> bytes);
+};
 }  // namespace Impacto::Saekano
