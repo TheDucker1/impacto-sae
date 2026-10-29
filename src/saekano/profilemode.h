@@ -19,6 +19,8 @@ void InitializeFreshProfileEntry(
 // host.
 class ProfileServices : public ProfileResultText {
  public:
+  // The VM supplies its existing owner only at an actual outer-mode entry.
+  virtual void BindOwnerPresentation(SemanticState&, uint64_t) {}
   virtual void BeginMenu(int32_t scene, uint8_t textSpeed) = 0;
   virtual bool MenuReady() const = 0;
   virtual const ProfileScene& Scene() const = 0;

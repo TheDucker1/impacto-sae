@@ -850,6 +850,8 @@ Bytes SceneRead(const std::filesystem::path& path) {
   if (!file) throw FormatError("cannot open scene input: " + path.string());
   return Bytes{std::istreambuf_iterator<char>(file), {}};
 }
+#include "desktopprofile.inc"
+
 // An ordinary-dialogue frontend. Unbound auxiliary/effect passes are
 // reported explicitly; this is not yet the complete scenario renderer.
 int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
@@ -869,10 +871,17 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   const bool capture = !captureDirectory.empty();
   const bool captureParticles=captureMenuInput==4;
   const bool captureChapter=captureMenuInput==7;
-  const bool captureResult=captureMenuInput==5 || captureMenuInput==6 || captureChapter;
+  const bool captureProfile=captureMenuInput==8;
+  const bool captureResult=captureMenuInput==5 || captureMenuInput==6 || captureChapter || captureProfile;
   const bool captureResultPointer=captureMenuInput==6;
   std::vector<std::array<size_t,2>> choicePlan;size_t choicePlanIndex=0;
-  if(!capturePlan.empty()) {
+  std::array<size_t,2> profileChoice{};
+  if(captureProfile) {
+    std::ifstream plan(capturePlan);size_t extra=0;
+    if(!(plan>>profileChoice[0]>>profileChoice[1]) || profileChoice[0]>=4 || profileChoice[1]>=10 || (plan>>extra) || !plan.eof())
+      throw FormatError("profile capture requires one explicit ordinal/selector plan row");
+  }
+  if(!capturePlan.empty() && !captureProfile) {
     if(!capture || !captureResult)throw FormatError("choice plan requires a result capture");
     std::ifstream plan(capturePlan);if(!plan)throw FormatError("cannot read capture choice plan");
     size_t parent=0,child=0;
@@ -938,6 +947,12 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   ArchiveApproachResultHost resultHost(resources,missionVoice,skipAuto,format,timing,
       resultVisual,font.Cached(),metrics,uint32_t(utility.Size),font.NominalSize());
   SceneMessageBackend backend(format, timing, *owner.TextSpeed, owner.AutoSpeed);
+  PlaybackProfileVoice profileVoice(playback,10,1.0f);
+  ArchiveProfileServices profileServices(resources,ScriptNameIndex::FromFirstArchive(SceneRead(root/"first.dat")),
+      format,timing,&profileVoice);
+  SceneProfilePresenter profilePresenter(root,resources,renderer,fontTextures,font,profileServices,profileVoice,playback);
+  backend.ProfileConsumer=&profileServices;backend.ProfileSettings=profilePresenter.settings;
+  backend.ModeResultSettings=profilePresenter.shared;
   backend.ApproachResultSettings=ApproachResultEnvironment::Decode(SceneRead(root/"env/env_approach.dat"));
   backend.ResultConsumer=&resultHost;
   backend.ChapterSettings=ChapterEnvironment::Decode(SceneRead(root/"env/env_script.dat"));
@@ -984,6 +999,9 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   bool captureActive = !captureFromCommand && !captureConfirmInput && !captureParticles && !captureResult;
   bool resultConfirmationDue=false,resultConfirmationSent=false,resultCompleted=false;
   bool chapterCompleted=false;
+  bool profileActive=false,profileReturned=false;
+  std::ofstream profileFrames;
+  std::string profileSignature;uint64_t profileLastSaved=0;size_t profileSaved=0;
   size_t resultPointerCaptureStage=0;
   bool confirmDue=false,confirmSent=false;
   bool menuMissionDue=false,menuMissionSent=false;
@@ -1033,6 +1051,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     events.open(captureDirectory / "scene-events.jsonl");
     if (!report || !pcm || !events)
       throw FormatError("cannot create scene capture output");
+    if(captureProfile){profileFrames.open(captureDirectory/"profile-frames.jsonl");if(!profileFrames)throw FormatError("cannot create profile frame output");}
   }
   const auto drawSprite = [&](const UiSpriteBlit& sprite) {
     renderer.DrawQuad(sprite, renderer.Textures.at(sprite.Texture), false);
@@ -1079,7 +1098,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   std::vector<WidgetEventHistory> menuParents,menuChildren,menuArrows;
   std::pair<int32_t,int32_t> menuIdentity{-1,-1};
   int32_t menuChildParent=-1;
-  const uint32_t frameBudget = captureChapter?200000:(captureParticles || captureResult)?100000:(captureFromCommand ? (captureBranch?40000:20000) : 2000);
+  const uint32_t frameBudget = (captureChapter || captureProfile)?220000:(captureParticles || captureResult)?100000:(captureFromCommand ? (captureBranch?40000:20000) : 2000);
   for (uint32_t frame = 0; !quit && (!capture || frame < frameBudget); ++frame) {
     const uint64_t now =
         capture ? uint64_t(frame) * 16 : SDL_GetTicks() - epoch;
@@ -1088,6 +1107,14 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     CommandInput input;
     SkipAutoInput policyInput;
     SDL_Event event;
+    if(captureProfile && vm->CurrentProfile()) {
+      const auto key=profilePresenter.CaptureKey(*vm->CurrentProfile(),profileChoice,now);
+      if(key)for(const auto type:{SDL_EVENT_KEY_DOWN,SDL_EVENT_KEY_UP}) {
+        SDL_Event e{};e.type=type;e.key.windowID=SDL_GetWindowID(window.Window);e.key.key=key;e.key.down=type==SDL_EVENT_KEY_DOWN;
+        SdlCheck(SDL_PushEvent(&e),"profile capture explicit keyboard input");
+        if(type==SDL_EVENT_KEY_DOWN)events << "{\"kind\":\"profile_input\",\"now\":" << now << ",\"source\":\"SDL_key\",\"key\":" << key << "}\n";
+      }
+    }
     if(capture && captureMenuInput) {
       const auto& menu=vm->State().ApproachSelection;
       if(captureBranch && menu.Visible) {
@@ -1215,6 +1242,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
           (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE &&
            !vm->State().ApproachSelection.Visible))
         quit = true;
+      if(vm->CurrentProfile()){profilePresenter.Handle(event,input.Profile);continue;}
       if(event.type==SDL_EVENT_KEY_DOWN && !event.key.repeat && vm->State().ApproachSelection.Visible) {
         input.Approach.Previous|=event.key.key==SDLK_UP;
         input.Approach.Next|=event.key.key==SDLK_DOWN;
@@ -1258,6 +1286,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     // no restored read history. History eligibility is an explicit false input
     // for this fresh-unread preview; a loaded-history owner must supply its lookup.
     // Policy consumes prior widget samples before this frame's updates.
+    if(vm->CurrentProfile())profilePresenter.BeforeStep(input.Profile,now);
+    if(!vm->CurrentProfile()) {
     policyInput.AutoHeld = autoKeyHeld;
     policyInput.SkipHeld = skipKeysHeld[0] || skipKeysHeld[1];
     policyInput.SkipButtonReleased = sceneInput.Query(
@@ -1358,6 +1388,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       if (pointerAdvance)
         events << "{\"kind\":\"pointer_advance\",\"frame\":" << frame << "}\n";
     }
+    }
     playback.Update(float(now - previous) / 1000.0f);
     if (capture && now > previous) {
       std::vector<int16_t> samples(size_t(now - previous) * 96);
@@ -1383,8 +1414,13 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         ++choicePlanIndex;
       }
       if(captureParticles && particleCaptureRequested)captureActive=true;
-      if(captureResult && !captureChapter && step.Opcode==0x3f8)captureActive=true;
+      if(captureResult && !captureChapter && !captureProfile && step.Opcode==0x3f8)captureActive=true;
       if(captureChapter && step.Opcode==0x3ec)captureActive=true;
+      if(captureProfile && step.Opcode==0x3ed)captureActive=true;
+      if(step.Boundary==VmBoundary::ProfileDestinationLoaded) {
+        profileReturned=true;profileActive=false;
+        if(capture && captureActive)events << "{\"kind\":\"profile_destination\",\"now\":" << now << ",\"script\":" << step.Script << ",\"command\":" << step.Command << "}\n";
+      }
       if(capture && captureActive && step.Opcode==0x3ec) {
         const auto* chapter=vm->CurrentChapter();
         if(chapter && chapter->Started)events << "{\"kind\":\"chapter_state\",\"now\":" << now
@@ -1424,7 +1460,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         firstMessage = now;
         laidOut = false;
         capturePointerStage = 0;
-        if((captureResult && !captureChapter && resultCompleted) || (captureChapter && chapterCompleted)){targetCompleted=true;quit=true;}
+        if((captureResult && !captureChapter && !captureProfile && resultCompleted) || (captureChapter && chapterCompleted) ||
+            (captureProfile && profileReturned)){targetCompleted=true;quit=true;}
         break;
       }
       if(captureResult && step.Opcode==0x3f8 && step.Boundary==VmBoundary::CommandCompletedBeforeDispatch)
@@ -1469,7 +1506,11 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       events << "]}\n";
     }
     particleRequests.clear();
-    particles.Update();  // Native749fe: fixed16ms after command work, before drawing.
+    if(const auto* mode=vm->CurrentProfile()) {
+      if(!profileActive){profilePresenter.Begin();profileActive=true;}
+      profilePresenter.AfterStep(*mode,now);
+    }
+    if(!vm->CurrentProfile())particles.Update();  // Native749fe: scene manager owns this update.
     for (const auto& request : vm->TakeEvents()) {
       if(request.Kind==GameEventKind::Trophy) {
         if(request.Id<0)throw FormatError("invalid trophy request");
@@ -1485,6 +1526,26 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         events << "{\"kind\":\"audio\",\"frame\":" << frame
                << ",\"now\":" << now << ",\"event\":" << int(request.Kind)
                << ",\"id\":" << request.Id << "}\n";
+    }
+    if(const auto* mode=vm->CurrentProfile()) {
+      if(!capture || captureActive) {
+        int w=0,h=0;SdlCheck(SDL_GetWindowSizeInPixels(window.Window,&w,&h),"profile scene viewport");
+        profilePresenter.Draw(*mode,vm->State(),w,h);
+        const auto signature=profilePresenter.Signature(*mode);
+        if(captureProfile && (signature!=profileSignature || now-profileLastSaved>=2000)) {
+          const auto file="profile-"+std::to_string(profileSaved++)+".bmp";
+          Capture(captureDirectory/file,w,h);profilePresenter.Write(profileFrames,*mode,vm->State(),now,file);
+          profileSignature=signature;profileLastSaved=now;
+        }
+        if(capture && captureActive)events << "{\"kind\":\"profile_state\",\"now\":" << now
+          << ",\"mode_id\":" << vm->State().OtakuMode << ",\"phase\":" << mode->Phase()
+          << ",\"ordinal\":" << mode->Selection().Ordinal << ",\"selector\":" << mode->Selection().Selectors.at(mode->Selection().Ordinal)
+          << ",\"result_revealed\":" << profileServices.ResultText().Revealed << ",\"response_revealed\":" << profileServices.ResponseText().Revealed
+          << ",\"voice_stopped\":" << profileVoice.Stopped() << "}\n";
+        SdlCheck(SDL_GL_SwapWindow(window.Window),"profile scene swap");
+      }
+      if(!capture)SDL_Delay(16);
+      continue;
     }
     const auto spriteClock = capture ? uint32_t(now) : uint32_t(SDL_GetTicks());
     if (capture && captureActive)

@@ -389,9 +389,10 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
     state_.OtakuMode = reader.I32();
     // Native decoder8007de52 consumes only this word; original records also
     // carry six trailing bytes that are not decoded as profile fields.
-    state_.PendingEvents.push_back({GameEventKind::PauseChannel, 0, {}, 1});
+    // 9e818 -> aa8ac -> b7168 -> ce880 sets attached fade-out milliseconds.
+    state_.PendingEvents.push_back({GameEventKind::SetBgmFadeDuration, 0, {}, 1});
     state_.PendingEvents.push_back({GameEventKind::PumpAudio, 0});
-    state_.PendingEvents.push_back({GameEventKind::StopBgm, 0});
+    state_.PendingEvents.push_back({GameEventKind::StopBgm, 0, {}, 1});
     state_.PendingEvents.push_back({GameEventKind::StopSe, 2});
     state_.PendingEvents.push_back({GameEventKind::StopSe, 3});
   } else if (opcode == 0x3ec && !lane) {
@@ -792,6 +793,7 @@ VmEvent VirtualMachine::Step(uint64_t now, const CommandInput& input) {
         throw UnsupportedCommand("owning profile resources and environment are unavailable");
       // Command Update requests outer entry; it does not run the new mode in
       // that same manager update or mark the command complete.
+      services->BindOwnerPresentation(state_,now);
       profile_ = std::make_unique<ProfileMode>(state_, *services, *environment, *shared, now);
       boundary_ = VmBoundary::WaitingInput;
       return Event(boundary_);

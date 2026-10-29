@@ -13,6 +13,9 @@ ArchiveProfileServices::ArchiveProfileServices(GameResources& resources,
       format_(std::move(format)),
       timing_(std::move(timing)),
       voice_(voiceOutput ? voiceOutput : &clockedVoice_) {}
+void ArchiveProfileServices::BindOwnerPresentation(SemanticState& state,uint64_t now) {
+  InitializeActorBlink(uint32_t(now),state.Random);
+}
 void ArchiveProfileServices::BeginMenu(int32_t scene, uint8_t textSpeed) {
   if (scene < 0) throw FormatError("negative profile scene");
   // Validate the option before loading textures. Never default captured inputs.

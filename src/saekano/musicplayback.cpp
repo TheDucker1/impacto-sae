@@ -343,6 +343,12 @@ void MusicPlayback::Submit(const GameEvent& event) {
       impl_->OutgoingBgmSerial=impl_->CurrentBgmSerial;impl_->CurrentBgmSerial=0;
       impl_->BeginOutgoingFade(uint32_t(event.Parameter));
     }
+  } else if(event.Kind==GameEventKind::SetBgmFadeDuration) {
+    if(event.Id!=0 || event.Parameter<0)throw UnsupportedCommand("invalid BGM attached fade duration request");
+    impl_->BgmFadeOutDuration=uint32_t(event.Parameter);
+  } else if(event.Kind==GameEventKind::PumpAudio) {
+    if(event.Id!=0 || event.Parameter)throw UnsupportedCommand("invalid audio service pump request");
+    Update(0); // Service work at the already sampled scene clock; no fabricated elapsed time.
   } else if (event.Kind == GameEventKind::PlaySe) {
     if (!impl_->Sounds || !event.Se || event.Se->Track != event.Id)
       throw FormatError("invalid typed SE request or missing SE bank");

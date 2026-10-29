@@ -24,7 +24,7 @@
 
 namespace Impacto::Saekano {
 
-enum class GameEventKind { Sound, Effect, Trophy, StopBgm, StopChannel, PlayBgm, StopSe, PlaySe, PauseChannel, PumpAudio };
+enum class GameEventKind { Sound, Effect, Trophy, StopBgm, StopChannel, PlayBgm, StopSe, PlaySe, PauseChannel, PumpAudio, SetBgmFadeDuration };
 struct GameEvent {
   GameEventKind Kind;
   int32_t Id;

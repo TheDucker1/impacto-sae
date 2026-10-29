@@ -19,6 +19,7 @@ class ArchiveProfileServices final : public ProfileServices {
   ArchiveProfileServices(const ArchiveProfileServices&) = delete;
   ArchiveProfileServices& operator=(const ArchiveProfileServices&) = delete;
   void BeginMenu(int32_t scene, uint8_t textSpeed) override;
+  void BindOwnerPresentation(SemanticState& state,uint64_t now) override;
   bool MenuReady() const override { return menuReady_; }
   const ProfileScene& Scene() const override { return scene_; }
   const ScriptNameIndex& Scripts() const override { return scripts_; }
