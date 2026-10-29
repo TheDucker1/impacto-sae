@@ -57,6 +57,30 @@ struct ParticleMatrixSetup {
 };
 ParticleMatrixSetup PrepareParticleMatrix(const ParticleDefinition& definition,
     const std::array<float, 14>& creation, GameRandom& random);
+struct ParticleColorSetup {
+  std::array<uint8_t, 3> Bgr{};  // Native50..52; byte53 is not written.
+  float Intensity = 0;  // Native54, independent of byte color normalization.
+};
+ParticleColorSetup PrepareParticleColor(const ParticleDefinition& definition,
+                                      const std::array<float, 14>& creation);
+struct ParticleBirthState {
+  ParticleBirthPrefix Prefix;
+  ParticleRotationSetup Rotation;
+  ParticleMatrixSetup Transform;
+  std::array<float, 3> Acceleration{};  // Native44..4c.
+  ParticleColorSetup Color;
+  float Field58 = 0, Field5c = 0;
+  std::array<float, 4> Fields70{};
+  std::array<float, 2> Fields90{};
+  uint64_t Elapsed = 0;  // Nativef0/f4, initialized here; aging consumer follows.
+  std::array<uint32_t, 4> Counters{};  // Nativee8/104/184/188.
+  std::array<bool, 2> Flags{};  // Native100/101.
+};
+// Missing texture preserves state and RNG, as in800a7e66. Resource handles stay
+// with the owner; this value contains the state initialized by successful birth.
+bool PrepareParticleBirth(ParticleBirthState& state,
+    const ParticleDefinition& definition, int32_t authoredTicks,
+    const std::array<float, 14>& creation, GameRandom& random, bool textureReady);
 struct ParticlePointEmitter {
   // Native ADD_POINT_POINT callback8000ef4c, command type5. Names are raw
   // narrow bytes. Consumer meanings/timing units of the numeric fields follow.

@@ -155,6 +155,72 @@ ParticleMatrixSetup PrepareParticleMatrix(const ParticleDefinition& definition,
   result.Scalar = ParticleAddProduct(field(0x84), field(0x88), finalSample);
   return result;
 }
+namespace {
+int32_t ParticleSignedWord(float value) {
+  if (std::isnan(value)) return 0;
+  if (double(value) >= double(INT32_MAX)) return INT32_MAX;
+  if (double(value) <= double(INT32_MIN)) return INT32_MIN;
+  return int32_t(value);
+}
+}
+ParticleColorSetup PrepareParticleColor(const ParticleDefinition& definition,
+                                      const std::array<float, 14>& creation) {
+  const auto field = [&](size_t offset) { return std::bit_cast<float>(definition.Bits(offset)); };
+  const auto integer = [&](size_t offset) { return std::bit_cast<int32_t>(definition.Bits(offset)); };
+  volatile float attenuation = std::abs(field(0x1c4)) * .25f;
+  const float factor = 1.0f - attenuation;
+  const bool negative = field(0x1c4) < 0;
+  std::array<int32_t, 3> channels;
+  for (size_t axis = 0; axis < 3; ++axis) {
+    const auto a = integer(0x184 + axis * 4), b = integer(0x194 + axis * 4);
+    const auto scaled = ParticleSignedWord(float(negative ? b : a) * factor);
+    const auto sum = std::bit_cast<int32_t>(uint32_t(scaled) + uint32_t(negative ? a : b));
+    const float gain = float(integer(0x278 + axis * 4)) / 250.0f;
+    const float product = float(sum) * gain;
+    channels[axis] = ParticleSignedWord(product * creation[10 + axis]);
+  }
+  const float alpha = negative ? ParticleAddProduct(field(0x190), field(0x1a0), factor)
+                               : ParticleAddProduct(field(0x1a0), field(0x190), factor);
+  ParticleColorSetup result;
+  result.Intensity = (alpha + 0.0f) * field(0x284);
+  const auto maximum = *std::max_element(channels.begin(), channels.end());
+  // Native divides by zero for black and VCVT then produces zero. Avoid that
+  // invalid arithmetic explicitly, preserving the resulting black color.
+  if (maximum != 0) {
+    const float gain = 255.0f / float(maximum);
+    for (size_t axis = 0; axis < 3; ++axis)
+      result.Bgr[2 - axis] = uint8_t(NativeUnsignedWord(double(float(channels[axis]) * gain)));
+  }
+  return result;
+}
+bool PrepareParticleBirth(ParticleBirthState& state,
+    const ParticleDefinition& definition, int32_t authoredTicks,
+    const std::array<float, 14>& creation, GameRandom& random, bool textureReady) {
+  if (!textureReady) return false;
+  const auto field = [&](size_t offset) { return std::bit_cast<float>(definition.Bits(offset)); };
+  const auto sample = [&](size_t base, size_t gain, size_t mean) {
+    const float normal = random.Normal(field(mean), 1.0f);
+    return ParticleAddProduct(field(base), field(gain), normal);
+  };
+  ParticleBirthState next;
+  PrepareParticleBirthPrefix(next.Prefix, definition, authoredTicks, creation, random, true);
+  next.Rotation = PrepareParticleRotation(definition, random);
+  next.Transform = PrepareParticleMatrix(definition, creation, random);
+  const float acceleration = sample(0x74, 0x78, 0x7c) * std::bit_cast<float>(0x3dc8b439u);
+  next.Acceleration = TransformParticleVector(next.Transform.Matrix, {0, acceleration, 0});
+  next.Color = PrepareParticleColor(definition, creation);
+  next.Field58 = field(0x274);
+  next.Fields70[0] = sample(0x14c, 0x150, 0x15c);
+  next.Fields70[1] = sample(0x154, 0x158, 0x15c);
+  next.Fields70[2] = sample(0x164, 0x168, 0x174);
+  next.Fields70[3] = sample(0x16c, 0x170, 0x174);
+  if (definition.Bits(0x234) == 1) next.Field5c = float(random.Range(0, 100)) / 100.0f;
+  next.Fields90[0] = sample(0xb4, 0xb8, 0xbc);
+  next.Fields90[1] = sample(0xa4, 0xa8, 0xac);
+  next.Flags = {true, true};
+  state = next;
+  return true;
+}
 uint32_t ParticleDefinition::Bits(size_t nativeOffset) const {
   if (nativeOffset < 0x20 || nativeOffset >= 0x298 || nativeOffset % 4)
     throw FormatError("particle parameter offset outside native record");
