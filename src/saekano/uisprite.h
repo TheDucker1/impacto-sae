@@ -82,6 +82,9 @@ enum class UiRenderKind {
 struct UiRenderCommand {
   UiRenderKind Kind = UiRenderKind::ResetDepthStencilBackground;
   int32_t Mode = 0;
+  // Native depth/alpha services carry a separate enable byte. Older producers
+  // omitted it; new result commands preserve it explicitly.
+  std::optional<bool> TestEnabled;
   std::array<int32_t, 4> Rectangle{};
   std::array<uint8_t, 4> Color{};
   UiSpriteBlit Sprite;
@@ -111,6 +114,15 @@ struct MessageCursorEnvironment {
   size_t PrefixBytes = 0;
   static MessageCursorEnvironment Decode(std::span<const uint8_t> message);
 };
+struct ApproachResultState;
+// Native74daa result section. Layers precede the result text; overlays follow
+// it. Character is the loaded approach bank ID, not speaker/model/scene ordinal.
+std::vector<UiRenderCommand> BuildApproachResultLayers(
+    const ModeResultVisualEnvironment& environment,const ApproachResultState& result,
+    int32_t character,int32_t canvasWidth,int32_t canvasHeight);
+std::vector<UiSpriteBlit> BuildApproachResultOverlays(
+    const ModeResultVisualEnvironment& environment,const MessageCursorEnvironment& cursors,
+    const ApproachResultState& result,float cursorOffset);
 struct OrdinaryMessageEnvironment {
   std::array<int32_t, 4> HitRegion{};
   std::array<UiSpriteDefinition, 2> Frame;

@@ -315,6 +315,7 @@ void WriteUiCommand(std::ostream& out, const UiRenderCommand& command) {
     return;
   }
   out << "{\"kind\":" << int(command.Kind) << ",\"mode\":" << command.Mode;
+  if(command.TestEnabled)out << ",\"enabled\":" << *command.TestEnabled;
   if (command.Kind == UiRenderKind::Rectangle) {
     out << ",\"rectangle\":[";
     for (size_t i = 0; i < 4; ++i) {
@@ -542,14 +543,17 @@ void main(){
         case UiRenderKind::AlphaTest:
           if (command.Mode != 3 && command.Mode != 6)
             throw UnsupportedCommand("unsupported profile alpha comparison");
-          glUniform1i(AlphaMode, command.Mode);
+          glUniform1i(AlphaMode, command.TestEnabled.value_or(true)?command.Mode:0);
           break;
         case UiRenderKind::DepthTest:
           if (command.Mode != 0 && command.Mode != 5)
             throw UnsupportedCommand("unsupported profile depth comparison");
-          glEnable(GL_DEPTH_TEST);
-          glDepthMask(GL_TRUE);
-          glDepthFunc(command.Mode == 0 ? GL_NEVER : GL_LEQUAL);
+          if(command.TestEnabled.value_or(true)) {
+            glEnable(GL_DEPTH_TEST);glDepthMask(GL_TRUE);
+            glDepthFunc(command.Mode == 0 ? GL_NEVER : GL_LEQUAL);
+          } else {
+            glDisable(GL_DEPTH_TEST);glDepthMask(GL_FALSE);glDepthFunc(GL_ALWAYS);
+          }
           break;
         case UiRenderKind::Rectangle: {
           UiSpriteBlit solid;
@@ -1726,6 +1730,36 @@ int RunSceneSdkUiProbe(const std::filesystem::path& usrdir,
   }catch(const std::exception& error) {
     if(created){std::ofstream out(captureDirectory/"error.txt");out << std::string(error.what()).substr(0,2048);}
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano SDK/UI: %s",error.what());return 1;
+  }
+}
+int RunResultRenderStateProbe(const std::filesystem::path& output) {
+  try {
+    if(std::filesystem::exists(output))throw FormatError("choose fresh result renderer-state output");
+    ViewerWindow window(true,true);UiBlitRenderer renderer;std::ofstream report(output);
+    if(!report)throw FormatError("cannot create result renderer-state output");
+    renderer.Draw({},1000,800);report << "{\"states\":[";bool first=true;
+    const auto sample=[&](UiRenderKind kind,int32_t mode,bool enabled) {
+      UiRenderCommand c;c.Kind=kind;c.Mode=mode;c.TestEnabled=enabled;
+      renderer.Execute(std::span<const UiRenderCommand>(&c,1));
+      GLboolean write=GL_FALSE;GLint depth=0,alpha=0;
+      glGetBooleanv(GL_DEPTH_WRITEMASK,&write);glGetIntegerv(GL_DEPTH_FUNC,&depth);
+      glGetUniformiv(renderer.Program,renderer.AlphaMode,&alpha);GlCheck("result render-state query");
+      if(kind==UiRenderKind::DepthTest) {
+        if(bool(glIsEnabled(GL_DEPTH_TEST))!=enabled || bool(write)!=enabled ||
+            depth!=int(enabled?(mode==0?GL_NEVER:GL_LEQUAL):GL_ALWAYS))
+          throw FormatError("result depth state differs from native enable semantics");
+      } else if(alpha!=(enabled?mode:0))throw FormatError("result alpha state differs from native enable semantics");
+      if(!first)report << ',';first=false;
+      report << "{\"kind\":" << int(kind) << ",\"mode\":" << mode << ",\"enabled\":" << enabled
+             << ",\"depth_test\":" << bool(glIsEnabled(GL_DEPTH_TEST)) << ",\"depth_write\":" << bool(write)
+             << ",\"depth_function\":" << depth << ",\"alpha_mode\":" << alpha << '}';
+    };
+    sample(UiRenderKind::DepthTest,0,true);sample(UiRenderKind::DepthTest,5,true);
+    sample(UiRenderKind::DepthTest,5,false);sample(UiRenderKind::AlphaTest,6,true);
+    sample(UiRenderKind::AlphaTest,3,false);report << "],\"passed\":true,\"pixels_checked\":false}\n";
+    return 0;
+  }catch(const std::exception& e) {
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano result render-state: %s",e.what());return 1;
   }
 }
 int RunScreenFilterProbe(const std::filesystem::path& fixtureDirectory,

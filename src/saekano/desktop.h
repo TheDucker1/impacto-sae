@@ -5,6 +5,7 @@
 #include <optional>
 
 namespace Impacto::Saekano {
+int RunResultRenderStateProbe(const std::filesystem::path& output);
 int RunScreenFilterProbe(const std::filesystem::path& fixtureDirectory,
                          const std::filesystem::path& output);
 int RunSceneSdkUiProbe(const std::filesystem::path& usrdir,

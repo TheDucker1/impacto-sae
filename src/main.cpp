@@ -281,7 +281,9 @@ int main(int argc, char* argv[]) {
            "Usage: --saekano-audio USRDIR TRACK [--capture DIRECTORY]\n");
     return 1;
   }
-  if (argc == 4 && std::string_view(argv[1]) == "--saekano-filter-check")
+    if(argc==3 && std::string_view(argv[1])=="--saekano-result-render-state")
+      return Saekano::RunResultRenderStateProbe(argv[2]);
+    if (argc == 4 && std::string_view(argv[1]) == "--saekano-filter-check")
     return Saekano::RunScreenFilterProbe(argv[2], argv[3]);
   if (argc == 4 && std::string_view(argv[1]) == "--saekano-sdk-ui-check")
     return Saekano::RunSceneSdkUiProbe(argv[2],argv[3]);

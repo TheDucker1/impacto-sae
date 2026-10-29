@@ -471,10 +471,11 @@ std::vector<UiRenderCommand> BuildProfileResultLayers(
   const auto percentage = [](int32_t a, int32_t b) {
     return std::bit_cast<int32_t>(uint32_t(a) * uint32_t(b)) / 100;
   };
-  const auto state = [&](UiRenderKind kind, int32_t mode) {
+  const auto state = [&](UiRenderKind kind, int32_t mode,std::optional<bool> enabled=std::nullopt) {
     UiRenderCommand command;
     command.Kind = kind;
     command.Mode = mode;
+    command.TestEnabled=enabled;
     commands.push_back(command);
   };
   const auto rectangle = [&](std::array<int32_t, 4> bounds,
@@ -512,21 +513,21 @@ std::vector<UiRenderCommand> BuildProfileResultLayers(
   mask.Color[3] = uint8_t(result.HorizontalAlpha.Current);
   sprite(main(10), mask);
   state(UiRenderKind::Stencil, 1);
-  state(UiRenderKind::DepthTest, 0);
-  state(UiRenderKind::AlphaTest, 6);
+  state(UiRenderKind::DepthTest, 0,true);
+  state(UiRenderKind::AlphaTest, 6,true);
   rectangle({0, 0, canvasWidth, canvasHeight}, {0, 0, 0, 1});
   state(UiRenderKind::Stencil, 2);
   mask.Color = {255, 255, 255, 255};
   sprite(main(10), mask);
   state(UiRenderKind::Stencil, 3);
-  state(UiRenderKind::AlphaTest, 3);
-  state(UiRenderKind::DepthTest, 5);
+  state(UiRenderKind::AlphaTest, 3,true);
+  state(UiRenderKind::DepthTest, 5,true);
   definition = environment.MaskedContent;
   definition.X = add(definition.X, result.HorizontalOffset.Current);
   definition.Color[3] = uint8_t(result.HorizontalAlpha.Current);
   sprite(main(13), definition);
-  state(UiRenderKind::AlphaTest, 3);
-  state(UiRenderKind::DepthTest, 5);
+  state(UiRenderKind::AlphaTest, 3,false);
+  state(UiRenderKind::DepthTest, 5,false);
   state(UiRenderKind::Stencil, 0);
   definition = environment.Frame;
   definition.X = add(definition.X, result.HorizontalOffset.Current);
@@ -544,6 +545,63 @@ std::vector<UiRenderCommand> BuildProfileResultLayers(
   definition.Color[3] = uint8_t(result.HorizontalAlpha.Current);
   sprite(main(12), definition);
   return commands;
+}
+std::vector<UiRenderCommand> BuildApproachResultLayers(
+    const ModeResultVisualEnvironment& e,const ApproachResultState& s,
+    int32_t character,int32_t canvasWidth,int32_t canvasHeight) {
+  std::vector<UiRenderCommand> commands;
+  if(!s.Visible)return commands;
+  if(canvasWidth<=0 || canvasHeight<=0 || character<0 ||
+      size_t(character)>=e.CharacterColors.size() || s.Outcome>1)
+    throw FormatError("approach result draw inputs outside authored banks");
+  const auto add=[](int32_t a,int32_t b){return std::bit_cast<int32_t>(uint32_t(a)+uint32_t(b));};
+  const auto percent=[](int32_t a,int32_t b){return std::bit_cast<int32_t>(uint32_t(a)*uint32_t(b))/100;};
+  const auto state=[&](UiRenderKind kind,int32_t mode,std::optional<bool> enabled=std::nullopt){
+    UiRenderCommand c;c.Kind=kind;c.Mode=mode;c.TestEnabled=enabled;commands.push_back(c);
+  };
+  const auto rectangle=[&](std::array<int32_t,4> bounds,std::array<uint8_t,4> color){
+    UiRenderCommand c;c.Kind=UiRenderKind::Rectangle;c.Rectangle=bounds;c.Color=color;commands.push_back(c);
+  };
+  const auto sprite=[&](ProfileTextureKey key,const UiSpriteDefinition& definition){
+    UiRenderCommand c;c.Kind=UiRenderKind::Sprite;c.Sprite=ResolveUiSprite(key,definition);commands.push_back(c);
+  };
+  const auto main=[](uint32_t entry){return ProfileTextureKey{ProfileTextureSection::MainUi,-1,entry};};
+  rectangle({0,0,960,544},{0,0,0,uint8_t(percent(e.OverlayAlpha,s.Tweens[0].Current))});
+  auto definition=e.Banner;definition.Color[3]=uint8_t(percent(s.Tweens[0].Current,255));
+  sprite(main(22),definition); // The approach draw has no profile reflection.
+  auto mask=e.Mask;mask.X=add(mask.X,s.Tweens[1].Current);
+  mask.Color=e.CharacterColors[size_t(character)];mask.Color[3]=uint8_t(s.Tweens[2].Current);
+  sprite(main(10),mask);
+  state(UiRenderKind::Stencil,1);state(UiRenderKind::DepthTest,0,true);state(UiRenderKind::AlphaTest,6,true);
+  rectangle({0,0,canvasWidth,canvasHeight},{0,0,0,1});state(UiRenderKind::Stencil,2);
+  mask.Color={255,255,255,255};sprite(main(10),mask);
+  state(UiRenderKind::Stencil,3);state(UiRenderKind::AlphaTest,3,true);state(UiRenderKind::DepthTest,5,true);
+  definition=e.MaskedContent;definition.X=add(definition.X,s.Tweens[1].Current);definition.Color[3]=uint8_t(s.Tweens[2].Current);
+  sprite(main(13),definition);
+  state(UiRenderKind::AlphaTest,3,false);state(UiRenderKind::DepthTest,5,false);state(UiRenderKind::Stencil,0);
+  definition=e.Frame;definition.X=add(definition.X,s.Tweens[1].Current);definition.Color[3]=uint8_t(s.Tweens[2].Current);
+  sprite(main(11),definition);
+  definition=e.EventIcon;definition.X=add(definition.X,s.Tweens[3].Current);definition.Color[3]=uint8_t(s.Tweens[4].Current);
+  sprite({ProfileTextureSection::Character,character,s.Outcome==0?2u:0u},definition);
+  definition=e.ProgressFill;definition.Width=percent(definition.Width,s.Tweens[5].Current);definition.Color[3]=uint8_t(s.Tweens[2].Current);
+  sprite(main(12),definition);
+  return commands;
+}
+std::vector<UiSpriteBlit> BuildApproachResultOverlays(
+    const ModeResultVisualEnvironment& e,const MessageCursorEnvironment& cursors,
+    const ApproachResultState& s,float cursorOffset) {
+  std::vector<UiSpriteBlit> draws;if(!s.Visible)return draws;
+  if(s.Outcome>1)throw FormatError("approach result outcome outside authored table");
+  const auto main=[](uint32_t entry){return ProfileTextureKey{ProfileTextureSection::MainUi,-1,entry};};
+  if(s.Cursor)for(size_t i=0;i<2;++i) {
+    auto definition=cursors.Sprites[i];definition.X=e.CursorPositions[i][0];
+    definition.Y=std::bit_cast<int32_t>(uint32_t(e.CursorPositions[i][1])+uint32_t(Convert(cursorOffset)));
+    draws.push_back(ResolveUiSprite(main(2),definition));
+  }
+  const size_t category=s.Outcome==0?2:0;
+  auto definition=e.Outcomes[category];definition.Color[3]=uint8_t(s.Tweens[6].Current);
+  draws.push_back(ResolveUiSprite(main(uint32_t(14+category)),definition));
+  return draws;
 }
 ProfileResponseUiDraws BuildProfileResponseUi(
     const ProfileResponseVisualEnvironment& environment, bool textRevealed,
