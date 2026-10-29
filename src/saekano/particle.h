@@ -43,6 +43,8 @@ struct ParticleBirthPrefix {
 // effect-owner34..68. Header scalar multiplies scale slot9 after the owner.
 std::array<float, 14> ComposeParticleCreation(const std::array<float, 14>& local,
     const std::array<float, 14>& owner, float headerScalar);
+std::array<float, 3> TransformParticleEmitterPosition(const std::array<float, 3>& position,
+    const std::array<float, 3>& pivot, const std::array<float, 3>& angles);
 uint32_t ParticleNominalLifetime(int32_t authoredTicks);
 // The native birth prefix before rotation/velocity/scale setup. Missing texture
 // returns false without changing existing state or consuming random words.

@@ -166,6 +166,36 @@ ParticleMatrixSetup PrepareParticleMatrix(const ParticleDefinition& definition,
   result.Scalar = ParticleAddProduct(field(0x84), field(0x88), finalSample);
   return result;
 }
+std::array<float, 3> TransformParticleEmitterPosition(const std::array<float, 3>& position,
+    const std::array<float, 3>& pivot, const std::array<float, 3>& angles) {
+  const auto multiply = [](const ParticleMatrix& a, const ParticleMatrix& b) {
+    ParticleMatrix result;
+    for (size_t col = 0; col < 4; ++col) for (size_t row = 0; row < 4; ++row) {
+      float value = a[row + 4] * b[col * 4 + 1];
+      value = ParticleAddProduct(value, a[row], b[col * 4]);
+      value = ParticleAddProduct(value, a[row + 8], b[col * 4 + 2]);
+      result[row + 4 * col] = ParticleAddProduct(value, a[row + 12], b[col * 4 + 3]);
+    }
+    return result;
+  };
+  auto matrix = IdentityParticleMatrix();
+  for (size_t i = 0; i < 3; ++i) matrix[12 + i] = -pivot[i];
+  for (size_t axis = 0; axis < 3; ++axis) {
+    if (angles[axis] == 0) continue;
+    auto rotation = IdentityParticleMatrix();
+    const float s = std::sin(angles[axis]), c = std::cos(angles[axis]);
+    if (axis == 0) { rotation[5] = rotation[10] = c; rotation[6] = s; rotation[9] = -s; }
+    if (axis == 1) { rotation[0] = rotation[10] = c; rotation[2] = -s; rotation[8] = s; }
+    if (axis == 2) { rotation[0] = rotation[5] = c; rotation[1] = s; rotation[4] = -s; }
+    matrix = multiply(rotation, matrix);
+  }
+  auto translation = IdentityParticleMatrix();
+  for (size_t i = 0; i < 3; ++i) translation[12 + i] = pivot[i];
+  matrix = multiply(translation, matrix);
+  auto result = TransformParticleVector(matrix, position);
+  result[1] = -result[1];
+  return result;
+}
 namespace {
 int32_t ParticleSignedWord(float value) {
   if (std::isnan(value)) return 0;
