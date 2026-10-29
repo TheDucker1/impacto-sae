@@ -147,6 +147,19 @@ struct ParticleBatchCandidate {
   const ParticleRuntimeState* Particle = nullptr;
   std::optional<size_t> TextureIndex;  // Index in the owner's native texture order.
 };
+struct ParticleVertex {
+  std::array<float, 3> LocalPosition{};
+  std::array<uint8_t, 4> Rgba{};
+  std::array<float, 2> Uv{};
+  std::array<float, 3> Position{}, Angles{};
+};
+static_assert(sizeof(ParticleVertex) == 48);
+// Native c1818/c0ed0: centered local corners and half-texel UVs. Position and
+// rotation remain separate attributes; the vertex shader applies projection.
+std::array<ParticleVertex, 4> BuildParticleQuad(const ParticleDrawPacket& packet,
+    uint32_t textureWidth, uint32_t textureHeight);
+std::array<ParticleVertex, 6> BuildParticleTriangles(const ParticleDrawPacket& packet,
+    uint32_t textureWidth, uint32_t textureHeight);
 struct ParticleTextureBatch {
   size_t TextureIndex = 0;
   bool Translucent = false;

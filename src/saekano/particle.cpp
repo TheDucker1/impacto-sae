@@ -609,6 +609,31 @@ std::optional<ParticleDrawPacket> BuildParticleDrawPacket(const ParticleRuntimeS
   result.BlendMode = std::bit_cast<int32_t>(definition.Bits(0x48));
   return result;
 }
+std::array<ParticleVertex, 4> BuildParticleQuad(const ParticleDrawPacket& packet,
+    uint32_t textureWidth, uint32_t textureHeight) {
+  if (!textureWidth || !textureHeight) throw FormatError("zero particle texture dimensions");
+  const float width = float(packet.Size[0]) / 960.0f, height = float(packet.Size[1]) / 544.0f;
+  const float left = width * -.5f, right = width * .5f;
+  const float top = height * -.5f, bottom = height * .5f;
+  const float sourceX = float(packet.Source[0]) + .5f, sourceY = float(packet.Source[1]) + .5f;
+  const float u0 = sourceX / float(textureWidth), v0 = sourceY / float(textureHeight);
+  const float u1 = float(packet.Source[2]) / float(textureWidth) + u0;
+  const float v1 = float(packet.Source[3]) / float(textureHeight) + v0;
+  std::array<ParticleVertex, 4> vertices;
+  for (size_t i = 0; i < vertices.size(); ++i) {
+    auto& vertex = vertices[i];
+    vertex.LocalPosition = {i & 1 ? right : left, i & 2 ? bottom : top, 0};
+    vertex.Uv = {i & 1 ? u1 : u0, i & 2 ? v1 : v0};
+    vertex.Rgba = {packet.Bgra[2], packet.Bgra[1], packet.Bgra[0], packet.Bgra[3]};
+    vertex.Position = packet.Position; vertex.Angles = packet.Angles;
+  }
+  return vertices;
+}
+std::array<ParticleVertex, 6> BuildParticleTriangles(const ParticleDrawPacket& packet,
+    uint32_t textureWidth, uint32_t textureHeight) {
+  const auto quad = BuildParticleQuad(packet, textureWidth, textureHeight);
+  return {quad[0], quad[1], quad[2], quad[2], quad[1], quad[3]};
+}
 std::vector<ParticleTextureBatch> BuildParticleBatches(
     std::span<const ParticleBatchCandidate> candidates, size_t textureCount, float groupOpacity) {
   candidates = candidates.first(std::min<size_t>(candidates.size(), 300));
