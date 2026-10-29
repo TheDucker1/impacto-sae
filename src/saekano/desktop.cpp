@@ -23,6 +23,7 @@
 #include "mouthselection.h"
 #include "particle.h"
 #include "particlevertexshader.h"
+#include "particlefragmentshader.h"
 #include "../io/memorystream.h"
 #include "../texture/texture.h"
 
@@ -48,6 +49,26 @@ void GlCheck(const char* operation) {
   if (error != GL_NO_ERROR)
     throw std::runtime_error(std::string(operation) + ": OpenGL error " +
                              std::to_string(error));
+}
+GLenum ParticleGlFactor(uint8_t factor, bool alpha) {
+  switch (factor) {
+    case 0: return GL_ZERO;
+    case 1: return GL_ONE;
+    case 2: return alpha ? GL_SRC_ALPHA : GL_SRC_COLOR;
+    case 4: return GL_SRC_ALPHA;
+    case 5: return GL_ONE_MINUS_SRC_ALPHA;
+    default: throw FormatError("unsupported particle blend factor");
+  }
+}
+void ApplyParticleBlend(size_t index) {
+  const auto blend = ParticleBlend(index);
+  if (!blend.Enabled) { glDisable(GL_BLEND); return; }
+  glEnable(GL_BLEND);
+  glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+  glBlendFuncSeparate(ParticleGlFactor(blend.ColorSource, false),
+                      ParticleGlFactor(blend.ColorDestination, false),
+                      ParticleGlFactor(blend.AlphaSource, true),
+                      ParticleGlFactor(blend.AlphaDestination, true));
 }
 struct ViewerWindow {
   SDL_Window* Window = nullptr;
@@ -1841,6 +1862,87 @@ int RunParticleProjectionProbe(const std::filesystem::path& fixtureDirectory,
     const auto diagnostic = output.string()+".error.txt";
     if (!std::filesystem::exists(diagnostic)) { std::ofstream failure(diagnostic); failure << std::string(error.what()).substr(0,2048) << '\n'; }
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano particle projection: %s",error.what()); return 1;
+  }
+}
+int RunParticleFragmentProbe(const std::filesystem::path& fixtureDirectory,
+                             const std::filesystem::path& output) {
+  try {
+    if (std::filesystem::exists(output)) throw FormatError("choose a fresh particle fragment output");
+    const auto bytes = SceneRead(fixtureDirectory / "cases.bin");
+    PayloadReader reader(bytes);
+    if (reader.U32() != 0x31465050) throw FormatError("invalid particle fragment fixture");
+    const auto count = reader.U32();
+    if (!count || count > 32) throw FormatError("particle fragment case budget exceeded");
+    reader.CheckCount(count, 36);
+    const auto fragmentBytes = SceneRead(fixtureDirectory / "reference.frag");
+    const std::string fragment(fragmentBytes.begin(), fragmentBytes.end());
+    ViewerWindow window(true);
+    UiBlitRenderer actual(ParticleMode0FragmentShader), reference(fragment.c_str());
+    struct Target {
+      GLuint Framebuffer = 0, Texture = 0;
+      ~Target() {
+        if (Framebuffer) glDeleteFramebuffers(1, &Framebuffer);
+        if (Texture) glDeleteTextures(1, &Texture);
+      }
+    } target;
+    glGenFramebuffers(1, &target.Framebuffer);
+    glGenTextures(1, &target.Texture);
+    glBindTexture(GL_TEXTURE_2D, target.Texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 1, 1, 0, GL_RGBA, GL_FLOAT, nullptr);
+    glBindFramebuffer(GL_FRAMEBUFFER, target.Framebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target.Texture, 0);
+    glDrawBuffer(GL_COLOR_ATTACHMENT0); glReadBuffer(GL_COLOR_ATTACHMENT0);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+      throw FormatError("particle fragment framebuffer is incomplete");
+    std::ofstream report(output);
+    if (!report) throw FormatError("cannot create particle fragment output");
+    for (uint32_t i = 0; i < count; ++i) {
+      const auto pixel = reader.U32(), color = reader.U32(), blendIndex = reader.U32();
+      std::array<GLenum,4> referenceFactors;
+      for (auto& value : referenceFactors) value = reader.U32();
+      const bool referenceEnabled = referenceFactors[0] != UINT32_MAX;
+      const auto destination = reader.U32();
+      const auto alpha = std::bit_cast<float>(reader.U32());
+      const ProfileTextureKey key{ProfileTextureSection::MainUi, -1, i};
+      const ImagePixels pixels{1, 1, {uint8_t(pixel), uint8_t(pixel >> 8), uint8_t(pixel >> 16), uint8_t(pixel >> 24)}};
+      UiSpriteBlit draw;
+      draw.Texture = key; draw.Destination = {0,0,960,544}; draw.Source = {0,0,1,1};
+      draw.Color = {uint8_t(color), uint8_t(color >> 8), uint8_t(color >> 16), uint8_t(color >> 24)};
+      const auto sample = [&](UiBlitRenderer& renderer, bool production) {
+        renderer.Upload(key, pixels);
+        renderer.Draw({}, 960, 544);
+        glViewport(0,0,1,1);
+        glClearColor(float(destination & 255)/255, float((destination >> 8) & 255)/255,
+                     float((destination >> 16) & 255)/255, alpha);
+        glClear(GL_COLOR_BUFFER_BIT);
+        if (production) ApplyParticleBlend(blendIndex);
+        else if (referenceEnabled) {
+          glEnable(GL_BLEND); glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+          glBlendFuncSeparate(referenceFactors[0], referenceFactors[1], referenceFactors[2], referenceFactors[3]);
+        } else glDisable(GL_BLEND);
+        renderer.DrawQuad(draw, renderer.Textures.at(key), false);
+        std::array<float,4> result;
+        glReadPixels(0,0,1,1,GL_RGBA,GL_FLOAT,result.data());
+        GlCheck("particle fragment sample");
+        return result;
+      };
+      const auto obtained = sample(actual, true), expected = sample(reference, false);
+      report << "{\"case\":" << i << ",\"actual_bits\":[";
+      for (size_t c = 0; c < 4; ++c) { if (c) report << ','; report << std::bit_cast<uint32_t>(obtained[c]); }
+      report << "],\"reference_bits\":[";
+      for (size_t c = 0; c < 4; ++c) { if (c) report << ','; report << std::bit_cast<uint32_t>(expected[c]); }
+      report << "]}\n";
+    }
+    if (reader.Remaining()) throw FormatError("trailing particle fragment fixture");
+    return 0;
+  } catch (const std::exception& error) {
+    const auto diagnostic = output.string() + ".error.txt";
+    if (!std::filesystem::exists(diagnostic)) {
+      std::ofstream failure(diagnostic);
+      failure << std::string(error.what()).substr(0, 2048) << '\n';
+    }
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Saekano particle fragment probe: %s", error.what());
+    return 1;
   }
 }
 int RunScreenFilterProbe(const std::filesystem::path& fixtureDirectory,

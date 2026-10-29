@@ -160,6 +160,15 @@ struct ParticleProjectionUniforms {
   // Native GXP default uniform slots0,16,32,48; final padding is zero.
   std::array<float, 52> Pack() const;
 };
+struct ParticleBlendConfiguration {
+  bool Enabled = false;
+  // Native GXM factor indices:0 zero,1 one,2 source color,4 source alpha,
+  //5 inverse source alpha. Color/alpha channels remain independent.
+  uint8_t ColorSource = 0, ColorDestination = 0, AlphaSource = 0, AlphaDestination = 0;
+};
+// Fragment-program table index (0..5), not the public native blend-mode value.
+ParticleBlendConfiguration ParticleBlend(size_t index);
+std::array<float,16> ApproachParticleWorld();
 // Native c1818/c0ed0: centered local corners and half-texel UVs. Position and
 // rotation remain separate attributes; the vertex shader applies projection.
 std::array<ParticleVertex, 4> BuildParticleQuad(const ParticleDrawPacket& packet,

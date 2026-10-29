@@ -609,6 +609,17 @@ std::optional<ParticleDrawPacket> BuildParticleDrawPacket(const ParticleRuntimeS
   result.BlendMode = std::bit_cast<int32_t>(definition.Bits(0x48));
   return result;
 }
+ParticleBlendConfiguration ParticleBlend(size_t index) {
+  static constexpr std::array<ParticleBlendConfiguration,6> configurations{{
+    {false,0,0,0,0}, {true,4,5,1,5}, {true,4,1,1,0},
+    {true,0,2,0,2}, {true,1,1,4,1}, {true,4,2,0,1}
+  }};
+  if (index >= configurations.size()) throw FormatError("particle blend index outside native table");
+  return configurations[index];
+}
+std::array<float,16> ApproachParticleWorld() {
+  return {1,0,0,0, 0,-1,0,0, 0,0,1,0, 0,0,0,1};
+}
 std::array<float, 52> ParticleProjectionUniforms::Pack() const {
   std::array<float, 52> result{};
   std::copy(View.begin(), View.end(), result.begin());
