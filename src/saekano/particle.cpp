@@ -221,6 +221,96 @@ bool PrepareParticleBirth(ParticleBirthState& state,
   state = next;
   return true;
 }
+namespace {
+float ParticleSubtractProduct(float sum, float a, float b) {
+  volatile float product = a * b;
+  return sum - product;
+}
+float ParticleRamp(float progress, float rate) {
+  float value;
+  if (rate > 0) value = progress * rate;
+  else {
+    const float start = rate + 1.0f;
+    value = ParticleSubtractProduct(start, progress, rate);
+    if (value < 0) value = 0;
+  }
+  if (value > 1) value = 1;
+  return value;
+}
+}
+ParticleMotionSample EvaluateParticleMotion(const ParticleDefinition& definition,
+    const ParticleBirthState& birth, float progress,
+    const std::array<float, 3>& origin) {
+  const auto field = [&](size_t offset) { return std::bit_cast<float>(definition.Bits(offset)); };
+  const float reversed = 1.0f - progress;
+  const auto envelope = [&](size_t base) {
+    const float rate = field(base + 8), ramp = ParticleRamp(progress, rate);
+    const float toWeight = rate < 0 ? reversed : ramp;
+    const float fromWeight = rate < 0 ? ramp : 1.0f - ramp;
+    const float to = field(base + 4) * toWeight;
+    return ParticleAddProduct(to, field(base), fromWeight) + 0.0f;
+  };
+  const float first = envelope(0xe4), second = envelope(0xf0);
+  const float third = envelope(0xfc), fourth = envelope(0x108);
+  ParticleMotionSample result;
+  const float xGain = third * first, yGain = fourth * second;
+  result.Vector = {xGain * birth.Transform.Vector[0], yGain * birth.Transform.Vector[1],
+                   birth.Transform.Vector[2]};
+  // Native constructs u64 via high*2^32+low in double, then rounds to float.
+  const float lifetime = float(double(uint32_t(birth.Prefix.LifetimeMilliseconds >> 32)) * 0x1p32 +
+                               double(uint32_t(birth.Prefix.LifetimeMilliseconds)));
+  const float rampTime = lifetime * ParticleRamp(progress, field(0x70));
+  const float scaledTime = rampTime * birth.Prefix.Creation[9];
+  const float seconds = scaledTime / 1000.0f;
+  result.Position = {ParticleAddProduct(origin[0], result.Vector[0], seconds),
+                     ParticleSubtractProduct(origin[1], result.Vector[1], seconds),
+                     ParticleAddProduct(origin[2], result.Vector[2], seconds)};
+  return result;
+}
+namespace {
+float ParticleClockFloat(uint64_t clock) {
+  return float(double(uint32_t(clock >> 32)) * 0x1p32 + double(uint32_t(clock)));
+}
+float ParticlePhase(uint64_t elapsed, uint64_t lifetime, float frequency) {
+  if (!lifetime) throw FormatError("particle phase requires positive lifetime");
+  const auto ticks = ParticleSignedWord(ParticleClockFloat(elapsed) * frequency);
+  const auto phase = uint64_t(int64_t(ticks)) % lifetime;
+  return ParticleClockFloat(phase) / ParticleClockFloat(lifetime);
+}
+float ParticleTriangle(float phase, float a, float b) {
+  float from = a, to = b;
+  if (phase >= .5f) { phase = phase - .5f; from = b; to = a; }
+  const float fraction = phase * 2.0f, delta = to - from;
+  return ParticleAddProduct(from, fraction, delta);
+}
+float ParticleModulation(float value) {
+  if (value == 0) return 1;
+  if (value > 0) return 1.0f - value;
+  return std::abs(value);
+}
+}
+ParticleGeometrySample EvaluateParticleGeometry(const ParticleDefinition& definition,
+    const ParticleBirthState& birth, float progress) {
+  const auto field = [&](size_t offset) { return std::bit_cast<float>(definition.Bits(offset)); };
+  ParticleGeometrySample result;
+  const float widthRamp = ParticleRamp(progress, field(0x160));
+  const float widthTo = birth.Fields70[1] * widthRamp;
+  const float width = ParticleAddProduct(widthTo, birth.Fields70[0], 1.0f - widthRamp);
+  const float widthPhase = ParticlePhase(birth.Elapsed, birth.Prefix.LifetimeMilliseconds, field(0x20c));
+  const float widthPulse = ParticleTriangle(widthPhase, field(0x204), field(0x208));
+  const float widthBase = birth.Field58 * width;
+  const float widthModulated = widthBase * ParticleModulation(widthPulse);
+  const float widthScaled = widthModulated * 6.0f;
+  result.FieldDc = widthScaled * birth.Prefix.Creation[9];
+  const float scaleRamp = ParticleRamp(progress, field(0x178));
+  const float scaleTo = birth.Fields70[3] * scaleRamp;
+  const float scale = ParticleAddProduct(scaleTo, birth.Fields70[2], 1.0f - scaleRamp);
+  const float scalePhase = ParticlePhase(birth.Elapsed, birth.Prefix.LifetimeMilliseconds, field(0x240));
+  const float scalePulse = ParticleTriangle(scalePhase, field(0x238), field(0x23c));
+  result.Scale = {ParticleModulation(scalePulse * field(0x248)) * scale,
+                  ParticleModulation(scalePulse * field(0x24c)) * scale};
+  return result;
+}
 uint32_t ParticleDefinition::Bits(size_t nativeOffset) const {
   if (nativeOffset < 0x20 || nativeOffset >= 0x298 || nativeOffset % 4)
     throw FormatError("particle parameter offset outside native record");

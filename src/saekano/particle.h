@@ -81,6 +81,20 @@ struct ParticleBirthState {
 bool PrepareParticleBirth(ParticleBirthState& state,
     const ParticleDefinition& definition, int32_t authoredTicks,
     const std::array<float, 14>& creation, GameRandom& random, bool textureReady);
+struct ParticleMotionSample {
+  std::array<float, 3> Position{}, Vector{};  // Native98/a4 triples.
+};
+// Native8f7e operates on position prepared by the owning age update. Motion is
+// evaluated from normalized age and total lifetime, not accumulated per frame.
+ParticleMotionSample EvaluateParticleMotion(const ParticleDefinition& definition,
+    const ParticleBirthState& birth, float progress,
+    const std::array<float, 3>& origin);
+struct ParticleGeometrySample {
+  float FieldDc = 0;  // Native8598; renderer will establish its units.
+  std::array<float, 2> Scale{};  // Native83a8 -> e0/e4.
+};
+ParticleGeometrySample EvaluateParticleGeometry(const ParticleDefinition& definition,
+    const ParticleBirthState& birth, float progress);
 struct ParticlePointEmitter {
   // Native ADD_POINT_POINT callback8000ef4c, command type5. Names are raw
   // narrow bytes. Consumer meanings/timing units of the numeric fields follow.
