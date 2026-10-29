@@ -190,4 +190,14 @@ struct ParticleEffectState {
   bool Update(const ParticleEffectProgram& program, const PreparedParticleEffects& assets,
               uint64_t elapsedDelta, GameRandom& random);
 };
+class GameResources;
+struct ConfiguredParticleEffect {
+  size_t ArchiveIndex = 0, ProgramIndex = 0;
+  PreparedParticleEffects Assets;
+  const ParticleEffectProgram& Program() const { return Assets.Catalog.Programs.at(ProgramIndex); }
+  // Search original archive/CSV order by EFFECT header name. Only the matched
+  // archive is fully prepared, so unrelated command families remain separate.
+  static ConfiguredParticleEffect Load(const GameResources& resources,
+      const ParticleEnvironment& environment, size_t effectId);
+};
 }  // namespace Impacto::Saekano

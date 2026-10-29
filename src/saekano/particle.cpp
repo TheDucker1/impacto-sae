@@ -834,4 +834,47 @@ PreparedParticleEffects PreparedParticleEffects::Prepare(const EffectResourceAss
         throw FormatError("particle point references missing definition or texture");
   return result;
 }
+ConfiguredParticleEffect ConfiguredParticleEffect::Load(const GameResources& resources,
+    const ParticleEnvironment& environment, size_t effectId) {
+  if (effectId >= environment.Effects.size()) throw FormatError("particle environment ID outside configuration");
+  std::string requested;
+  for (const auto code : environment.Effects[effectId].Name) {
+    // Native name conversion uses its narrow string view. Current asset keys
+    // are ASCII; reject unbound encoding rather than silently narrowing UTF16.
+    if (code == 0 || code > 127) throw FormatError("unbound particle effect name encoding");
+    requested.push_back(char(code));
+  }
+  for (size_t archive = 0; archive < resources.EffectCount(); ++archive) {
+    auto raw = resources.LoadEffect(archive);
+    bool found = false;
+    for (const auto& file : raw.Files) {
+      std::string filename(file.Name.begin(), file.Name.end());
+      while (!filename.empty() && filename.back() == ' ') filename.pop_back();
+      if (!filename.ends_with(".csv")) continue;
+      const auto inspect = [&](std::span<const uint8_t> row) {
+        const auto fields = ParticleFields(row);
+        if (fields.size() >= 3 && fields[0] == "ON" && fields[1] == "EFFECT" && fields[2] == requested) {
+          ParticleEffectHeader::DecodeRow(row); found = true;
+        }
+      };
+      size_t start = 0; bool quoted = false;
+      for (size_t i = 0; i < file.Data.size(); ++i) {
+        if (file.Data[i] == '"') {
+          if (quoted && i + 1 < file.Data.size() && file.Data[i + 1] == '"') ++i;
+          else quoted = !quoted;
+        } else if (!quoted && file.Data[i] == '\n') {
+          inspect(std::span(file.Data).subspan(start, i + 1 - start)); start = i + 1;
+        }
+      }
+      if (quoted) throw FormatError("unterminated particle CSV quote");
+      if (start < file.Data.size()) inspect(std::span(file.Data).subspan(start));
+    }
+    if (found) {
+      auto assets = PreparedParticleEffects::Prepare(raw);
+      const size_t program = assets.Catalog.Names.at(requested);
+      return {archive, program, std::move(assets)};
+    }
+  }
+  throw FormatError("configured particle effect name not found");
+}
 }  // namespace Impacto::Saekano
