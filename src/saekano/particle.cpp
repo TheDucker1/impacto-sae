@@ -82,6 +82,79 @@ ParticleRotationSetup PrepareParticleRotation(const ParticleDefinition& definiti
   }
   return result;
 }
+namespace {
+using ParticleMatrix = std::array<float, 16>;
+ParticleMatrix IdentityParticleMatrix() {
+  ParticleMatrix result{};
+  result[0] = result[5] = result[10] = result[15] = 1;
+  return result;
+}
+float ParticleAddProduct(float sum, float a, float b) {
+  volatile float product = a * b;
+  return sum + product;  // Native VMLA rounds product before addition.
+}
+void RotateParticleMatrix(ParticleMatrix& matrix, size_t axis, float angle) {
+  if (angle == 0) return;
+  const float s = std::sin(angle), c = std::cos(angle);
+  auto rotation = IdentityParticleMatrix();
+  if (axis == 0) { rotation[5] = rotation[10] = c; rotation[6] = s; rotation[9] = -s; }
+  if (axis == 1) { rotation[0] = rotation[10] = c; rotation[2] = -s; rotation[8] = s; }
+  if (axis == 2) { rotation[0] = rotation[5] = c; rotation[1] = s; rotation[4] = -s; }
+  ParticleMatrix next;
+  for (size_t col = 0; col < 4; ++col) for (size_t row = 0; row < 4; ++row) {
+    float value = matrix[row + 4] * rotation[col * 4 + 1];
+    value = ParticleAddProduct(value, matrix[row], rotation[col * 4]);
+    value = ParticleAddProduct(value, matrix[row + 8], rotation[col * 4 + 2]);
+    next[row + col * 4] = ParticleAddProduct(value, matrix[row + 12], rotation[col * 4 + 3]);
+  }
+  matrix = next;
+}
+std::array<float, 3> TransformParticleVector(const ParticleMatrix& matrix,
+                                          const std::array<float, 3>& vector) {
+  std::array<float, 4> homogeneous;
+  for (size_t row = 0; row < 4; ++row) {
+    float value = vector[1] * matrix[row + 4];
+    value = ParticleAddProduct(value, vector[0], matrix[row]);
+    value = ParticleAddProduct(value, vector[2], matrix[row + 8]);
+    homogeneous[row] = value + matrix[row + 12];
+  }
+  return {homogeneous[0] / homogeneous[3], homogeneous[1] / homogeneous[3],
+          homogeneous[2] / homogeneous[3]};
+}
+}
+ParticleMatrixSetup PrepareParticleMatrix(const ParticleDefinition& definition,
+    const std::array<float, 14>& creation, GameRandom& random) {
+  const auto field = [&](size_t offset) { return std::bit_cast<float>(definition.Bits(offset)); };
+  constexpr float Radians = std::bit_cast<float>(0x3c8efa35u);
+  ParticleMatrixSetup result;
+  const float sample = random.Normal(field(0x6c), 1.0f);
+  const float speed = ParticleAddProduct(field(0x64), field(0x68), sample);
+  const std::array<float, 3> direction{field(0x25c), field(0x260), field(0x264)};
+  const float maximum = std::max({std::abs(direction[0]), std::abs(direction[1]), std::abs(direction[2])});
+  if (maximum != 0) for (size_t i = 0; i < 3; ++i) {
+    const float product = speed * direction[i];
+    result.Vector[i] = product / maximum;
+  }
+  auto randomMatrix = IdentityParticleMatrix();
+  std::array<float, 3> angles;
+  for (size_t i = 0; i < 3; ++i) {
+    const float radians = float(random.Range(0, 360)) * Radians;
+    angles[i] = radians * field(0x268 + i * 4);
+  }
+  for (size_t i = 0; i < 3; ++i) RotateParticleMatrix(randomMatrix, i, angles[i]);
+  result.Vector = TransformParticleVector(randomMatrix, result.Vector);
+  result.Matrix = IdentityParticleMatrix();
+  const std::array<float, 3> creationAngles{-creation[3], creation[4], -creation[5]};
+  for (size_t i = 0; i < 3; ++i) RotateParticleMatrix(result.Matrix, i, creationAngles[i]);
+  result.Vector = TransformParticleVector(result.Matrix, result.Vector);
+  const float a = float(random.Range(0, 360)) * Radians;
+  const float b = float(random.Range(0, 360)) * Radians;
+  const float radius = field(0x94), planar = radius * std::cos(b);
+  result.Scatter = {planar * std::cos(a), radius * std::sin(b), planar * std::sin(a)};
+  const float finalSample = random.Normal(field(0x8c), 1.0f);
+  result.Scalar = ParticleAddProduct(field(0x84), field(0x88), finalSample);
+  return result;
+}
 uint32_t ParticleDefinition::Bits(size_t nativeOffset) const {
   if (nativeOffset < 0x20 || nativeOffset >= 0x298 || nativeOffset % 4)
     throw FormatError("particle parameter offset outside native record");

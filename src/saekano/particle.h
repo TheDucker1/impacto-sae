@@ -50,6 +50,13 @@ struct ParticleRotationSetup {
 };
 ParticleRotationSetup PrepareParticleRotation(const ParticleDefinition& definition,
                                               GameRandom& random);
+struct ParticleMatrixSetup {
+  std::array<float, 16> Matrix{};  // Native10c, column major.
+  std::array<float, 3> Vector{}, Scatter{};  // Native14/2c.
+  float Scalar = 0;  // Native60; later consumers establish its units.
+};
+ParticleMatrixSetup PrepareParticleMatrix(const ParticleDefinition& definition,
+    const std::array<float, 14>& creation, GameRandom& random);
 struct ParticlePointEmitter {
   // Native ADD_POINT_POINT callback8000ef4c, command type5. Names are raw
   // narrow bytes. Consumer meanings/timing units of the numeric fields follow.
