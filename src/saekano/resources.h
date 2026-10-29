@@ -18,6 +18,12 @@ struct ResourceAsset {
   Bytes Name;  // Native counted bytes, including trailing spaces.
   Bytes Data;
 };
+// Resource.dat child8. Keep counted archive names and authored file order;
+// file decoding/simulation belongs to the effect consumer.
+struct EffectResourceAssets {
+  Bytes Name;
+  std::vector<ResourceAsset> Files;
+};
 // Native startup8002d4a0 loads first.dat child1 into owner+c's texture vector.
 class SharedUiAssets {
  public:
@@ -92,6 +98,8 @@ class GameResources final : public ScriptSource {
   std::vector<ProfileMenuAsset> LoadProfileMenu() const;
   ProfileMenuAsset LoadProfileTexture(ProfileTextureKey key) const;
   std::vector<ResourceAsset> LoadApproachTextures(size_t id) const;
+  size_t EffectCount() const;
+  EffectResourceAssets LoadEffect(size_t id) const;
   ProfileVoiceAssets LoadProfileVoice(size_t characterId, size_t entry) const;
   std::vector<ScriptVoiceEnvelope> LoadScriptVoiceEnvelopes(int32_t scriptId) const;
   ResourceAsset LoadImage(ImageSection section, size_t imageId) const;
@@ -109,6 +117,7 @@ class GameResources final : public ScriptSource {
   std::optional<GpdaArchive> profileVoices_;
   std::optional<GpdaArchive> profilePortraits_, profileCharacterUi_, profileUi_;
   std::optional<GpdaArchive> mainUi_;
+  std::optional<GpdaArchive> effects_;
   std::map<ImageSection, GpdaArchive> images_;
 };
 

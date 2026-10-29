@@ -89,6 +89,8 @@ GameResources::GameResources(const GpdaArchive& root)
   if (root.Entries().size() > 1) mainUi_.emplace(ResourceSection(root, 1));
   if (root.Entries().size() > 6)
     characterPoses_.emplace(ResourceSection(root, 6));
+  if (root.Entries().size() > 8)
+    effects_.emplace(ResourceSection(root, 8));
   if (root.Entries().size() > 3) {
     const auto profile = ResourceSection(root, 3);
     if (!profile.Entries().empty())
@@ -110,6 +112,22 @@ GameResources::GameResources(const GpdaArchive& root)
 
 SharedUiAssets::SharedUiAssets(Bytes firstDat)
     : archive_(ResourceSection(GpdaArchive(std::move(firstDat)), 1)) {}
+size_t GameResources::EffectCount() const {
+  return effects_ ? effects_->Entries().size() : 0;
+}
+EffectResourceAssets GameResources::LoadEffect(size_t id) const {
+  if (id >= EffectCount()) throw FormatError("effect ID outside original archive");
+  const GpdaArchive archive(CompressedEntry(*effects_, id, 1));
+  EffectResourceAssets result{effects_->Entries()[id].Name, {}};
+  result.Files.reserve(archive.Entries().size());
+  for (size_t i = 0; i < archive.Entries().size(); ++i) {
+    const auto& entry = archive.Entries()[i];
+    auto bytes = entry.Type == 1 ? CompressedEntry(archive, i, 1)
+                                : RawEntry(archive, i);
+    result.Files.push_back({entry.Name, std::move(bytes)});
+  }
+  return result;
+}
 SystemSoundAssets::SystemSoundAssets(Bytes firstDat)
     : archive_(ResourceSection(GpdaArchive(std::move(firstDat)), 7)) {}
 ResourceAsset SystemSoundAssets::Load(size_t entry) const {
