@@ -59,7 +59,7 @@ void String(std::ostream& out, std::string_view value) {
 int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
                          std::optional<size_t> untilMessage, std::ostream& report,bool confirmFirstMission,bool chooseFirstApproach,
                            std::span<const std::array<size_t,2>> approachPlan,bool confirmApproachResult,bool followPostResult,bool followPostChapter,
-                           std::span<const std::array<size_t,2>> profilePlan) {
+                           std::span<const std::array<size_t,2>> profilePlan,bool confirmBattleVersus) {
   const std::array<std::array<size_t,2>,1> firstChoice{{{0,0}}};
   if(chooseFirstApproach && approachPlan.empty())approachPlan=firstChoice;
   chooseFirstApproach=!approachPlan.empty();
@@ -109,6 +109,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   backend.ApproachResourceBank = &approachAssets;
   backend.BattleResourceBank=&battleAssets;
   backend.BattleConfig=BattleGaugeEnvironment::Decode(Read(root/"env/env_tukkomi.dat"));
+  backend.BattleVersusSettings=BattleVersusEnvironment::Decode(Read(root/"env/env_tukkomi.dat"));
   backend.MissionVoiceBank=&missionVoice;
   backend.MissionSettings=ApproachMissionEnvironment::Decode(Read(root/"env/env_approach.dat"));
   backend.SelectionSettings=ApproachSelectionEnvironment::Decode(Read(root/"env/env_approach.dat"));
@@ -213,6 +214,8 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
            "\"fresh_unread_controls\":true,\"history_bound\":false,\"gpu_pixels\":false}\n";
   };
   bool confirmationDue=false,confirmationSent=false;
+  bool versusDue=false,versusSent=false;
+  std::optional<std::pair<int32_t,int32_t>> previousVersus;
   bool resultConfirmationDue=false,resultConfirmationSent=false,resultCompleted=false,chapterCompleted=false;
   uint32_t choiceStep=0;
   try {
@@ -229,7 +232,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         backend.AutoAdvance = policy.Auto;
         voices.Update(now);
       }
-      bool ended = false, reached = false, waitingMission=false,waitingSelection=false,waitingResult=false;
+      bool ended = false, reached = false, waitingMission=false,waitingSelection=false,waitingResult=false,waitingVersus=false;
       CommandInput commandInput;
       if(const auto* active=vm->CurrentProfile();active && profileIndex<profilePlan.size()) {
         bool responseVoiceStopped=false;
@@ -298,9 +301,25 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
             << ",\"command\":" << vm->State().CurrentCommandIndex << "}\n";
       }
       battleAssets.Pump();
+      if(versusDue){commandInput.Advance=true;versusDue=false;versusSent=true;
+        out << "{\"kind\":\"battle_versus_confirmation\",\"now\":" << now << ",\"source\":\"explicit_probe_Advance\"}\n";}
       for (size_t work = 0; work < 256; ++work) {
         sync();
         const auto event = vm->Step(now,commandInput);commandInput.Advance=false;commandInput.Approach={};
+        if(event.Opcode==0x3f9 && vm->State().BattleVersus.Started) {
+          const auto& v=vm->State().BattleVersus;const auto sample=std::pair(v.Phase,v.PendingPhase.value_or(-1));
+          if(previousVersus!=sample || v.Completed) {
+            out << "{\"kind\":\"battle_versus_state\",\"now\":" << now << ",\"script\":" << event.Script
+                << ",\"command\":" << event.Command << ",\"phase\":" << v.Phase << ",\"pending\":" << sample.second
+                << ",\"done\":" << v.Completed << ",\"visible\":" << v.Visible << ",\"display\":" << vm->State().Battle.Display
+                << ",\"fade\":" << vm->State().ScreenFade.value_or(-1) << ",\"tweens\":[";
+            for(size_t i=0;i<7;++i){if(i)out << ',';out << v.Tweens[i].Current;}out << "],\"actors\":[";
+            for(size_t i=0;i<vm->State().Live2d.Records.size();++i){if(i)out << ',';const auto& r=vm->State().Live2d.Records[i];
+              out << '[' << r.LogicalId << ',' << (*r.Position)[0] << ',' << (*r.Position)[1] << ']';}out << "]}\n";
+            previousVersus=sample;
+          }
+          waitingVersus=event.Boundary==VmBoundary::WaitingInput;
+        }
         if(followPostResult && resultCompleted && event.Script!=entryScript && output.Suppressed &&
             (!followPostChapter || chapterCompleted) && (profilePlan.empty() || event.Opcode==0x3ed)) {
           output.Suppressed=false;output.Enabled=true;
@@ -480,6 +499,10 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
           for(size_t i=0;i<6;++i){if(i)out << ',';out << mission.Tweens[i].Current;}
           out << "]}\n";previousMission=sample;
         }
+      }
+      if(waitingVersus) {
+        if(confirmBattleVersus && !versusSent)versusDue=true;
+        else {finish("battle_versus_confirmation_required",false);return 1;}
       }
       if(waitingResult) {
         if(confirmApproachResult && !resultConfirmationSent)resultConfirmationDue=true;

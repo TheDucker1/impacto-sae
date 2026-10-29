@@ -119,12 +119,13 @@ class GameResources final : public ScriptSource {
   std::optional<GpdaArchive> profileVoices_;
   std::optional<GpdaArchive> profilePortraits_, profileCharacterUi_, profileUi_;
   std::optional<GpdaArchive> mainUi_;
+  std::optional<GpdaArchive> battleUi_;
   std::optional<GpdaArchive> battleFaces_;
   std::optional<GpdaArchive> effects_;
   std::map<ImageSection, GpdaArchive> images_;
 };
 
-// Native140f2->9dfc8 prepares the root3/child2 character UI bank.
+// Native StartBattle queues root7 group/costume/left-right face banks.
 class ArchiveBattleResources final : public BattleResources {
  public:
   explicit ArchiveBattleResources(GameResources& resources):resources_(resources){}

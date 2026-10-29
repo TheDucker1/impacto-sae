@@ -20,7 +20,8 @@ enum class ProfileTextureSection : uint32_t {
   ResponseBackground =
       0x103,          // Prepared scene background; Character is image ID.
   SceneImage = 0x104, // Character stores ImageSection; Entry is original ID.
-  BattleLeft = 0x105, BattleRight = 0x106 // Current owned side bank: Character=group, Entry=texture ordinal.
+  BattleLeft = 0x105, BattleRight = 0x106, // Current owned side bank: Character=group, Entry=texture ordinal.
+  BattleUi = 0x107 // resource.dat/root16, outer wrapper+cc -> context1c2c.
 };
 struct ProfileTextureKey {
   ProfileTextureSection Section;

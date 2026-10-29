@@ -18,6 +18,7 @@
 #include "approachresult.h"
 #include "mouthcontrol.h"
 #include "battleentry.h"
+#include "battleversus.h"
 
 #include <array>
 #include <map>
@@ -79,6 +80,7 @@ struct SemanticState {
   std::optional<OrdinaryMouthControl> MouthControl; // C1c4c..1c57; omitted from portable restores.
   BattleGaugeState Battle;
   BattleEntryState BattleEntry;
+  BattleVersusState BattleVersus;
   MusicHistoryState BattleHistory; // S602dc vector: same native played-status predicate as music history.
   GameRandom Random;
   ApproachGaugeState Approach;

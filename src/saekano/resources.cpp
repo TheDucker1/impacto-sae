@@ -87,6 +87,7 @@ GameResources::GameResources(Bytes resourceDat)
 GameResources::GameResources(const GpdaArchive& root)
     : scripts_(ResourceSection(root, 4)), live2d_(ResourceSection(root, 0)) {
   if (root.Entries().size() > 1) mainUi_.emplace(ResourceSection(root, 1));
+  if(root.Entries().size()>16)battleUi_.emplace(ResourceSection(root,16));
   if (root.Entries().size() > 6)
     characterPoses_.emplace(ResourceSection(root, 6));
   if(root.Entries().size()>7)battleFaces_.emplace(ResourceSection(root,7));
@@ -188,6 +189,8 @@ ProfileMenuAsset GameResources::LoadProfileTexture(ProfileTextureKey key) const 
     return load(*profileUi_);
   if (key.Section == ProfileTextureSection::MainUi && mainUi_)
     return load(*mainUi_);
+  if(key.Section==ProfileTextureSection::BattleUi && battleUi_)
+    return load(*battleUi_);
   throw FormatError("profile texture section is unavailable");
 }
 std::vector<ResourceAsset> GameResources::LoadApproachTextures(size_t id) const {

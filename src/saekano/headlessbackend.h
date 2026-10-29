@@ -28,6 +28,10 @@ class HeadlessBackend : public VmBackend {
   ApproachResources* ApproachAssets() override { return ApproachResourceBank; }
   BattleResources* BattleResourceBank=nullptr;
   BattleResources* BattleAssets() override { return BattleResourceBank; }
+  std::optional<BattleVersusEnvironment> BattleVersusSettings;
+  const BattleVersusEnvironment* BattleVersusConfig() const override {
+    return BattleVersusSettings?&*BattleVersusSettings:nullptr;
+  }
   ApproachMissionAudio* MissionVoiceBank=nullptr;
   std::optional<ApproachMissionEnvironment> MissionSettings;
   std::optional<ApproachSelectionEnvironment> SelectionSettings;

@@ -142,6 +142,8 @@ void VirtualMachine::Load(bool preserveOwnerState) {
       command.LipAction=LipActionCommand::Decode(script_->Payload(i));
     } else if(opcode==0x3ef) {
       command.BattleEntry=BattleEntryCommand::Decode(script_->Payload(i));
+    } else if(opcode==0x3f9) {
+      command.BattleVersus=BattleVersusCommand::Decode(script_->Payload(i));
     } else if (opcode == 0x3f4) {
       command.BattleGauge = BattleGaugeCommand::Decode(script_->Payload(i));
     } else if (opcode == 0x3f5) {
@@ -200,6 +202,7 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     // the Vita context constructor leaves unwritten. Restored inputs stay exact.
     state_.Battle = {true,0,{0,0},{1,1}};
     state_.BattleEntry={};state_.BattleEntry.Known=true;
+    state_.BattleVersus={};state_.BattleVersus.Known=true;
     if(auto* resources=backend_.BattleAssets())resources->Reset();
     state_.BgmTrack.reset();
     state_.BgmCommandVolume.reset();
@@ -244,6 +247,7 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     // Reapply only for a fresh context, never over a restored manager snapshot.
     for(size_t i=0;i<commands_.size();++i) {
       if(commands_[i].BattleEntry)LoadBattleEntryFields(state_,*commands_[i].BattleEntry);
+      if(commands_[i].BattleVersus)state_.BattleVersus.Text=commands_[i].BattleVersus->Text;
       if(script_->Records()[i].Opcode==0x3f2)++state_.BattleEntry.SelectLoadedCount;
     }
     if(state_.BattleEntry.Enabled){messageContext_.SplitDialogue=true;messageContext_.Side0Character=state_.Battle.SideCharacters[0];}
@@ -384,6 +388,12 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
       auto* resources=backend_.BattleAssets();if(!resources)throw UnsupportedCommand("battle entry resources are unavailable");
       StartBattleEntry(state_,*command.BattleEntry,*resources);
       messageContext_.SplitDialogue=true;messageContext_.Side0Character=state_.Battle.SideCharacters[0];
+    }
+  } else if(opcode==0x3f9) {
+    if(!lane) {
+      const auto* environment=backend_.BattleVersusConfig();
+      if(!environment)throw UnsupportedCommand("versus environment is unavailable");
+      StartBattleVersus(state_,*environment,backend_.Models(),now);
     }
   } else if (opcode == 0x3ee && !lane) {
     auto* resources = backend_.ApproachAssets();
@@ -713,6 +723,7 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
     return false;
   }
   if(opcode==0x2c6)return true; // Shared main/skip/lane updates only mark completion.
+  if(opcode==0x3f9)return lane || UpdateBattleVersus(state_,backend_.Models(),input.Advance,now);
   if(opcode==0x3ef) {
     if(lane)return true;
     auto* resources=backend_.BattleAssets();if(!resources)throw UnsupportedCommand("battle entry resources are unavailable");
@@ -838,7 +849,8 @@ VmEvent VirtualMachine::Step(uint64_t now, const CommandInput& input) {
       boundary_ = (Opcode() == 0x65 || Opcode() == 0x3f2 ||
                    (Opcode()==0x3f6 && !selection.PendingPhase && (selection.Phase==4 || selection.Phase==7)) ||
                    (Opcode()==0x3f7 && state_.ApproachMission.Stage==2) ||
-                   (Opcode()==0x3f8 && state_.ApproachResult.Phase==5 && !state_.ApproachResult.PendingPhase))
+                   (Opcode()==0x3f8 && state_.ApproachResult.Phase==5 && !state_.ApproachResult.PendingPhase) ||
+                   (Opcode()==0x3f9 && state_.BattleVersus.Phase==12 && !state_.BattleVersus.PendingPhase))
           ? VmBoundary::WaitingInput : VmBoundary::WaitingBackend;
       UpdateLanes(now);
     }

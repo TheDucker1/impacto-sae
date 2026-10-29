@@ -78,6 +78,10 @@ class EnvironmentReader {
     return size_t(count);
   }
   size_t Position() const { return cursor_; }
+  std::u16string String() {
+    PayloadReader reader(bytes_.subspan(cursor_));auto value=reader.String();
+    Skip(bytes_.size()-cursor_-reader.Remaining());return value;
+  }
 
  private:
   std::span<const uint8_t> bytes_;
@@ -118,8 +122,8 @@ bool ScriptLinearTween::Finished() const {
   return Current == To && Sample - Epoch >= uint64_t(Duration);
 }
 
-BattleGaugeEnvironment BattleGaugeEnvironment::Decode(
-    std::span<const uint8_t> bytes) {
+static BattleGaugeEnvironment ReadBattleEnvironment(std::span<const uint8_t> bytes,
+    BattleVersusEnvironment* versus=nullptr,BattleVersusVisualEnvironment* visual=nullptr) {
   EnvironmentReader reader(bytes);
   BattleGaugeEnvironment result;
   reader.Skip(3 + 3 * 4);  // flags and colors
@@ -128,15 +132,25 @@ BattleGaugeEnvironment BattleGaugeEnvironment::Decode(
   if (thresholds == 0) throw FormatError("battle threshold table is empty");
   result.NeutralThreshold = reader.Word();
   reader.Skip((thresholds - 1) * 4);
-  reader.Skip(34 + 2 * 16 + 4 * 34 + 2 * 4);
-  reader.Table(8);
-  reader.Table(8);
-  reader.Table(4);
+  const auto gauge=reader.Sprite();if(versus)versus->Display=gauge.Words[1];
+  reader.Skip(2*16);
+  for(size_t i=0;i<4;++i){const auto sprite=reader.VisualSprite();if(visual)visual->Sprites[i]=sprite;}
+  const auto nameScale=std::bit_cast<float>(reader.Word()),textScale=std::bit_cast<float>(reader.Word());
+  if(visual){visual->NameScale=nameScale;visual->TextScale=textScale;}
+  const auto points=[&](std::vector<std::array<int32_t,2>>* out){
+    const auto count=reader.Count(8);
+    for(size_t i=0;i<count;++i){std::array<int32_t,2> point{reader.Word(),reader.Word()};if(out)out->push_back(point);}
+  };
+  points(visual?&visual->NamePositions:nullptr);points(visual?&visual->NameSizes:nullptr);
+  const auto offsets=reader.Count(4);
+  for(size_t i=0;i<offsets;++i){const auto word=reader.Word();if(visual)visual->NameOffsets.push_back(word);}
   const auto strings = reader.Count(4);
-  for (size_t i = 0; i < strings; ++i) reader.Table(2);
-  reader.Table(8);
-  reader.Skip(4);
-  reader.Table(4);
+  for(size_t i=0;i<strings;++i){auto value=reader.String();if(visual)visual->CharacterNames.push_back(std::move(value));}
+  points(visual?&visual->TextPositions:nullptr);
+  const auto padding=reader.Word();if(visual)visual->TextPadding=padding;
+  const auto colors=reader.Count(4);
+  for(size_t i=0;i<colors;++i){const auto c=uint32_t(reader.Word());if(visual)visual->Colors.push_back(
+      {uint8_t(c>>16),uint8_t(c>>8),uint8_t(c),uint8_t(c>>24)});}
   reader.Skip(4 + 2 * 8 + 34 + 4 + 2 * 8 + 4 + 5 * 34);
   const auto groups = reader.Count(4);
   for (size_t i = 0; i < groups; ++i) reader.Table(8);
@@ -149,7 +163,11 @@ BattleGaugeEnvironment BattleGaugeEnvironment::Decode(
   reader.Table(16);
   reader.Table(16);
   for (size_t i = 0; i < 4; ++i) reader.Table(8);
-  reader.Skip(13 * 4);  // preceding scalar settings80261a68..80261a98
+  std::array<int32_t,13> settings;for(auto& word:settings)word=reader.Word();
+  if(versus){versus->Offscreen=settings[4];versus->SlideDuration=settings[5];
+    versus->FirstDuration=settings[6];versus->SecondDuration=settings[7];
+    versus->TextDuration=settings[8];versus->TextTravel=settings[9];
+    versus->IconDuration=settings[10];versus->FadeDuration=settings[11];}
   result.Duration = reader.Word();
   result.DisplayPerPoint = reader.Word();
   result.XPerPoint = reader.Word();
@@ -159,6 +177,18 @@ BattleGaugeEnvironment BattleGaugeEnvironment::Decode(
       !std::isfinite(result.ScalePerPoint))
     throw FormatError("invalid battle gauge environment");
   return result;
+}
+BattleGaugeEnvironment BattleGaugeEnvironment::Decode(std::span<const uint8_t> bytes) {
+  return ReadBattleEnvironment(bytes);
+}
+BattleVersusEnvironment BattleVersusEnvironment::Decode(std::span<const uint8_t> bytes) {
+  BattleVersusEnvironment out;ReadBattleEnvironment(bytes,&out);return out;
+}
+BattleVersusVisualEnvironment BattleVersusVisualEnvironment::Decode(std::span<const uint8_t> bytes) {
+  BattleVersusVisualEnvironment out;ReadBattleEnvironment(bytes,nullptr,&out);
+  if(!std::isfinite(out.NameScale) || !std::isfinite(out.TextScale) || out.NameScale<0 || out.TextScale<0)
+    throw FormatError("invalid battle versus text scale");
+  return out;
 }
 BattleGaugeCommand BattleGaugeCommand::Decode(
     std::span<const uint8_t> payload) {

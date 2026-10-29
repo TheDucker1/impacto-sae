@@ -873,7 +873,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   const bool captureChapter=captureMenuInput==7;
   const bool captureLip=captureMenuInput==9;
   const bool captureBattle=captureMenuInput==10;
-  const bool captureProfile=captureMenuInput==8 || captureLip || captureBattle;
+  const bool captureVersus=captureMenuInput==11;
+  const bool captureProfile=captureMenuInput==8 || captureLip || captureBattle || captureVersus;
   const bool captureResult=captureMenuInput==5 || captureMenuInput==6 || captureChapter || captureProfile;
   const bool captureResultPointer=captureMenuInput==6;
   std::vector<std::array<size_t,2>> choicePlan;size_t choicePlanIndex=0;
@@ -991,6 +992,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   backend.ApproachResourceBank = &approachAssets;
   backend.BattleResourceBank=&battleAssets;
   backend.BattleConfig=BattleGaugeEnvironment::Decode(SceneRead(root/"env/env_tukkomi.dat"));
+  backend.BattleVersusSettings=BattleVersusEnvironment::Decode(SceneRead(root/"env/env_tukkomi.dat"));
+  const auto versusVisual=BattleVersusVisualEnvironment::Decode(SceneRead(root/"env/env_tukkomi.dat"));
   backend.SceneModels = &models;
   backend.MissionVoiceBank=&missionVoice;
   backend.MissionSettings=ApproachMissionEnvironment::Decode(SceneRead(root/"env/env_approach.dat"));
@@ -1067,7 +1070,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     events.open(captureDirectory / "scene-events.jsonl");
     if (!report || !pcm || !events)
       throw FormatError("cannot create scene capture output");
-    if(captureProfile && !captureLip && !captureBattle){profileFrames.open(captureDirectory/"profile-frames.jsonl");if(!profileFrames)throw FormatError("cannot create profile frame output");}
+    if(captureProfile && !captureLip && !captureBattle && !captureVersus){profileFrames.open(captureDirectory/"profile-frames.jsonl");if(!profileFrames)throw FormatError("cannot create profile frame output");}
   }
   const auto drawSprite = [&](const UiSpriteBlit& sprite) {
     renderer.DrawQuad(sprite, renderer.Textures.at(sprite.Texture), false);
@@ -1093,6 +1096,20 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     if (!renderer.Textures.contains(key))
       upload(key, DecodeSceneImage(resources.LoadProfileTexture(key).Data));
   };
+  size_t versusUploadsChecked=0;
+  const auto uploadBattleUi=[&](uint32_t id) {
+    const ProfileTextureKey key{ProfileTextureSection::BattleUi,-1,id};
+    if(renderer.Textures.contains(key))return;
+    const auto pixels=DecodeSceneImage(resources.LoadProfileTexture(key).Data);upload(key,pixels);
+    if(captureVersus) {
+      std::vector<uint8_t> actual(pixels.Rgba.size());GLint previousTexture=0;
+      glGetIntegerv(GL_TEXTURE_BINDING_2D,&previousTexture);glBindTexture(GL_TEXTURE_2D,renderer.Textures.at(key).Handle);
+      glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_UNSIGNED_BYTE,actual.data());
+      glBindTexture(GL_TEXTURE_2D,GLuint(previousTexture));GlCheck("versus atlas storage readback");
+      if(actual!=pixels.Rgba)throw FormatError("versus atlas upload differs from decoded source");
+      ++versusUploadsChecked;
+    }
+  };
   for (auto id : {0u, 1u, 2u, 3u, 9u}) uploadMain(id);
   PlainTextLayout layout;
   size_t layoutCommand = SIZE_MAX;
@@ -1109,6 +1126,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   const auto epoch = SDL_GetTicks();
   std::string previousSignature;
   size_t saved = 0;
+  bool versusConfirmSent=false;
   std::map<uint16_t, bool> actorEligibility;
   WidgetInputHistory menuPointer;
   std::vector<WidgetEventHistory> menuParents,menuChildren,menuArrows;
@@ -1123,6 +1141,13 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     CommandInput input;
     SkipAutoInput policyInput;
     SDL_Event event;
+    if(captureVersus && vm->State().BattleVersus.Phase==12 && !vm->State().BattleVersus.PendingPhase && !versusConfirmSent) {
+      for(const auto type:{SDL_EVENT_KEY_DOWN,SDL_EVENT_KEY_UP}) {
+        SDL_Event e{};e.type=type;e.key.windowID=SDL_GetWindowID(window.Window);e.key.key=SDLK_RETURN;
+        e.key.down=type==SDL_EVENT_KEY_DOWN;SdlCheck(SDL_PushEvent(&e),"versus capture explicit confirm");
+      }
+      versusConfirmSent=true;events << "{\"kind\":\"battle_versus_confirmation\",\"now\":" << now << ",\"source\":\"explicit_capture_SDL_key\"}\n";
+    }
     if(captureProfile && vm->CurrentProfile()) {
       const auto key=profilePresenter.CaptureKey(*vm->CurrentProfile(),profileChoice,now);
       if(key)for(const auto type:{SDL_EVENT_KEY_DOWN,SDL_EVENT_KEY_UP}) {
@@ -1384,7 +1409,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         resultTouch.TrackedId,resultPointer.Velocity(0)));
     resultPointer.Publish(resultTouch.Flags);
     const bool ordinaryRelease=!menuState.Visible && sceneInput.UpdatePrimary();
-    const bool resultInput=vm->Opcode()==0x3f8;
+    const bool resultInput=vm->Opcode()==0x3f8 || vm->Opcode()==0x3f9;
     const bool pointerAdvance=resultInput ? resultTouch.Enabled && (resultTouch.Flags&8) : ordinaryRelease;
     input.Advance = input.Advance || pointerAdvance;
     if (capture && captureActive) {
@@ -1433,9 +1458,22 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       if(captureParticles && particleCaptureRequested)captureActive=true;
       if(captureResult && !captureChapter && !captureProfile && step.Opcode==0x3f8)captureActive=true;
       if(captureChapter && step.Opcode==0x3ec)captureActive=true;
-      if(captureProfile && !captureLip && !captureBattle && step.Opcode==0x3ed)captureActive=true;
+      if(captureProfile && !captureLip && !captureBattle && !captureVersus && step.Opcode==0x3ed)captureActive=true;
       if(captureLip && step.Opcode==0x2c6)captureActive=true;
       if(captureBattle && step.Opcode==0x3ef)captureActive=true;
+      if(captureVersus && step.Opcode==0x3f9)captureActive=true;
+      if(captureVersus && step.Opcode==0x3f9 && step.Boundary==VmBoundary::CommandCompletedBeforeDispatch) {
+        const auto& v=vm->State().BattleVersus;
+        std::ofstream result(captureDirectory/"battle-versus.json");
+        result << "{\"script\":" << step.Script << ",\"command\":" << step.Command << ",\"now\":" << now
+               << ",\"phase\":" << v.Phase << ",\"completed\":" << v.Completed << ",\"visible\":" << v.Visible
+               << ",\"confirmation_sent\":" << versusConfirmSent << ",\"display\":" << vm->State().Battle.Display
+               << ",\"battle_atlas_root\":16,\"gpu_atlas_uploads_checked\":" << versusUploadsChecked << ",\"actors\":[";
+        for(size_t i=0;i<vm->State().Live2d.Records.size();++i){if(i)result << ',';const auto& r=vm->State().Live2d.Records[i];
+          result << '[' << r.LogicalId << ',' << (*r.Position)[0] << ',' << (*r.Position)[1] << ']';}
+        result << "],\"right_motion_corrected\":true,\"whole_battle_playability_claimed\":false}\n";
+        targetCompleted=true;quit=true;break;
+      }
       if(captureBattle && step.Opcode==0x3ef && step.Boundary==VmBoundary::CommandCompletedBeforeDispatch) {
         const auto& state=vm->State();std::ofstream out(captureDirectory/"battle-entry.json");
         out << "{\"script\":" << step.Script << ",\"command\":" << step.Command << ",\"now\":" << now
@@ -1497,7 +1535,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         laidOut = false;
         capturePointerStage = 0;
         if((captureResult && !captureChapter && !captureProfile && resultCompleted) || (captureChapter && chapterCompleted) ||
-            (captureProfile && !captureLip && !captureBattle && profileReturned)){targetCompleted=true;quit=true;}
+            (captureProfile && !captureLip && !captureBattle && !captureVersus && profileReturned)){targetCompleted=true;quit=true;}
         break;
       }
       if(captureResult && step.Opcode==0x3f8 && step.Boundary==VmBoundary::CommandCompletedBeforeDispatch)
@@ -1570,7 +1608,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         int w=0,h=0;SdlCheck(SDL_GetWindowSizeInPixels(window.Window,&w,&h),"profile scene viewport");
         profilePresenter.Draw(*mode,vm->State(),w,h);
         const auto signature=profilePresenter.Signature(*mode);
-        if(captureProfile && !captureLip && !captureBattle && (signature!=profileSignature || now-profileLastSaved>=2000)) {
+        if(captureProfile && !captureLip && !captureBattle && !captureVersus && (signature!=profileSignature || now-profileLastSaved>=2000)) {
           const auto file="profile-"+std::to_string(profileSaved++)+".bmp";
           Capture(captureDirectory/file,w,h);profilePresenter.Write(profileFrames,*mode,vm->State(),now,file);
           profileSignature=signature;profileLastSaved=now;
@@ -1585,6 +1623,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       if(!capture)SDL_Delay(16);
       continue;
     }
+    if(captureVersus && targetCompleted)break; // Stop before the still-unbound selection HUD.
     if(captureBattle && captureActive) { // Resource/GPU diagnostic omits the unbound battle HUD.
       if(targetCompleted)break;
       continue;
@@ -1653,7 +1692,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     renderer.SetFilter(*state.ScreenFilter.Mode, *state.ScreenFilter.Intensity);
     const auto* activeMessage = backend.CurrentMessage();
     const bool approach=state.ApproachMode.Enabled.value_or(false);
-    if (!activeMessage && !approach && !state.TitleDisplay.value_or(false)) {
+    if (!activeMessage && !approach && !state.BattleVersus.Visible && !state.TitleDisplay.value_or(false)) {
       UiSpriteBlit white;
       white.Destination = {0, 0, 960, 544};
       white.Color = {255, 255, 255, 255};
@@ -1878,6 +1917,11 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         }
       }
     }
+    for(const auto& d:BuildBattleVersusDraws(versusVisual,state.BattleVersus,state.Battle.SideCharacters,
+        uint32_t(utility.Size),[&](auto text,int32_t size){return int32_t(MeasurePvfText(font.Cached(),text,uint32_t(size),font.NominalSize()));})) {
+      if(d.IsText){fontTextures.DrawString(renderer,font,d.Text.Text,d.Text.Position[0],d.Text.Position[1],d.Text.Size,d.Text.Color);textDraws.push_back(d.Text);}
+      else {uploadBattleUi(d.Sprite.Texture.Entry);drawSprite(d.Sprite);spriteDraws.push_back(d.Sprite);}
+    }
     // Native HUD tail8007708c draws white after queued presentation/HUD.
     if (const auto fade = BuildScreenFade(*state.ScreenFade)) {
       glUniform1i(renderer.AlphaMode, 1);
@@ -1917,6 +1961,11 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
           std::to_string(state.ScreenFade.value_or(-1)/64)+':'+std::to_string(quit);
     }
     if(captureLip)for(const auto& [id,mouth]:mouths)signature+=':'+std::to_string(id)+':'+std::to_string(mouth.Frame);
+    if(captureVersus) {
+      const auto& v=state.BattleVersus;
+      signature=std::to_string(v.Phase)+':'+std::to_string(v.PendingPhase.value_or(-1));
+      for(const auto& t:v.Tweens)signature+=':'+std::to_string(t.Current/64);
+    }
     if(!captureResult)for (const auto& fill : state.SceneImages.Slots.FillRects)
       signature += ':' + std::to_string(fill.Opacity / 16);
     if(!captureResult)for (const auto& [id, actor] : state.Characters) {
@@ -1929,6 +1978,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       const auto file = "scene-" + std::to_string(saved++) + ".bmp";
       Capture(captureDirectory / file, width, height);
       report << "{\"file\":\"" << file << "\",\"now\":" << now
+             << ",\"battle_versus\":[" << state.BattleVersus.Visible << ',' << state.BattleVersus.Phase << ',' << state.BattleVersus.PendingPhase.value_or(-1) << ']'
              << ",\"script\":" << state.ScriptFileId
              << ",\"command\":" << state.CurrentCommandIndex << ",\"revealed\":"
              << (message->Reveal.Revealed ? "true" : "false")
