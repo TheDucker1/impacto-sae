@@ -5,6 +5,9 @@
 #include <optional>
 
 namespace Impacto::Saekano {
+int RunParticleGroupProbe(const std::filesystem::path& usrdir,
+                          const std::filesystem::path& fixtureDirectory,
+                          const std::filesystem::path& output);
 int RunParticleRasterProbe(const std::filesystem::path& fixtureDirectory,
                            const std::filesystem::path& output);
 int RunParticleFragmentProbe(const std::filesystem::path& fixtureDirectory,

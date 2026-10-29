@@ -283,6 +283,8 @@ int main(int argc, char* argv[]) {
   }
     if(argc==3 && std::string_view(argv[1])=="--saekano-result-render-state")
       return Saekano::RunResultRenderStateProbe(argv[2]);
+    if (argc == 5 && std::string_view(argv[1]) == "--saekano-particle-group")
+      return Saekano::RunParticleGroupProbe(argv[2], argv[3], argv[4]);
     if (argc == 4 && std::string_view(argv[1]) == "--saekano-particle-raster")
       return Saekano::RunParticleRasterProbe(argv[2], argv[3]);
     if (argc == 4 && std::string_view(argv[1]) == "--saekano-particle-fragment")

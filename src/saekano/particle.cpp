@@ -1,6 +1,7 @@
 #include "particle.h"
 #include "commands.h"
 #include "resources.h"
+#include "scenecamera.h"
 #include <algorithm>
 #include <bit>
 #include <cerrno>
@@ -1043,6 +1044,25 @@ ConfiguredParticleEffect ConfiguredParticleEffect::Load(const GameResources& res
   }
   throw FormatError("configured particle effect name not found");
 }
+ParticleEffectRequest BuildApproachParticleRequest(const std::array<int32_t,2>& screen,
+    const SceneCameraParameters& camera, float environmentScale) {
+  if (!std::isfinite(camera.Position[2]) || !std::isfinite(camera.FieldOfView) ||
+      camera.FieldOfView <= 0 || camera.FieldOfView >= std::bit_cast<float>(0x40490fdbu) ||
+      !std::isfinite(environmentScale)) throw FormatError("invalid approach particle projection inputs");
+  const float halfAngle = camera.FieldOfView * .5f;
+  const float tangent = std::tan(halfAngle);  // Host math boundary, as in the camera component.
+  const float extent = std::fabs(camera.Position[2]) * tangent;
+  ParticleEffectRequest request; request.Group = 6;
+  float x = float(screen[0]) - 480.0f;
+  x = x / 960.0f; x = x * extent; x = x * 2.0f;
+  x = x * std::bit_cast<float>(0x3fe1e1e2u);
+  float y = float(screen[1]) - 272.0f;
+  y = y / 544.0f; y = y * extent; y = y * 2.0f;
+  request.Owner[0] = x; request.Owner[1] = y;
+  request.Owner[9] = environmentScale;
+  std::fill(request.Owner.begin() + 10, request.Owner.end(), 1.0f);
+  return request;
+}
 ParticleManager::ParticleManager(uint64_t nativeClock) {
   random_.Initialize(nativeClock);
   for (auto& group : groups_)
@@ -1172,5 +1192,26 @@ std::vector<ParticleDrawSource> ParticleManager::CollectDrawSources(size_t group
     owners[slot] = {&handle.State, effect ? &effect->Program() : nullptr, effect ? &effect->Assets : nullptr};
   }
   return CollectParticleDrawSources(owners, batched, textureOrder_);
+}
+std::vector<ParticleDrawCommand> ParticleManager::BuildDrawCommands(size_t group,
+    std::span<const std::array<uint32_t,2>> textureSizes, float groupOpacity) const {
+  if (textureSizes.size() != textureOrder_.size()) throw FormatError("particle texture extent registry mismatch");
+  std::vector<ParticleDrawCommand> result;
+  const auto append = [&](const ParticleDrawSource& source, bool batched) {
+    if (!source.Particle->Birth.Flags[0] || !source.TextureIndex) return;
+    if (!source.Definition) throw UnsupportedCommand("active particle definition is unavailable");
+    const auto index = *source.TextureIndex;
+    const auto& size = textureSizes[index];
+    if (const auto packet = BuildParticleDrawPacket(*source.Particle, *source.Definition,
+            size[0], size[1], groupOpacity, true, batched))
+      result.push_back({index, *packet, batched});
+  };
+  const auto sources = CollectDrawSources(group, true);
+  std::vector<ParticleBatchCandidate> candidates;
+  for (const auto& source : sources) candidates.push_back({source.Particle, source.TextureIndex});
+  for (const auto& batch : BuildParticleBatches(candidates, textureSizes.size(), groupOpacity))
+    for (const auto candidate : batch.Candidates) append(sources[candidate], true);
+  for (const auto& source : CollectDrawSources(group, false)) append(source, false);
+  return result;
 }
 }  // namespace Impacto::Saekano

@@ -637,15 +637,55 @@ void main(){
   ~UiBlitRenderer() { Release(); }
 };
 struct ParticleGlRenderer {
+  const ParticleManager* TextureOwner = nullptr;
+  std::map<size_t,UiBlitRenderer::BoundTexture> Textures;
   GLuint Vao = 0, Buffer = 0;
   std::array<GLuint,7> Programs{};
   ParticleGlRenderer() {
     glGenVertexArrays(1,&Vao);glGenBuffers(1,&Buffer);
   }
   ~ParticleGlRenderer() {
+    ResetTextures();
     for (auto program : Programs) if (program) glDeleteProgram(program);
     if (Buffer) glDeleteBuffers(1,&Buffer);
     if (Vao) glDeleteVertexArrays(1,&Vao);
+  }
+  void ResetTextures() {
+    for (const auto& [index,texture] : Textures) glDeleteTextures(1,&texture.Handle);
+    Textures.clear(); TextureOwner=nullptr;
+  }
+  const UiBlitRenderer::BoundTexture& Texture(const ParticleManager& manager,size_t index) {
+    if (TextureOwner!=&manager) { ResetTextures();TextureOwner=&manager; }
+    if (const auto found=Textures.find(index);found!=Textures.end()) return found->second;
+    ScopedSdkGlState scope;
+    const auto pixels=DecodeSceneImage(manager.TextureData(index)); GLuint handle=0;glGenTextures(1,&handle);
+    const auto found=Textures.emplace(index,UiBlitRenderer::BoundTexture{handle,pixels.Width,pixels.Height}).first;
+    glBindTexture(GL_TEXTURE_2D,handle);
+    // Original b5cb2's final setters: LINEAR min/mag and CLAMP U/V.
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+    glPixelStorei(GL_UNPACK_ALIGNMENT,4);
+    glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,pixels.Width,pixels.Height,0,GL_RGBA,GL_UNSIGNED_BYTE,pixels.Rgba.data());
+    GlCheck("particle GXT upload");return found->second;
+  }
+  size_t DrawGroup(const ParticleManager& manager,size_t group,float opacity,
+      const ParticleProjectionUniforms& projection,const ParticleFragmentState& fragment,
+      const ParticleRasterViewport& viewport) {
+    std::vector<std::array<uint32_t,2>> sizes(manager.TextureOrder().size());
+    for (const bool batched : {true,false}) for (const auto& source : manager.CollectDrawSources(group,batched)) {
+      if (!source.Particle->Birth.Flags[0] || !source.TextureIndex) continue;
+      const auto index=*source.TextureIndex;const auto& texture=Texture(manager,index);
+      sizes[index]={texture.Width,texture.Height};
+    }
+    const auto draws=manager.BuildDrawCommands(group,sizes,opacity);
+    for (const auto& draw : draws) {
+      if (draw.Batched) throw UnsupportedCommand("batched particle GPU submission is not bound");
+      const auto& texture=Texture(manager,draw.TextureIndex);
+      Draw(draw.Packet,texture.Handle,texture.Width,texture.Height,projection,fragment,viewport);
+    }
+    return draws.size();
   }
   GLuint Program(uint32_t family) {
     if (family >= Programs.size()) throw FormatError("unknown particle fragment family");
@@ -1855,6 +1895,73 @@ int RunResultRenderStateProbe(const std::filesystem::path& output) {
   }catch(const std::exception& e) {
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano result render-state: %s",e.what());return 1;
   }
+}
+int RunParticleGroupProbe(const std::filesystem::path& usrdir,
+    const std::filesystem::path& fixtureDirectory,const std::filesystem::path& output) {
+  try {
+    if (std::filesystem::exists(output)) throw FormatError("choose a fresh particle group output");
+    const auto raw=SceneRead(fixtureDirectory/"group.bin");PayloadReader reader(raw);
+    if (reader.U32()!=0x31524750) throw FormatError("invalid particle group fixture");
+    const auto count=reader.U32();if(!count || count>4)throw FormatError("particle group case budget");
+    ViewerWindow window(true);ParticleGlRenderer renderer;GameResources resources(SceneRead(usrdir/"resource.dat"));
+    const auto environment=ParticleEnvironment::Decode(SceneRead(usrdir/"env/env_particle.dat"));
+    struct Target {
+      GLuint Fbo=0,Color=0;
+      ~Target(){if(Fbo)glDeleteFramebuffers(1,&Fbo);if(Color)glDeleteTextures(1,&Color);}
+    } target;
+    constexpr uint32_t width=192,height=108;
+    glGenFramebuffers(1,&target.Fbo);glBindFramebuffer(GL_FRAMEBUFFER,target.Fbo);
+    glGenTextures(1,&target.Color);glBindTexture(GL_TEXTURE_2D,target.Color);
+    glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA32F,width,height,0,GL_RGBA,GL_FLOAT,nullptr);
+    glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,target.Color,0);
+    if(glCheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE)throw FormatError("particle group target incomplete");
+    std::ofstream report(output);if(!report)throw FormatError("cannot create particle group report");
+    report << "{\"cases\":[";
+    const auto scalar=[&](){return std::bit_cast<float>(reader.U32());};
+    for(uint32_t c=0;c<count;++c) {
+      const auto seed=reader.U32(),id=reader.U32(),ticks=reader.U32();const auto opacity=scalar();
+      if(ticks>80)throw FormatError("particle group tick budget");
+      ParticleManager manager(seed);manager.LoadEffect(resources,environment,id);
+      ParticleEffectRequest request;request.Group=6;for(auto& v:request.Owner)v=scalar();
+      ParticleProjectionUniforms projection;for(auto* matrix:{&projection.View,&projection.Projection,&projection.World})for(auto& v:*matrix)v=scalar();
+      projection.Aspect=scalar();ParticleRasterViewport viewport;viewport.TargetSize={float(width),float(height)};
+      ParticleFragmentState fragment;fragment.BlendIndex=1;
+      const auto expectedCount=reader.U32();if(expectedCount>300)throw FormatError("particle group reference budget");
+      std::vector<ParticleDrawCommand> expected(expectedCount);
+      for(auto& draw:expected) {
+        draw.TextureIndex=reader.U32();auto& packet=draw.Packet;
+        for(auto& v:packet.Size)v=reader.U32();for(auto& v:packet.Source)v=reader.I32();
+        for(auto* vector:{&packet.Position,&packet.Angles})for(auto& v:*vector)v=scalar();
+        const auto color=reader.U32();for(size_t i=0;i<4;++i)packet.Bgra[i]=uint8_t(color>>(8*i));
+        packet.Intensity=scalar();packet.RenderMode=reader.I32();
+      }
+      if(!manager.Request(id,request))throw FormatError("particle group resource missing");
+      for(uint32_t tick=0;tick<ticks;++tick)manager.Update();
+      glViewport(0,0,width,height);glDisable(GL_SCISSOR_TEST);glDisable(GL_STENCIL_TEST);
+      glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);glClearColor(.125f,.25f,.5f,1.0f);glClear(GL_COLOR_BUFFER_BIT);
+      const auto actualCount=renderer.DrawGroup(manager,6,opacity,projection,fragment,viewport);
+      if(actualCount!=expectedCount)throw FormatError("particle GPU group count differs from native");
+      std::vector<float> actual(width*height*4),reference(actual.size());
+      glReadPixels(0,0,width,height,GL_RGBA,GL_FLOAT,actual.data());glClear(GL_COLOR_BUFFER_BIT);
+      for(const auto& draw:expected) {
+        const auto& texture=renderer.Texture(manager,draw.TextureIndex);
+        renderer.Draw(draw.Packet,texture.Handle,texture.Width,texture.Height,projection,fragment,viewport);
+      }
+      glReadPixels(0,0,width,height,GL_RGBA,GL_FLOAT,reference.data());GlCheck("particle group readback");
+      size_t changed=0;constexpr std::array<float,4> clear{.125f,.25f,.5f,1};
+      for(size_t i=0;i<actual.size();++i) {
+        if(!std::isfinite(actual[i]) || std::bit_cast<uint32_t>(actual[i])!=std::bit_cast<uint32_t>(reference[i]))
+          throw FormatError("particle group pixels differ from native packet reference");
+        changed+=actual[i]!=clear[i%4];
+      }
+      if(!changed)throw FormatError("particle group produced no changed components");
+      if(c)report << ',';report << "{\"effect\":" << id << ",\"ticks\":" << ticks << ",\"draws\":" << actualCount
+        << ",\"components\":" << actual.size() << ",\"changed_components\":" << changed << '}';
+      renderer.ResetTextures();  // Manager storage can reuse its address next case.
+    }
+    if(reader.Remaining())throw FormatError("trailing particle group fixture");
+    report << "],\"passed\":true,\"native_packet_reference\":true,\"scene_owner_bound\":false}\n";return 0;
+  }catch(const std::exception& error){SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Particle group probe: %s",error.what());return 1;}
 }
 int RunParticleRasterProbe(const std::filesystem::path& fixtureDirectory,
                            const std::filesystem::path& output) {

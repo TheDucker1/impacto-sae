@@ -28,6 +28,8 @@ struct ImagePixels {
 };
 // Measured scene/sprite subset: one linear or power-of-two swizzled P8 image,
 // one mip level. Shares Impacto's palette and Vita coordinate conversion.
+// Data must fit its declared extent; trailing alignment padding is ignored,
+// matching the native GXT upload rather than treating padding as pixel data.
 // Other GXT layouts fail here; the full Impacto loader handles model textures.
 ImagePixels DecodeSceneImage(std::span<const uint8_t> bytes);
 

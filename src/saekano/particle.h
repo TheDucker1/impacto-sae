@@ -279,6 +279,11 @@ struct ParticleEffectRequest {
   uint32_t Group = 0;
   std::array<float, 14> Owner{};  // Exact native request words2..15.
 };
+struct SceneCameraParameters;
+// Native7f838: project authored screen coordinates through the owning camera.
+// Preserves the staged f32 operations and fixed authored aspect constant.
+ParticleEffectRequest BuildApproachParticleRequest(const std::array<int32_t,2>& screen,
+    const SceneCameraParameters& camera, float environmentScale);
 struct ParticleEffectHandle {
   std::optional<size_t> EffectId;
   ParticleEffectState State;
@@ -292,6 +297,11 @@ struct ParticleDrawSource {
   const ParticleRuntimeState* Particle = nullptr;
   const ParticleDefinition* Definition = nullptr;
   std::optional<size_t> TextureIndex;
+};
+struct ParticleDrawCommand {
+  size_t TextureIndex = 0;
+  ParticleDrawPacket Packet;
+  bool Batched = false;
 };
 // Supported point-owner traversal: handle, emitter row, particle list order.
 // Enabled gates drawing independently of Running. Retired/unresolved particles
@@ -323,6 +333,10 @@ class ParticleManager {
   std::span<const std::string> TextureOrder() const { return textureOrder_; }
   const Bytes& TextureData(size_t index) const;
   std::vector<ParticleDrawSource> CollectDrawSources(size_t group, bool batched) const;
+  // Original dispatcher order: prepared texture batches, then immediate owners.
+  // Texture extents are supplied by the actual decoded/uploaded registry.
+  std::vector<ParticleDrawCommand> BuildDrawCommands(size_t group,
+      std::span<const std::array<uint32_t,2>> textureSizes, float groupOpacity) const;
   const GameRandom& Random() const { return random_.Generator; }
 
  private:

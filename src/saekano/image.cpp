@@ -54,7 +54,9 @@ ImagePixels DecodeSceneImage(std::span<const uint8_t> bytes) {
       dataBegin < 64 || pixelsBegin != dataBegin ||
       rowStride * result.Height != pixelsSize ||
       uint64_t(pixelsSize) + 1024 != dataSize ||
-      uint64_t(dataBegin) + dataSize != bytes.size())
+      // Native b5cb2 copies only the declared data extent. Original particle
+      // GXT files can retain archive/alignment padding after that extent.
+      uint64_t(dataBegin) + dataSize > bytes.size())
     throw FormatError("invalid scene GXT data extent");
   const auto palette = bytes.subspan(size_t(pixelsBegin) + pixelsSize, 1024);
   const bool hasAlpha = U32(bytes, 52) == 0x95001000;
