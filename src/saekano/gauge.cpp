@@ -4,6 +4,7 @@
 #include "uisprite.h"
 #include "approachmission.h"
 #include "approachselection.h"
+#include "battledialogue.h"
 
 #include <algorithm>
 #include <bit>
@@ -123,7 +124,7 @@ bool ScriptLinearTween::Finished() const {
 }
 
 static BattleGaugeEnvironment ReadBattleEnvironment(std::span<const uint8_t> bytes,
-    BattleVersusEnvironment* versus=nullptr,BattleVersusVisualEnvironment* visual=nullptr) {
+    BattleVersusEnvironment* versus=nullptr,BattleVersusVisualEnvironment* visual=nullptr,BattleDialogueEnvironment* dialogue=nullptr) {
   EnvironmentReader reader(bytes);
   BattleGaugeEnvironment result;
   reader.Skip(3 + 3 * 4);  // flags and colors
@@ -151,7 +152,13 @@ static BattleGaugeEnvironment ReadBattleEnvironment(std::span<const uint8_t> byt
   const auto colors=reader.Count(4);
   for(size_t i=0;i<colors;++i){const auto c=uint32_t(reader.Word());if(visual)visual->Colors.push_back(
       {uint8_t(c>>16),uint8_t(c>>8),uint8_t(c),uint8_t(c>>24)});}
-  reader.Skip(4 + 2 * 8 + 34 + 4 + 2 * 8 + 4 + 5 * 34);
+  reader.Skip(4);
+  for(size_t i=0;i<2;++i){std::array<int32_t,2> p{reader.Word(),reader.Word()};if(dialogue)dialogue->Positions[i]=p;}
+  const auto bubble=reader.VisualSprite();const auto scale=std::bit_cast<float>(reader.Word());
+  if(dialogue){dialogue->Bubble=bubble;dialogue->Scale=scale;}
+  for(size_t i=0;i<2;++i){std::array<int32_t,2> p{reader.Word(),reader.Word()};if(dialogue)dialogue->LineOffsets[i]=p;}
+  const auto textWidth=reader.Word();if(dialogue)dialogue->TextWidth=textWidth;
+  reader.Skip(5*34);
   const auto groups = reader.Count(4);
   for (size_t i = 0; i < groups; ++i) reader.Table(8);
   reader.Skip(2 * 34 + 4 + 34 + 3 * 4);
@@ -188,6 +195,11 @@ BattleVersusVisualEnvironment BattleVersusVisualEnvironment::Decode(std::span<co
   BattleVersusVisualEnvironment out;ReadBattleEnvironment(bytes,nullptr,&out);
   if(!std::isfinite(out.NameScale) || !std::isfinite(out.TextScale) || out.NameScale<0 || out.TextScale<0)
     throw FormatError("invalid battle versus text scale");
+  return out;
+}
+BattleDialogueEnvironment BattleDialogueEnvironment::Decode(std::span<const uint8_t> bytes) {
+  BattleDialogueEnvironment out;ReadBattleEnvironment(bytes,nullptr,nullptr,&out);
+  if(!std::isfinite(out.Scale) || out.TextWidth<=0)throw FormatError("invalid battle dialogue environment");
   return out;
 }
 BattleGaugeCommand BattleGaugeCommand::Decode(

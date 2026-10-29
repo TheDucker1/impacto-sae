@@ -4,7 +4,7 @@
 #include "profilevoiceoutput.h"
 
 namespace Impacto::Saekano {
-// Two actual HCA decoders on an explicit headless clock. Reuses the existing
+// Four actual HCA decoders on an explicit headless clock. Reuses the existing
 // profile PCM consumer; readiness and repeated-start semantics belong here.
 class ClockedOrdinaryVoice final : public OrdinaryVoiceOutput {
  public:
@@ -19,9 +19,9 @@ class ClockedOrdinaryVoice final : public OrdinaryVoiceOutput {
   std::optional<uint64_t> FramesConsumed(uint32_t channel) const;
  private:
   std::shared_ptr<AwbBank> bank_;
-  std::array<ClockedProfileVoice, 2> voices_;
-  std::array<bool, 2> ready_{};
-  std::array<uint32_t, 2> rates_{};
+  std::array<ClockedProfileVoice, 4> voices_;
+  std::array<bool, 4> ready_{};
+  std::array<uint32_t, 4> rates_{};
   uint64_t now_ = 0;
   bool sampled_ = false;
 };

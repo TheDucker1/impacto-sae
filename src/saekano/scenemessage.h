@@ -24,9 +24,11 @@ struct SceneMessageVoiceOwner {
   std::vector<ScriptVoiceEnvelope> Envelopes;
   std::vector<OrdinaryVoiceRange> Ranges;
   OrdinaryVoiceSettings Settings;
+  std::optional<OrdinaryVoiceQueue> SecondaryQueue;
 };
 struct SceneMessageTextState {
   size_t Command = 0;
+  size_t Side = 0;
   OrdinaryMessageText Parsed;
   VoiceTextReveal Reveal;
   uint64_t Epoch = 0;
@@ -38,9 +40,9 @@ struct SceneMessageTextState {
   int32_t AudioPosition = -1;
   std::optional<uint64_t> LastRevealSample;
 };
-// Shared frontend text lifecycle. This first ordinary route is primary,
-// selector0, completion-policy0. Voiced normal updates require an explicitly
-// bound voice owner; async/split/voiced skip routes reject explicitly.
+// Shared frontend text lifecycle with two retained native context containers.
+// Selector0/policy0 and normal voiced updates are bound. Async, append and
+// voiced skip routes remain explicit unsupported boundaries.
 // Font/layout, input polling and audio services belong to the owning frontend.
 class SceneMessageBackend : public HeadlessBackend {
  public:
@@ -54,6 +56,9 @@ class SceneMessageBackend : public HeadlessBackend {
   void StartPresentation(size_t command,uint16_t opcode,std::span<const uint8_t> payload,bool lane,uint64_t now) override;
   void BeginMessage(size_t command, const MessageCommand& message, size_t side,
                     uint64_t now) override;
+  void SetSplitDialogue(bool split) override { splitDialogue_=split; }
+  void SetMessageDualCleanup(bool enabled) override { dualCleanup_=enabled; }
+  void ClearMessage(size_t side) override;
   bool MessageRevealed(size_t command, uint64_t now) override;
   void RevealMessage(size_t command) override;
   bool MessageAdvanceAllowed(size_t command, uint64_t now) override;
@@ -65,6 +70,7 @@ class SceneMessageBackend : public HeadlessBackend {
   void UpdateMessage(uint64_t now);
   bool CursorVisible() const { return cursorVisible_; }
   const SceneMessageTextState* CurrentMessage() const;
+  const SceneMessageTextState* MessageSide(size_t side) const;
   void ResetMessages();  // Owning frontend calls this on manager replacement.
 
  private:
@@ -75,7 +81,11 @@ class SceneMessageBackend : public HeadlessBackend {
   std::optional<uint8_t> autoSpeed_;
   uint64_t sample_ = 0;
   bool cursorVisible_ = false;
-  std::optional<SceneMessageTextState> current_;
+  std::array<std::optional<SceneMessageTextState>,2> messages_;
+  SceneMessageTextState* current_=nullptr;
+  bool splitDialogue_=false;
+  bool dualCleanup_=false;
+  OrdinaryVoiceQueue& VoiceQueue(size_t side);
   SceneMessageVoiceOwner* voices_ = nullptr;
 };
 }  // namespace Impacto::Saekano

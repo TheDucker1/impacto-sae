@@ -345,6 +345,20 @@ std::vector<int32_t> CollectScriptVoiceIds(const ScriptObject& script) {
   }
   return ids;
 }
+std::array<std::vector<int16_t>,2> CollectMessageVoiceCatalogs(const ScriptObject& script) {
+  std::array<std::vector<int16_t>,2> catalogs;bool split=false;int32_t side0=0;
+  for(size_t i=0;i<script.Records().size();++i) {
+    const auto opcode=script.Records()[i].Opcode;
+    if(opcode==0x3ef){const auto entry=BattleEntryCommand::Decode(script.Payload(i));split=true;side0=entry.Groups[0];}
+    else if(opcode==0x64){const auto message=DecodeMessage(script.Payload(i));if(message.VoiceId<0)continue;
+      if(message.VoiceId>INT16_MAX)throw FormatError("message voice ID exceeds native signed16 catalog");
+      auto& catalog=catalogs[split && message.SpeakerId!=-1 && message.SpeakerId!=side0?1:0];
+      const auto voice=int16_t(message.VoiceId);
+      if(std::find(catalog.begin(),catalog.end(),voice)==catalog.end())catalog.push_back(voice);
+    }
+  }
+  return catalogs;
+}
 std::vector<ScriptVoiceEnvelope> GameResources::LoadScriptVoiceEnvelopes(
     int32_t scriptId) const {
   if (scriptId < 0 || size_t(scriptId) >= ScriptCount())

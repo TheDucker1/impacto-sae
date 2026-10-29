@@ -357,6 +357,8 @@ void VirtualMachine::SetupMessage(size_t index, uint64_t now) {
     state_.ActiveText.clear();
     for (const auto& text : state_.Messages[0]) state_.ActiveText += text;
   }
+  backend_.SetSplitDialogue(messageContext_.SplitDialogue);
+  backend_.SetMessageDualCleanup(state_.MouthControl && state_.MouthControl->DualCleanup);
   backend_.BeginMessage(index, message, context, now);
 }
 void VirtualMachine::CollectMessageKeywords(size_t index) {
@@ -517,7 +519,7 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
     state_.DayEnabled = 0;
   } else if ((opcode == 0x66 || opcode == 0x1fb || opcode == 0x3ea) && !lane) {
     CompleteCommand(state_, opcode, script_->Payload(index), {});
-    if (opcode == 0x66) messageKeywords_[0].clear();
+    if (opcode == 0x66) {messageKeywords_[0].clear();backend_.ClearMessage(0);}
   } else if (opcode == 0x12e && !lane) {
     if (!messageContext_.Known)
       throw UnsupportedCommand("restored split-side context is missing for window type");

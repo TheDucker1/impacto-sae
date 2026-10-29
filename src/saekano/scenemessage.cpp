@@ -3,6 +3,27 @@
 #include <algorithm>
 
 namespace Impacto::Saekano {
+namespace {
+// Invalidate any cache naming a retired physical handle. Bound native owners
+// use7/8 and9/10; overlapping explicit restored owners are also handled safely.
+struct SharedVoicePreparation final:OrdinaryVoicePreparation {
+  SceneMessageVoiceOwner& Owner;
+  explicit SharedVoicePreparation(SceneMessageVoiceOwner& owner):Owner(owner){}
+  void Stop(uint32_t channel) override {
+    const auto invalidate=[&](OrdinaryVoiceQueue& q){std::erase_if(q.Prepared,[&](const auto& p){return q.BaseChannel+p.Slot==channel;});};
+    invalidate(Owner.Queue);if(Owner.SecondaryQueue)invalidate(*Owner.SecondaryQueue);
+    Owner.Output.Stop(channel);
+  }
+  void Prepare(uint32_t channel,int16_t voice)override{Owner.Output.Prepare(channel,voice);}
+  void Start(uint32_t channel)override{Owner.Output.Start(channel);}
+};
+}
+OrdinaryVoiceQueue& SceneMessageBackend::VoiceQueue(size_t side) {
+  if(!voices_)throw UnsupportedCommand("ordinary voice owner is not bound");
+  if(side==0)return voices_->Queue;
+  if(side!=1 || !voices_->SecondaryQueue)throw UnsupportedCommand("alternate message voice owner is not bound");
+  return *voices_->SecondaryQueue;
+}
 void InitializeFreshMessageOwner(SemanticState& owner) {
   if (owner.WindowOpacity || owner.ReadColorEnabled || owner.ContinueAutoAfterSelection || owner.ContinueSkipAfterSelection)
     throw UnsupportedCommand(
@@ -29,13 +50,14 @@ void SceneMessageBackend::StartPresentation(size_t command,uint16_t opcode,
 void SceneMessageBackend::BeginMessage(size_t command,
                                        const MessageCommand& message,
                                        size_t side, uint64_t now) {
-  if (side || message.Route || message.Selector ||
+  if (side>1 || (side && !splitDialogue_) || message.Route || message.Selector ||
       message.CompletionPolicy)
     throw UnsupportedCommand(
-        "ordinary scene async/selector/append/split text route is not "
+        "ordinary scene async/selector/append or unbound split text route is not "
         "implemented");
   SceneMessageTextState next;
   next.Command = command;
+  next.Side=side;
   if (message.Text.size() > std::numeric_limits<uint32_t>::max())
     throw FormatError("ordinary message source exceeds native length");
   next.SourceUnits = uint32_t(message.Text.size());
@@ -65,14 +87,24 @@ void SceneMessageBackend::BeginMessage(size_t command,
   if (!next.Parsed.QueueMarkers.empty() && !envelope)
     throw UnsupportedCommand("timed inline queue requires an enabled ordinary voice");
   if (envelope) {
+    auto& queue=VoiceQueue(side);
+    if(queue.NextSlot>1 || (dualCleanup_ && (!voices_->SecondaryQueue || voices_->SecondaryQueue->NextSlot>1 || voices_->Queue.NextSlot>1)))
+      throw FormatError("invalid split message voice owners");
     voices_->Output.Update(now);
     voices_->Mouth.End(message.SpeakerId);  // Native setup843d4, before audio replacement.
     next.VoiceGate.Phase = 0;
+    SharedVoicePreparation preparation(*voices_);
+    // Native843e2..84412 stops base+owner34 before preparation. Battle
+    // setup stops both owners; prefetched opposite slots remain available.
+    if(dualCleanup_) {
+      preparation.Stop(voices_->Queue.BaseChannel+voices_->Queue.NextSlot);
+      preparation.Stop(voices_->SecondaryQueue->BaseChannel+voices_->SecondaryQueue->NextSlot);
+    } else preparation.Stop(queue.BaseChannel+queue.NextSlot);
     next.VoiceGate.Slot = int32_t(PrepareOrdinaryVoice(
-        voices_->Queue, int16_t(message.VoiceId), true, voices_->Output));
+        queue, int16_t(message.VoiceId), true, preparation));
   } else next.Reveal.StartCharacters(interval_, now);
   if (AutoReveal) next.Reveal.Reveal(now);
-  current_ = std::move(next);
+  messages_[side]=std::move(next);current_=&*messages_[side];
   sample_ = now;
   cursorVisible_ = false;
 }
@@ -127,7 +159,10 @@ bool SceneMessageBackend::ConsumeVoiceEvent(const GameEvent& event) {
   if (event.Kind != GameEventKind::StopChannel) return false;
   if (!voices_ || event.Parameter != 0)
     throw UnsupportedCommand("ordinary voice stop owner is missing or fade is unsupported");
-  StopOrdinaryVoiceChannel(voices_->Queue, voices_->Output, uint32_t(event.Id));
+  const auto bound=[&](const OrdinaryVoiceQueue& q){return uint32_t(uint32_t(event.Id)-q.BaseChannel)<=1;};
+  if(!bound(voices_->Queue) && (!voices_->SecondaryQueue || !bound(*voices_->SecondaryQueue)))
+    throw UnsupportedCommand("external stop outside ordinary voice slots");
+  SharedVoicePreparation preparation(*voices_);preparation.Stop(uint32_t(event.Id));
   return true;
 }
 bool SceneMessageBackend::BeginMessageUpdate(size_t command, uint64_t now,
@@ -172,7 +207,7 @@ bool SceneMessageBackend::BeginMessageUpdate(size_t command, uint64_t now,
     }
   } services(*voices_, *current_, format_, timing_, textSpeed_, now);
   const auto update = UpdateOrdinaryVoice(current_->VoiceGate,
-                                          voices_->Queue.BaseChannel, services);
+                                          VoiceQueue(current_->Side).BaseChannel, services);
   current_->AudioPosition = update.Position;
   sample_ = now;
   return !update.SkipTextUpdate;
@@ -187,7 +222,7 @@ void SceneMessageBackend::CompleteMessage(size_t command, uint64_t now) {
   }
   voices_->Output.Update(now);
   if (current_->VoiceId >= 0 && voices_->Settings.StopOnAdvance && current_->VoiceGate.Slot >= 0)
-    voices_->Output.Stop(voices_->Queue.BaseChannel + uint32_t(current_->VoiceGate.Slot));
+    SharedVoicePreparation(*voices_).Stop(VoiceQueue(current_->Side).BaseChannel + uint32_t(current_->VoiceGate.Slot));
   voices_->Mouth.End(current_->Speaker);
 }
 void SceneMessageBackend::EndMessageUpdate(size_t command, uint64_t) {
@@ -196,17 +231,26 @@ void SceneMessageBackend::EndMessageUpdate(size_t command, uint64_t) {
   current_->PreviousUpdated = true;
 }
 const SceneMessageTextState* SceneMessageBackend::CurrentMessage() const {
-  return current_ ? &*current_ : nullptr;
+  return current_;
+}
+const SceneMessageTextState* SceneMessageBackend::MessageSide(size_t side) const {
+  const auto& message=messages_.at(side);return message?&*message:nullptr;
+}
+void SceneMessageBackend::ClearMessage(size_t side) {
+  if(current_ && current_->Side==side){current_=nullptr;cursorVisible_=false;}
+  messages_.at(side).reset();
 }
 void SceneMessageBackend::ResetMessages() {
   if (voices_) {
     voices_->Output.Stop(voices_->Queue.BaseChannel);
     voices_->Output.Stop(voices_->Queue.BaseChannel + 1);
+    if(voices_->SecondaryQueue){voices_->Output.Stop(voices_->SecondaryQueue->BaseChannel);voices_->Output.Stop(voices_->SecondaryQueue->BaseChannel+1);}
     voices_->Queue.Prepared.clear();
+    if(voices_->SecondaryQueue)voices_->SecondaryQueue->Prepared.clear();
     voices_->Mouth.End(current_ ? current_->Speaker : -1);
     voices_ = nullptr;
   }
-  current_.reset();
+  current_=nullptr;messages_={};splitDialogue_=false;dualCleanup_=false;
   sample_ = 0;
   cursorVisible_ = false;
 }

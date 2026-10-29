@@ -19,6 +19,9 @@ struct ResourceAsset {
   Bytes Name;  // Native counted bytes, including trailing spaces.
   Bytes Data;
 };
+// Message Load registers voices with the side selected by preceding mode Load
+// effects. Mouth envelopes keep their separate all-voice registration order.
+std::array<std::vector<int16_t>,2> CollectMessageVoiceCatalogs(const ScriptObject& script);
 // Resource.dat child8. Keep counted archive names and authored file order;
 // file decoding/simulation belongs to the effect consumer.
 struct EffectResourceAssets {

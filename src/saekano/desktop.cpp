@@ -1045,8 +1045,11 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         voices, spriteMouth, MakeFreshOrdinaryVoiceQueue(),
         resources.LoadScriptVoiceEnvelopes(vm->State().ScriptFileId),
         LoadOrdinaryVoiceRangesFromFirst(SceneRead(root / "first.dat")), voiceSettings});
-    for (const auto& envelope : voiceOwner->Envelopes)
-      voiceOwner->Queue.Catalog.push_back(int16_t(envelope.VoiceId));
+    auto catalogs=CollectMessageVoiceCatalogs(ScriptObject(resources.Load(vm->State().ScriptFileId)));
+    voiceOwner->Queue.Catalog=std::move(catalogs[0]);
+    voiceOwner->SecondaryQueue=MakeFreshOrdinaryVoiceQueue();
+    voiceOwner->SecondaryQueue->BaseChannel=9; // Native manager binding, distinct from constructor default7.
+    voiceOwner->SecondaryQueue->Catalog=std::move(catalogs[1]);
     backend.BindVoiceOwner(*voiceOwner);
     voiceScript = vm->State().ScriptFileId;
   };
@@ -1445,6 +1448,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     for (size_t work = 0; work < 256; ++work) {
       bindScriptVoices();
       syncMouths();
+      if(vm->Opcode()==0x3f2 && vm->State().BattleEntry.Enabled)
+        throw UnsupportedCommand("battle selection owning lifecycle/HUD/input is not bound");
       const bool acceptedInput=input.Advance;
       const auto step = vm->Step(now, input);
       if(!choicePlan.empty() && step.Opcode==0x3f6 && step.Boundary==VmBoundary::CommandCompletedBeforeDispatch) {

@@ -147,8 +147,19 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
           voices, spriteMouth, MakeFreshOrdinaryVoiceQueue(),
           resources.LoadScriptVoiceEnvelopes(vm->State().ScriptFileId),
           LoadOrdinaryVoiceRangesFromFirst(Read(root / "first.dat")), MakeFreshOrdinaryVoiceSettings()});
-      for (const auto& envelope : voiceOwner->Envelopes)
-        voiceOwner->Queue.Catalog.push_back(int16_t(envelope.VoiceId));
+      auto catalogs=CollectMessageVoiceCatalogs(ScriptObject(resources.Load(vm->State().ScriptFileId)));
+      voiceOwner->Queue.Catalog=std::move(catalogs[0]);
+      voiceOwner->SecondaryQueue=MakeFreshOrdinaryVoiceQueue();
+      voiceOwner->SecondaryQueue->BaseChannel=9;
+      voiceOwner->SecondaryQueue->Catalog=std::move(catalogs[1]);
+      if(!voiceOwner->SecondaryQueue->Catalog.empty()) {
+        out << "{\"kind\":\"split_voice_catalogs\",\"script\":" << vm->State().ScriptFileId << ",\"catalogs\":[";
+        for(size_t side=0;side<2;++side){if(side)out << ',';
+          const auto& q=side?*voiceOwner->SecondaryQueue:voiceOwner->Queue;
+          out << "{\"base\":" << q.BaseChannel << ",\"voices\":[";
+          for(size_t i=0;i<q.Catalog.size();++i){if(i)out << ',';out << q.Catalog[i];}out << "]}";}
+        out << "]}\n";
+      }
       backend.BindVoiceOwner(*voiceOwner); voiceScript = vm->State().ScriptFileId;
     }
     for (const auto& [id, actor] : vm->State().Characters) {
@@ -305,6 +316,9 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         out << "{\"kind\":\"battle_versus_confirmation\",\"now\":" << now << ",\"source\":\"explicit_probe_Advance\"}\n";}
       for (size_t work = 0; work < 256; ++work) {
         sync();
+        if(vm->Opcode()==0x3f2 && vm->State().BattleEntry.Enabled) {
+          finish("battle_selection_lifecycle_not_bound",false);return 1;
+        }
         const auto event = vm->Step(now,commandInput);commandInput.Advance=false;commandInput.Approach={};
         if(event.Opcode==0x3f9 && vm->State().BattleVersus.Started) {
           const auto& v=vm->State().BattleVersus;const auto sample=std::pair(v.Phase,v.PendingPhase.value_or(-1));
@@ -433,7 +447,15 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
               << ",\"script\":" << event.Script << ",\"command\":" << event.Command << ",\"now\":" << now
               << ",\"voice\":" << message->VoiceId << ",\"slot\":" << message->VoiceGate.Slot
               << ",\"epoch\":" << message->Epoch << ",\"source_units\":" << message->SourceUnits
-              << ",\"revealed\":" << (message->Reveal.Revealed ? "true" : "false") << "}\n";
+              << ",\"revealed\":" << (message->Reveal.Revealed ? "true" : "false")
+              << ",\"side\":" << message->Side << ",\"base\":"
+              << (message->Side?voiceOwner->SecondaryQueue->BaseChannel:voiceOwner->Queue.BaseChannel)
+              << ",\"retained\":[" << bool(backend.MessageSide(0)) << ',' << bool(backend.MessageSide(1)) << ']';
+          if(message->VoiceGate.Slot>=0) {
+            const auto base=message->Side?voiceOwner->SecondaryQueue->BaseChannel:voiceOwner->Queue.BaseChannel;
+            out << ",\"voice_pcm_frames\":" << voices.FramesConsumed(base+uint32_t(message->VoiceGate.Slot)).value_or(0);
+          }
+          out << "}\n";
           if (event.Boundary == VmBoundary::CommandStarted) {
             ++messages;
             if(confirmApproachResult && !followPostResult && resultCompleted && event.Script!=entryScript) {

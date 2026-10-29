@@ -179,6 +179,10 @@ struct MusicPlayback::Impl {
   std::array<std::unique_ptr<Audio::OpenAL::OpenALAudioChannel>,4> SeChannels;
   std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> ProfileVoice;
   std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> SecondaryVoice;
+  std::array<std::unique_ptr<Audio::OpenAL::OpenALAudioChannel>,2> AlternateVoices;
+  auto& OrdinaryOutput(size_t slot) {
+    return slot==0?ProfileVoice:slot==1?SecondaryVoice:AlternateVoices.at(slot-2);
+  }
   std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> MissionVoice;
   bool HasMissionVoice=false;
   std::unique_ptr<HcaPlaybackStream> PreparedMissionVoice;
@@ -205,8 +209,8 @@ struct MusicPlayback::Impl {
     if (!BgmFade.Active()) RetireOutgoingBgm();
   }
   std::unique_ptr<HcaPlaybackStream> PreparedProfileVoice;
-  std::array<std::unique_ptr<HcaPlaybackStream>, 2> PreparedOrdinaryVoices;
-  std::array<bool, 2> HasOrdinaryVoice{};
+  std::array<std::unique_ptr<HcaPlaybackStream>, 4> PreparedOrdinaryVoices;
+  std::array<bool, 4> HasOrdinaryVoice{};
   bool HasProfileVoice = false;
   float OldMaster = Audio::MasterVolume;
   float OldGroup = Audio::GroupVolumes[Audio::ACG_BGM];
@@ -255,6 +259,8 @@ struct MusicPlayback::Impl {
           Audio::AC_VOICE0, Audio::ACG_Voice);
       SecondaryVoice = std::make_unique<Audio::OpenAL::OpenALAudioChannel>(
           Audio::AC_VOICE1, Audio::ACG_Voice);
+      for(size_t i=0;i<2;++i)AlternateVoices[i]=std::make_unique<Audio::OpenAL::OpenALAudioChannel>(
+          i?Audio::AC_VOICE1:Audio::AC_VOICE0,Audio::ACG_Voice); // Independent owned AL sources for native9/10.
       MissionVoice = std::make_unique<Audio::OpenAL::OpenALAudioChannel>(
           Audio::AC_VOICE2, Audio::ACG_Voice);
       UiSound = std::make_unique<Audio::OpenAL::OpenALAudioChannel>(
@@ -273,6 +279,7 @@ struct MusicPlayback::Impl {
     OutgoingBgm.reset();
     ProfileVoice.reset();
     SecondaryVoice.reset();
+    for(auto& channel:AlternateVoices)channel.reset();
     MissionVoice.reset();
     PreparedMissionVoice.reset();
     UiSound.reset();
@@ -386,9 +393,9 @@ void MusicPlayback::Submit(const GameEvent& event) {
       throw UnsupportedCommand("native SE fade-time conversion is not verified");
     impl_->SeChannels[size_t(event.Id - 2)]->Stop(0);
   } else if (event.Kind == GameEventKind::StopChannel) {
-    if (event.Parameter || (event.Id != 7 && event.Id != 8))
+    if (event.Parameter || (event.Id < 7 || event.Id > 10))
       throw UnsupportedCommand(
-          "native channel stop outside bound voice7/8 or nonzero fade");
+          "native channel stop outside bound voice7..10 or nonzero fade");
     StopOrdinaryVoice(uint32_t(event.Id));
   } else
     throw UnsupportedCommand("Saekano audio host cannot consume event kind " +
@@ -410,6 +417,7 @@ void MusicPlayback::Update(float seconds) {
   for (auto& channel : impl_->SeChannels) if (channel) channel->Update(seconds);
   impl_->ProfileVoice->Update(seconds);
   impl_->SecondaryVoice->Update(seconds);
+  for(auto& channel:impl_->AlternateVoices)channel->Update(seconds);
   impl_->MissionVoice->Update(seconds);
   impl_->UiSound->Update(seconds);
   AlCheck("BGM frame");
@@ -419,6 +427,7 @@ bool MusicPlayback::Playing() const {
   if (impl_->OutgoingBgm->GetState() != Audio::ACS_Stopped) return true;
   if (impl_->ProfileVoice->GetState() != Audio::ACS_Stopped) return true;
   if (impl_->SecondaryVoice->GetState() != Audio::ACS_Stopped) return true;
+  for(const auto& channel:impl_->AlternateVoices)if(channel->GetState()!=Audio::ACS_Stopped)return true;
   if (MissionVoicePlaying()) return true;
   if (UiSoundPlaying()) return true;
   for (auto& channel : impl_->SeChannels)
@@ -488,8 +497,8 @@ std::optional<float> MusicPlayback::ProfileVoicePosition() const {
 }
 namespace {
 size_t OrdinaryVoiceSlot(uint32_t channel) {
-  if (channel != 7 && channel != 8)
-    throw UnsupportedCommand("ordinary voice channel outside7/8");
+  if (channel<7 || channel>10)
+    throw UnsupportedCommand("ordinary voice channel outside7..10");
   return size_t(channel - 7);
 }
 }  // namespace
@@ -501,7 +510,7 @@ void MusicPlayback::PrepareOrdinaryVoice(
     throw FormatError("invalid ordinary voice preparation");
   if (voiceId > uint32_t(INT16_MAX)) throw FormatError("ordinary voice ID exceeds slot catalog");
   auto stream = std::make_unique<HcaPlaybackStream>(std::move(reader), int32_t(voiceId), "voice.awb");
-  auto& output = slot ? impl_->SecondaryVoice : impl_->ProfileVoice;
+  auto& output = impl_->OrdinaryOutput(slot);
   output->Stop(0);
   output->SetVolume(gain);
   if (!slot) {
@@ -514,7 +523,7 @@ void MusicPlayback::PrepareOrdinaryVoice(
 }
 void MusicPlayback::StartOrdinaryVoice(uint32_t channel) {
   const auto slot = OrdinaryVoiceSlot(channel);
-  auto& output = slot ? impl_->SecondaryVoice : impl_->ProfileVoice;
+  auto& output = impl_->OrdinaryOutput(slot);
   if (impl_->PreparedOrdinaryVoices[slot])
     output->Play(std::move(impl_->PreparedOrdinaryVoices[slot]), false, 0);
   else if (impl_->HasOrdinaryVoice[slot]) output->Resume();
@@ -522,7 +531,7 @@ void MusicPlayback::StartOrdinaryVoice(uint32_t channel) {
 }
 void MusicPlayback::StopOrdinaryVoice(uint32_t channel) {
   const auto slot = OrdinaryVoiceSlot(channel);
-  (slot ? impl_->SecondaryVoice : impl_->ProfileVoice)->Stop(0);
+  (impl_->OrdinaryOutput(slot))->Stop(0);
   impl_->PreparedOrdinaryVoices[slot].reset();
   impl_->HasOrdinaryVoice[slot] = false;
   if (!slot) impl_->PreparedProfileVoice.reset();
@@ -534,13 +543,13 @@ bool MusicPlayback::OrdinaryVoiceReady(uint32_t channel) const {
 bool MusicPlayback::OrdinaryVoicePlaying(uint32_t channel) const {
   const auto slot = OrdinaryVoiceSlot(channel);
   return impl_->HasOrdinaryVoice[slot] &&
-         (slot ? impl_->SecondaryVoice : impl_->ProfileVoice)->GetState() == Audio::ACS_Playing;
+         (impl_->OrdinaryOutput(slot))->GetState() == Audio::ACS_Playing;
 }
 int32_t MusicPlayback::OrdinaryVoicePosition(uint32_t channel) const {
   const auto slot = OrdinaryVoiceSlot(channel);
   if (!OrdinaryVoicePlaying(channel)) return -1;
   const auto seconds =
-      (slot ? impl_->SecondaryVoice : impl_->ProfileVoice)->PositionInSeconds();
+      (impl_->OrdinaryOutput(slot))->PositionInSeconds();
   if (!std::isfinite(seconds) || seconds < 0 || seconds >= 2147483.0f)
     throw FormatError("ordinary voice position outside supported range");
   return int32_t(seconds * 1000.0f);

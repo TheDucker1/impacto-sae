@@ -27,6 +27,7 @@ add_library(saekano_core STATIC formats.cpp commands.cpp flow.cpp vm.cpp resourc
 target_link_libraries(saekano_core PUBLIC ZLIB::ZLIB saekano_audio)
 target_sources(saekano_core PRIVATE missionvoice.cpp)
 target_sources(saekano_core PRIVATE battleversus.cpp)
+target_sources(saekano_core PRIVATE battledialogue.cpp)
 target_sources(saekano_core PRIVATE approachselection.cpp)
 target_sources(saekano_core PRIVATE approachresult.cpp)
 target_sources(saekano_core PRIVATE approachresulttext.cpp)

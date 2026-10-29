@@ -4,8 +4,8 @@
 namespace Impacto::Saekano {
 namespace {
 size_t Slot(uint32_t channel) {
-  if (channel != 7 && channel != 8)
-    throw UnsupportedCommand("clocked ordinary voice channel outside7/8");
+  if (channel<7 || channel>10)
+    throw UnsupportedCommand("clocked ordinary voice channel outside7..10");
   return size_t(channel - 7);
 }
 }  // namespace
