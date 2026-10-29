@@ -22,6 +22,10 @@ struct ApproachResultText {
   bool Update(uint64_t now);
   void RevealAll(uint64_t now);
 };
+// Native result18f9c ->18750: black body, outer opacity255, shadow flag cleared
+// by Start80fe8. The result badge's text-alpha tween is a separate draw.
+std::vector<UiTextBlit> BuildApproachResultTextDraws(const ApproachResultText& text,
+    const TextFormatEnvironment& format,std::array<int32_t,2> origin,uint32_t utilitySize);
 class ArchiveApproachResultHost final : public ApproachResultHost {
  public:
   ArchiveApproachResultHost(GameResources& resources,ApproachMissionAudio& audio,

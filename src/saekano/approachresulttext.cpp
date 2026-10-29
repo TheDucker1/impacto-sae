@@ -34,6 +34,10 @@ bool ApproachResultText::Update(uint64_t now) {
   Reveal.Update(now,-1);return Reveal.Revealed;
 }
 void ApproachResultText::RevealAll(uint64_t now) { Reveal.Reveal(now); }
+std::vector<UiTextBlit> BuildApproachResultTextDraws(const ApproachResultText& text,
+    const TextFormatEnvironment& format,std::array<int32_t,2> origin,uint32_t utilitySize) {
+  return BuildRevealingTextDraws(text.Layout,text.Reveal,format,origin,utilitySize,{0,0,0,255},255,false);
+}
 ArchiveApproachResultHost::ArchiveApproachResultHost(GameResources& resources,ApproachMissionAudio& audio,
     SkipAutoState& policy,const TextFormatEnvironment& format,const TextTimingEnvironment& timing,
     ModeResultVisualEnvironment visual,const GsfFont& font,TextLayoutMetrics metrics,

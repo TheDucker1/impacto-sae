@@ -56,7 +56,7 @@ void String(std::ostream& out, std::string_view value) {
 }
 int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
                          std::optional<size_t> untilMessage, std::ostream& report,bool confirmFirstMission,bool chooseFirstApproach,
-                         std::span<const std::array<size_t,2>> approachPlan) {
+                           std::span<const std::array<size_t,2>> approachPlan,bool confirmApproachResult) {
   const std::array<std::array<size_t,2>,1> firstChoice{{{0,0}}};
   if(chooseFirstApproach && approachPlan.empty())approachPlan=firstChoice;
   chooseFirstApproach=!approachPlan.empty();
@@ -189,6 +189,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
            "\"fresh_unread_controls\":true,\"history_bound\":false,\"gpu_pixels\":false}\n";
   };
   bool confirmationDue=false,confirmationSent=false;
+  bool resultConfirmationDue=false,resultConfirmationSent=false,resultCompleted=false;
   uint32_t choiceStep=0;
   try {
     for (size_t frame = 0; frame < frameBudget; ++frame) {
@@ -204,6 +205,11 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
       voices.Update(now);
       bool ended = false, reached = false, waitingMission=false,waitingSelection=false,waitingResult=false;
       CommandInput commandInput;
+      if(resultConfirmationDue) {
+        commandInput.Advance=true;resultConfirmationDue=false;resultConfirmationSent=true;
+        out << "{\"kind\":\"approach_result_confirmation\",\"now\":" << now
+            << ",\"source\":\"explicit_probe_Advance\"}\n";
+      }
       if(choiceIndex<approachPlan.size()) {
         const auto& menu=vm->State().ApproachSelection;
         if(menu.Visible && !menu.PendingPhase) {
@@ -237,6 +243,13 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
       for (size_t work = 0; work < 256; ++work) {
         sync();
         const auto event = vm->Step(now,commandInput);commandInput.Advance=false;commandInput.Approach={};
+        if(event.Opcode==0x3f8 && event.Boundary==VmBoundary::CommandCompletedBeforeDispatch) {
+          resultCompleted=true;
+          out << "{\"kind\":\"approach_result_completed\",\"now\":" << now
+              << ",\"script\":" << event.Script << ",\"command\":" << event.Command
+              << ",\"destination\":" << vm->State().PendingCommandIndex << ",\"auto\":" << policy.Auto
+              << ",\"mode\":" << vm->State().SkipMode << ",\"skip_phase\":" << vm->State().SkipPhase << "}\n";
+        }
         if(event.Opcode==0x3f8 && vm->State().ApproachResult.Started) {
           const auto& r=vm->State().ApproachResult;
           const auto sample=std::tuple(r.Phase,r.PendingPhase.value_or(-1),r.Completed);
@@ -316,6 +329,9 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
               << ",\"revealed\":" << (message->Reveal.Revealed ? "true" : "false") << "}\n";
           if (event.Boundary == VmBoundary::CommandStarted) {
             ++messages;
+            if(confirmApproachResult && resultCompleted && event.Script!=entryScript) {
+              finish("post_result_message_started",true);return 0;
+            }
             if (!firstMessage) firstMessage = now;
             break;
           }
@@ -375,7 +391,10 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
           out << "]}\n";previousMission=sample;
         }
       }
-      if(waitingResult) {finish("approach_result_confirmation_required",false);return 1;}
+      if(waitingResult) {
+        if(confirmApproachResult && !resultConfirmationSent)resultConfirmationDue=true;
+        else {finish("approach_result_confirmation_required",false);return 1;}
+      }
       if(waitingMission) {
         if((confirmFirstMission || chooseFirstApproach) && !confirmationSent) {
           output.Enabled=!chooseFirstApproach;confirmationDue=true;
