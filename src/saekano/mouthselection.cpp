@@ -55,13 +55,15 @@ int32_t SpriteMessageMouth::Resource(int32_t logical) const {
 std::vector<MouthTarget> SpriteMessageMouth::Targets(int32_t speaker, bool cleanup) const {
   if (!state_.Live2d.Known || !state_.CharacterRuntimeState.Known)
     throw UnsupportedCommand("ordinary mouth actor extent is unknown");
-  if (!models_ && !control_.OverrideEnabled && !state_.Live2d.Records.empty())
+  const auto* control=control_?control_:state_.MouthControl?&*state_.MouthControl:nullptr;
+  if(!control)throw UnsupportedCommand("ordinary mouth control state is unknown");
+  if (!models_ && !control->OverrideEnabled && !state_.Live2d.Records.empty())
     throw UnsupportedCommand("ordinary Live2D mouth service is not bound");
   std::vector<uint16_t> keys;
   for (const auto& [id, actor] : state_.Characters) keys.push_back(id);
   std::vector<MouthModelRecord> records;
   for(const auto& record:state_.Live2d.Records)records.push_back({record.LogicalId,record.ResourceId.has_value()});
-  const auto selected = SelectOrdinaryMouthTargets(control_, speaker, keys, records, cleanup);
+  const auto selected = SelectOrdinaryMouthTargets(*control, speaker, keys, records, cleanup);
   for (const auto& target : selected) {
     if(target.Kind==MouthTargetKind::Model) {
       if(!models_ || !models_->MouthResourceReady(Resource(target.Id)))

@@ -14,5 +14,6 @@ int RunSceneContinuation(const std::filesystem::path& usrdir, size_t frameBudget
                          bool confirmFirstMission = false,bool chooseFirstApproach = false,
                          std::span<const std::array<size_t,2>> approachPlan = {},
                          bool confirmApproachResult = false,bool followPostResult = false,
-                         bool followPostChapter = false);
+                         bool followPostChapter = false,
+                         std::span<const std::array<size_t,2>> profilePlan = {});
 }

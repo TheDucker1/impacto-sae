@@ -138,6 +138,8 @@ void VirtualMachine::Load(bool preserveOwnerState) {
       command.Routing = {command.CharacterScale->Route != 0,command.CharacterScale->Lane};
     } else if (opcode == 0x438) {
       command.Live2d = DecodeLive2d(script_->Payload(i));
+    } else if(opcode==0x2c6) {
+      command.LipAction=LipActionCommand::Decode(script_->Payload(i));
     } else if (opcode == 0x3f4) {
       command.BattleGauge = BattleGaugeCommand::Decode(script_->Payload(i));
     } else if (opcode == 0x3f5) {
@@ -183,6 +185,7 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     state_.WindowOpenness = {};
     state_.WindowTypes = {};
     state_.Live2d = {};
+    state_.MouthControl=MakeFreshOrdinaryMouthControl();
     if (auto* models = backend_.Models()) models->Reset();
     state_.ApproachGauge = 0;
     state_.ApproachMode = {};
@@ -361,6 +364,8 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
   }
   if (opcode == 0x64) {
     if (lane || !command.Routing.QueueForLane) SetupMessage(index, now);
+  } else if(opcode==0x2c6) {
+    if(!lane)StartLipAction(state_,*command.LipAction);
   } else if (opcode == 0x3ee && !lane) {
     auto* resources = backend_.ApproachAssets();
     if (!resources) throw UnsupportedCommand("approach entry resource backend is unavailable");
@@ -688,6 +693,7 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
     if (input.Route == UpdateRoute::Normal) backend_.EndMessageUpdate(index, now);
     return false;
   }
+  if(opcode==0x2c6)return true; // Shared main/skip/lane updates only mark completion.
   if (opcode == 0x2c0) {
     if (input.Route == UpdateRoute::Skipping && command.WaitHonorSkip == 0) return true;
     if (!command.Started)

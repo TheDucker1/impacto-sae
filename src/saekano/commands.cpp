@@ -7,6 +7,16 @@
 
 namespace Impacto::Saekano {
 
+LipActionCommand LipActionCommand::Decode(std::span<const uint8_t> payload) {
+  PayloadReader reader(payload);LipActionCommand out;out.Enabled=reader.U32()!=0;
+  for(auto& id:out.Ids)id=std::bit_cast<int16_t>(reader.U16());
+  return out;
+}
+void StartLipAction(SemanticState& state,const LipActionCommand& command) {
+  if(!state.MouthControl)throw UnsupportedCommand("initial mouth control state is unknown");
+  state.MouthControl->OverrideEnabled=command.Enabled;state.MouthControl->OverrideIds=command.Ids;
+}
+
 StopSeCommand StopSeCommand::Decode(std::span<const uint8_t> payload) {
   PayloadReader reader(payload);
   return {reader.I32(), reader.I32()};

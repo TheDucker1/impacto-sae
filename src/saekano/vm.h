@@ -141,6 +141,7 @@ class VirtualMachine {
     ChapterTitleAnimation ChapterAnimation;
     size_t MessageSide = 0;
     std::optional<Live2dCommand> Live2d;
+    std::optional<LipActionCommand> LipAction;
     std::optional<BattleGaugeCommand> BattleGauge;
     BattleGaugeAnimation BattleAnimation;
     std::optional<ApproachGaugeCommand> ApproachGauge;

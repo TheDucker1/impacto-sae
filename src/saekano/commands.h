@@ -16,6 +16,7 @@
 #include "approachmission.h"
 #include "approachselection.h"
 #include "approachresult.h"
+#include "mouthcontrol.h"
 
 #include <array>
 #include <map>
@@ -74,6 +75,7 @@ struct SemanticState {
   std::array<uint32_t, 2> WindowOpenness{};
   std::array<uint32_t, 2> WindowTypes{};
   Live2dState Live2d;
+  std::optional<OrdinaryMouthControl> MouthControl; // C1c4c..1c57; omitted from portable restores.
   BattleGaugeState Battle;
   GameRandom Random;
   ApproachGaugeState Approach;
@@ -105,6 +107,13 @@ class UnsupportedCommand : public std::runtime_error {
  public:
   using std::runtime_error::runtime_error;
 };
+
+struct LipActionCommand {
+  bool Enabled=false;
+  std::array<int16_t,5> Ids{};
+  static LipActionCommand Decode(std::span<const uint8_t> payload);
+};
+void StartLipAction(SemanticState& state,const LipActionCommand& command);
 
 class PayloadReader {
  public:

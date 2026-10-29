@@ -8,6 +8,7 @@
 #include "album.h"
 #include "missionvoice.h"
 #include "approachresulttext.h"
+#include "dialog.h"
 #ifdef SAEKANO_SCENE_CUBISM2
 #include "live2ddriver.h"
 #endif
@@ -57,7 +58,8 @@ void String(std::ostream& out, std::string_view value) {
 }
 int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
                          std::optional<size_t> untilMessage, std::ostream& report,bool confirmFirstMission,bool chooseFirstApproach,
-                           std::span<const std::array<size_t,2>> approachPlan,bool confirmApproachResult,bool followPostResult,bool followPostChapter) {
+                           std::span<const std::array<size_t,2>> approachPlan,bool confirmApproachResult,bool followPostResult,bool followPostChapter,
+                           std::span<const std::array<size_t,2>> profilePlan) {
   const std::array<std::array<size_t,2>,1> firstChoice{{{0,0}}};
   if(chooseFirstApproach && approachPlan.empty())approachPlan=firstChoice;
   chooseFirstApproach=!approachPlan.empty();
@@ -124,9 +126,8 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
       throw FormatError("continuation target is not an entry-script message");
   }
   ClockedOrdinaryVoice voices(root);
-  auto controls = MakeFreshOrdinaryMouthControl();
   std::map<uint16_t, ProfileMouthPlayback> mouths;
-  SpriteMessageMouth spriteMouth(vm->State(), controls, mouths
+  SpriteMessageMouth spriteMouth(vm->State(), mouths
 #ifdef SAEKANO_SCENE_CUBISM2
       ,&models
 #endif
@@ -136,7 +137,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   const auto sync = [&] {
     if (voiceScript != vm->State().ScriptFileId) {
       if (!vm->State().Random.Known()) vm->SeedRandom(0);
-      backend.ResetMessages(); mouths.clear(); controls = MakeFreshOrdinaryMouthControl();
+      backend.ResetMessages(); mouths.clear();
       voiceOwner = std::make_unique<SceneMessageVoiceOwner>(SceneMessageVoiceOwner{
           voices, spriteMouth, MakeFreshOrdinaryVoiceQueue(),
           resources.LoadScriptVoiceEnvelopes(vm->State().ScriptFileId),
@@ -154,6 +155,16 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   const auto policyConfig = SkipAutoEnvironment::Decode(Read(root / "env/env_global.dat"));
   SkipAutoState policy;
   const auto resultFont=GsfFont::Decode(Read(root/"Font.gsf"));
+  const auto dialogEnvironment=DialogEnvironment::Decode(Read(root/"env/env_dialog.dat"));
+  const auto metrics=TextLayoutMetrics::Decode(Read(root/"env/env_global.dat"),Read(root/"env/env_message_window.dat"));
+  const auto utility=GameUtilityFont::Decode(Read(root/"env/env_game_utility.dat"));
+  VoiceTextReveal prompt;prompt.PrepareUtf16(DecodeProfileConfirmationPrompt(profileRaw),format,0);
+  const auto promptLayout=LayoutPlainText(prompt.Text,format,resultFont,metrics,dialogEnvironment.Settings[6],
+      dialogEnvironment.TextScales[1],uint32_t(utility.Size),36);
+  if(dialogEnvironment.ButtonGroups.size()<=1)throw FormatError("missing profile confirmation buttons");
+  const auto dialogLayout=BuildDialogContentLayout(dialogEnvironment,{480,272},promptLayout.Height,
+      dialogEnvironment.ButtonGroups[1].size(),utility.Size);
+  DialogState profileDialog;bool profileDialogBound=false;
   ArchiveApproachResultHost resultHost(resources,missionVoice,policy,format,timing,
       ModeResultVisualEnvironment::DecodeApproach(Read(root/"env/env_approach.dat")),resultFont,
       TextLayoutMetrics::Decode(Read(root/"env/env_global.dat"),Read(root/"env/env_message_window.dat")),
@@ -178,7 +189,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   std::optional<std::tuple<int32_t,int32_t,int32_t>> previousMission;
   std::optional<std::tuple<int32_t,int32_t,bool>> previousResult;
   std::optional<std::pair<int32_t,int32_t>> previousProfile;
-  size_t choiceIndex=0;
+  size_t choiceIndex=0,profileIndex=0;
   const auto finish = [&](std::string_view reason, bool success) {
     output.Enabled=true;  // A failure before the requested gate still reports its exact boundary.
     output.Suppressed=false;
@@ -192,6 +203,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         << ",\"mission_voice_id\":" << missionVoice.CurrentId()
         << ",\"mission_voice_frames\":" << missionVoice.FramesConsumed().value_or(0)
         << ",\"choice_plan_entries\":" << approachPlan.size() << ",\"choices_committed\":" << choiceIndex
+        << ",\"profile_plan_entries\":" << profilePlan.size() << ",\"profiles_committed\":" << profileIndex
         << ",\"approach_gauge\":" << vm->State().ApproachGauge
         << ",\"clock_step_ms\":16,\"seed\":0,\"voice_pcm_decoded\":true,\"bgm_se_playback\":false,"
            "\"fresh_unread_controls\":true,\"history_bound\":false,\"gpu_pixels\":false}\n";
@@ -215,6 +227,37 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
       }
       bool ended = false, reached = false, waitingMission=false,waitingSelection=false,waitingResult=false;
       CommandInput commandInput;
+      if(const auto* active=vm->CurrentProfile();active && profileIndex<profilePlan.size()) {
+        bool responseVoiceStopped=false;
+        const auto target=profilePlan[profileIndex];const auto& menu=active->Selection();
+        auto& input=commandInput.Profile;
+        if(target[0]>=services.Scene().size() || target[1]>=10)throw FormatError("profile plan is outside loaded menu");
+        if(profileDialog.Visible) {
+          DialogInput modal;modal.Accept=profileDialog.Phase==3;
+          UpdateDialog(profileDialog,modal,now);
+          if(!profileDialog.Visible)input.Confirmation=profileDialog.Result==1;
+        } else if(active->CurrentStage()==ProfileMode::Stage::Selection && !menu.PendingPhase) {
+          if(menu.Phase==5) {
+            if(menu.Ordinal==target[0])input.Accept=true;else input.CharacterDirection=true;
+          } else if(menu.Phase==6) {
+            if(menu.Ordinal!=target[0])throw FormatError("profile plan ordinal differs from active event carousel");
+            if(menu.Selectors.at(menu.Ordinal)==target[1])input.Accept=true;else input.EventDirection=true;
+          }
+        } else if(active->CurrentStage()==ProfileMode::Stage::Result && active->Phase()==12)
+          input.Accept=services.ResultText().Revealed && now%32==0;
+        else if(active->CurrentStage()==ProfileMode::Stage::Response && active->Phase()==17) {
+          const auto status=services.ResponseStatus(now);responseVoiceStopped=status.VoiceStopped;input.Accept=status.TextRevealed && status.VoiceStopped;
+        }
+        if(input.Accept || input.Confirmation || input.CharacterDirection || input.EventDirection)
+          out << "{\"kind\":\"profile_plan_input\",\"now\":" << now << ",\"plan_index\":" << profileIndex
+              << ",\"phase\":" << active->Phase() << ",\"accept\":" << input.Accept
+              << ",\"confirmation\":" << input.Confirmation.value_or(false)
+              << ",\"character_next\":" << input.CharacterDirection.value_or(false)
+              << ",\"event_next\":" << input.EventDirection.value_or(false)
+              << ",\"result_revealed\":" << services.ResultText().Revealed
+              << ",\"response_revealed\":" << services.ResponseText().Revealed
+              << ",\"voice_stopped\":" << responseVoiceStopped << "}\n";
+      }
       if(resultConfirmationDue) {
         commandInput.Advance=true;resultConfirmationDue=false;resultConfirmationSent=true;
         out << "{\"kind\":\"approach_result_confirmation\",\"now\":" << now
@@ -254,10 +297,23 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         sync();
         const auto event = vm->Step(now,commandInput);commandInput.Advance=false;commandInput.Approach={};
         if(followPostResult && resultCompleted && event.Script!=entryScript && output.Suppressed &&
-            (!followPostChapter || chapterCompleted)) {
+            (!followPostChapter || chapterCompleted) && (profilePlan.empty() || event.Opcode==0x3ed)) {
           output.Suppressed=false;output.Enabled=true;
           out << "{\"kind\":\"post_result_entry\",\"now\":" << now << ",\"script\":" << event.Script
               << ",\"command\":" << event.Command << ",\"prior_range_omitted\":true}\n";
+        }
+        if(event.Boundary==VmBoundary::ProfileDestinationLoaded) {
+          out << "{\"kind\":\"profile_destination\",\"now\":" << now << ",\"script\":" << event.Script
+              << ",\"command\":" << event.Command << ",\"plan_index\":" << profileIndex << ",\"stats\":[";
+          for(size_t i=0;i<12;++i){if(i)out << ',';out << vm->State().ProfileOwner.Stats[i];}
+          out << "]}\n";
+          ++profileIndex;previousProfile.reset();profileDialog={};profileDialogBound=false;
+        }
+        if(event.Opcode==0x2c6 && event.Boundary==VmBoundary::CommandStarted) {
+          const auto& control=*vm->State().MouthControl;
+          out << "{\"kind\":\"lip_action\",\"now\":" << now << ",\"script\":" << event.Script << ",\"command\":" << event.Command
+              << ",\"enabled\":" << control.OverrideEnabled << ",\"ids\":[";
+          for(size_t i=0;i<5;++i){if(i)out << ',';out << control.OverrideIds[i];}out << "]}\n";
         }
         if(event.Opcode==0x3ec && event.Boundary==VmBoundary::CommandCompletedBeforeDispatch)
           chapterCompleted=true;
@@ -392,11 +448,13 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
           previous = cursor;
         }
       }
-      vm->UpdateSpriteFrames(uint32_t(now));
-      missionVoice.Update(now);
+      if(!vm->CurrentProfile()) {
+        vm->UpdateSpriteFrames(uint32_t(now));
+        missionVoice.Update(now);
 #ifdef SAEKANO_SCENE_CUBISM2
-      models.Frame(vm->State().Live2d, now);
+        models.Frame(vm->State().Live2d, now);
 #endif
+      }
       const auto& mission=vm->State().ApproachMission;
       if(mission.Started) {
         const auto sample=std::tuple(mission.Mission,mission.Stage,mission.PendingStage.value_or(-1));
@@ -444,6 +502,11 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         }
       }
       if(const auto* active=vm->CurrentProfile()) {
+        if(active->Selection().ConfirmationOpen && !profileDialogBound) {
+          BeginDialog(profileDialog,dialogLayout,dialogEnvironment.ButtonGroups[1].size(),1,false,true,now);
+          UpdateDialog(profileDialog,{},now);profileDialogBound=true;
+        }
+        if(!active->Selection().ConfirmationOpen)profileDialogBound=false;
         const auto sample=std::pair(int32_t(active->CurrentStage()),active->Phase());
         if(previousProfile!=sample) {
           const auto& selection=active->Selection();
@@ -455,7 +518,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
           previousProfile=sample;
         }
         if(active->CurrentStage()==ProfileMode::Stage::Selection &&
-            (active->Phase()==5 || active->Phase()==6)) {
+            (active->Phase()==5 || active->Phase()==6) && profileIndex>=profilePlan.size()) {
           finish("explicit_profile_choice_required",false);return 1;
         }
         continue; // The profile outer loop owns updates while the script manager is suspended.

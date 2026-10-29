@@ -3,16 +3,10 @@
 #include "scenemessage.h"
 #include "profilemouth.h"
 #include "modelmouth.h"
+#include "mouthcontrol.h"
 #include <map>
 
 namespace Impacto::Saekano {
-struct OrdinaryMouthControl {
-  bool OverrideEnabled;
-  std::array<int16_t, 5> OverrideIds;
-  bool DualCleanup;
-  std::optional<std::array<int32_t, 2>> CleanupIds;
-};
-OrdinaryMouthControl MakeFreshOrdinaryMouthControl();
 struct MouthModelRecord { int32_t LogicalId; bool Attached; };
 enum class MouthTargetKind { Sprite, Model };
 struct MouthTarget { MouthTargetKind Kind; int32_t Id; };
@@ -30,13 +24,17 @@ class SpriteMessageMouth final : public OrdinaryMessageMouth {
   SpriteMessageMouth(const SemanticState& state, const OrdinaryMouthControl& control,
                      std::map<uint16_t, ProfileMouthPlayback>& channels,
                      OrdinaryModelMouthServices* models=nullptr)
-      : state_(state), control_(control), channels_(channels),models_(models) {}
+      : state_(state), control_(&control), channels_(channels),models_(models) {}
+  SpriteMessageMouth(const SemanticState& state,
+                     std::map<uint16_t, ProfileMouthPlayback>& channels,
+                     OrdinaryModelMouthServices* models=nullptr)
+      : state_(state), channels_(channels),models_(models) {}
   void Begin(int32_t speaker, const ProfileMouthAnimation& envelope,
              uint64_t now) override;
   void End(int32_t speaker) override;
  private:
   const SemanticState& state_;
-  const OrdinaryMouthControl& control_;
+  const OrdinaryMouthControl* control_=nullptr;
   std::map<uint16_t, ProfileMouthPlayback>& channels_;
   OrdinaryModelMouthServices* models_;
   std::vector<MouthTarget> Targets(int32_t speaker, bool cleanup) const;

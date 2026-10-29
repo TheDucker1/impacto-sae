@@ -871,7 +871,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   const bool capture = !captureDirectory.empty();
   const bool captureParticles=captureMenuInput==4;
   const bool captureChapter=captureMenuInput==7;
-  const bool captureProfile=captureMenuInput==8;
+  const bool captureLip=captureMenuInput==9;
+  const bool captureProfile=captureMenuInput==8 || captureLip;
   const bool captureResult=captureMenuInput==5 || captureMenuInput==6 || captureChapter || captureProfile;
   const bool captureResultPointer=captureMenuInput==6;
   std::vector<std::array<size_t,2>> choicePlan;size_t choicePlanIndex=0;
@@ -1008,9 +1009,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   uint32_t menuCaptureStep=0;
   std::pair<int32_t,int32_t> captureMenuSite{-1,-1};
   std::optional<uint64_t> pcmEpoch;
-  auto mouthControl = MakeFreshOrdinaryMouthControl();
   std::map<uint16_t, ProfileMouthPlayback> mouths;
-  SpriteMessageMouth spriteMouth(vm->State(), mouthControl, mouths,&models);
+  SpriteMessageMouth spriteMouth(vm->State(), mouths,&models);
   PlaybackOrdinaryVoice voices(playback, root, voiceSettings.Volume, 1.0f);
   std::unique_ptr<SceneMessageVoiceOwner> voiceOwner;
   int32_t voiceScript = -1;
@@ -1021,7 +1021,6 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     if(!vm->State().Random.Known())vm->SeedRandom(capture?0u:uint32_t(SDL_GetTicks()));
     backend.ResetMessages();
     mouths.clear();
-    mouthControl = MakeFreshOrdinaryMouthControl();
     voiceOwner = std::make_unique<SceneMessageVoiceOwner>(SceneMessageVoiceOwner{
         voices, spriteMouth, MakeFreshOrdinaryVoiceQueue(),
         resources.LoadScriptVoiceEnvelopes(vm->State().ScriptFileId),
@@ -1051,7 +1050,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     events.open(captureDirectory / "scene-events.jsonl");
     if (!report || !pcm || !events)
       throw FormatError("cannot create scene capture output");
-    if(captureProfile){profileFrames.open(captureDirectory/"profile-frames.jsonl");if(!profileFrames)throw FormatError("cannot create profile frame output");}
+    if(captureProfile && !captureLip){profileFrames.open(captureDirectory/"profile-frames.jsonl");if(!profileFrames)throw FormatError("cannot create profile frame output");}
   }
   const auto drawSprite = [&](const UiSpriteBlit& sprite) {
     renderer.DrawQuad(sprite, renderer.Textures.at(sprite.Texture), false);
@@ -1416,7 +1415,14 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       if(captureParticles && particleCaptureRequested)captureActive=true;
       if(captureResult && !captureChapter && !captureProfile && step.Opcode==0x3f8)captureActive=true;
       if(captureChapter && step.Opcode==0x3ec)captureActive=true;
-      if(captureProfile && step.Opcode==0x3ed)captureActive=true;
+      if(captureProfile && !captureLip && step.Opcode==0x3ed)captureActive=true;
+      if(captureLip && step.Opcode==0x2c6)captureActive=true;
+      if(capture && captureActive && step.Opcode==0x2c6 && step.Boundary==VmBoundary::CommandStarted) {
+        const auto& control=*vm->State().MouthControl;
+        events << "{\"kind\":\"lip_action\",\"now\":" << now << ",\"script\":" << step.Script << ",\"command\":" << step.Command
+            << ",\"enabled\":" << control.OverrideEnabled << ",\"ids\":[";
+        for(size_t i=0;i<5;++i){if(i)events << ',';events << control.OverrideIds[i];}events << "]}\n";
+      }
       if(step.Boundary==VmBoundary::ProfileDestinationLoaded) {
         profileReturned=true;profileActive=false;
         if(capture && captureActive)events << "{\"kind\":\"profile_destination\",\"now\":" << now << ",\"script\":" << step.Script << ",\"command\":" << step.Command << "}\n";
@@ -1461,13 +1467,15 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         laidOut = false;
         capturePointerStage = 0;
         if((captureResult && !captureChapter && !captureProfile && resultCompleted) || (captureChapter && chapterCompleted) ||
-            (captureProfile && profileReturned)){targetCompleted=true;quit=true;}
+            (captureProfile && !captureLip && profileReturned)){targetCompleted=true;quit=true;}
         break;
       }
       if(captureResult && step.Opcode==0x3f8 && step.Boundary==VmBoundary::CommandCompletedBeforeDispatch)
         resultCompleted=true;
       if(captureChapter && step.Opcode==0x3ec && step.Boundary==VmBoundary::CommandCompletedBeforeDispatch)
         chapterCompleted=true;
+      if(captureLip && captureActive && step.Opcode==0x64 && step.Boundary==VmBoundary::CommandCompletedBeforeDispatch &&
+          backend.CurrentMessage() && backend.CurrentMessage()->VoiceId>=0){targetCompleted=true;quit=true;}
       if (step.Boundary == VmBoundary::CommandCompletedBeforeDispatch && capture && !captureParticles && !captureResult &&
           (captureUntilMessage
                ? step.Script == captureScript && size_t(step.Command) == *captureUntilMessage
@@ -1532,7 +1540,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         int w=0,h=0;SdlCheck(SDL_GetWindowSizeInPixels(window.Window,&w,&h),"profile scene viewport");
         profilePresenter.Draw(*mode,vm->State(),w,h);
         const auto signature=profilePresenter.Signature(*mode);
-        if(captureProfile && (signature!=profileSignature || now-profileLastSaved>=2000)) {
+        if(captureProfile && !captureLip && (signature!=profileSignature || now-profileLastSaved>=2000)) {
           const auto file="profile-"+std::to_string(profileSaved++)+".bmp";
           Capture(captureDirectory/file,w,h);profilePresenter.Write(profileFrames,*mode,vm->State(),now,file);
           profileSignature=signature;profileLastSaved=now;
@@ -1863,7 +1871,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       if(captureBranch)for(const auto& record:state.Live2d.Records)
         if(record.ResourceId)signature+=':'+std::to_string(models.Observe(*record.ResourceId).MouthActive);
     }
-    if(captureResult) {
+    if(captureResult && !captureLip) {
       const auto& result=state.ApproachResult;
       signature=std::to_string(result.Visible)+':'+std::to_string(result.Phase)+':'+
           std::to_string(result.PendingPhase.value_or(-1))+':'+std::to_string(result.Cursor)+':'+
@@ -1874,6 +1882,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       signature=std::to_string(state.TitleDisplay.value_or(false))+':'+std::to_string(chapter?chapter->Stage:99)+':'+
           std::to_string(state.ScreenFade.value_or(-1)/64)+':'+std::to_string(quit);
     }
+    if(captureLip)for(const auto& [id,mouth]:mouths)signature+=':'+std::to_string(id)+':'+std::to_string(mouth.Frame);
     if(!captureResult)for (const auto& fill : state.SceneImages.Slots.FillRects)
       signature += ':' + std::to_string(fill.Opacity / 16);
     if(!captureResult)for (const auto& [id, actor] : state.Characters) {
