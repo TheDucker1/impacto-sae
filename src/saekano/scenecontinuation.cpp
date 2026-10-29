@@ -57,7 +57,7 @@ void String(std::ostream& out, std::string_view value) {
 }
 int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
                          std::optional<size_t> untilMessage, std::ostream& report,bool confirmFirstMission,bool chooseFirstApproach,
-                           std::span<const std::array<size_t,2>> approachPlan,bool confirmApproachResult,bool followPostResult) {
+                           std::span<const std::array<size_t,2>> approachPlan,bool confirmApproachResult,bool followPostResult,bool followPostChapter) {
   const std::array<std::array<size_t,2>,1> firstChoice{{{0,0}}};
   if(chooseFirstApproach && approachPlan.empty())approachPlan=firstChoice;
   chooseFirstApproach=!approachPlan.empty();
@@ -108,6 +108,9 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   backend.SelectionSettings=ApproachSelectionEnvironment::Decode(Read(root/"env/env_approach.dat"));
   backend.ApproachConfig = ApproachGaugeEnvironment::Decode(Read(root / "env/env_approach.dat"));
   backend.ChapterSettings=ChapterEnvironment::Decode(Read(root/"env/env_script.dat"));
+  backend.ProfileConsumer=&services;
+  backend.ProfileSettings=profile;
+  backend.ModeResultSettings=shared;
   backend.MusicResources = &music; backend.SeArchives = &sounds;
 #ifdef SAEKANO_SCENE_CUBISM2
   backend.SceneModels = &models;
@@ -174,6 +177,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   std::optional<std::pair<int32_t, uint32_t>> previousFilter;
   std::optional<std::tuple<int32_t,int32_t,int32_t>> previousMission;
   std::optional<std::tuple<int32_t,int32_t,bool>> previousResult;
+  std::optional<std::pair<int32_t,int32_t>> previousProfile;
   size_t choiceIndex=0;
   const auto finish = [&](std::string_view reason, bool success) {
     output.Enabled=true;  // A failure before the requested gate still reports its exact boundary.
@@ -193,7 +197,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
            "\"fresh_unread_controls\":true,\"history_bound\":false,\"gpu_pixels\":false}\n";
   };
   bool confirmationDue=false,confirmationSent=false;
-  bool resultConfirmationDue=false,resultConfirmationSent=false,resultCompleted=false;
+  bool resultConfirmationDue=false,resultConfirmationSent=false,resultCompleted=false,chapterCompleted=false;
   uint32_t choiceStep=0;
   try {
     for (size_t frame = 0; frame < frameBudget; ++frame) {
@@ -204,9 +208,11 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         policyInput.AutoPressed = elapsed == 96;
         policyInput.AutoHeld = elapsed >= 96 && elapsed < 1296;
       }
-      vm->UpdateSkipAuto(policy, policyInput, policyConfig.AutoKeyDuration, now);
-      backend.AutoAdvance = policy.Auto;
-      voices.Update(now);
+      if(!vm->CurrentProfile()) {
+        vm->UpdateSkipAuto(policy, policyInput, policyConfig.AutoKeyDuration, now);
+        backend.AutoAdvance = policy.Auto;
+        voices.Update(now);
+      }
       bool ended = false, reached = false, waitingMission=false,waitingSelection=false,waitingResult=false;
       CommandInput commandInput;
       if(resultConfirmationDue) {
@@ -247,11 +253,14 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
       for (size_t work = 0; work < 256; ++work) {
         sync();
         const auto event = vm->Step(now,commandInput);commandInput.Advance=false;commandInput.Approach={};
-        if(followPostResult && resultCompleted && event.Script!=entryScript && output.Suppressed) {
+        if(followPostResult && resultCompleted && event.Script!=entryScript && output.Suppressed &&
+            (!followPostChapter || chapterCompleted)) {
           output.Suppressed=false;output.Enabled=true;
           out << "{\"kind\":\"post_result_entry\",\"now\":" << now << ",\"script\":" << event.Script
               << ",\"command\":" << event.Command << ",\"prior_range_omitted\":true}\n";
         }
+        if(event.Opcode==0x3ec && event.Boundary==VmBoundary::CommandCompletedBeforeDispatch)
+          chapterCompleted=true;
         if(event.Opcode==0x3f8 && event.Boundary==VmBoundary::CommandCompletedBeforeDispatch) {
           resultCompleted=true;
           out << "{\"kind\":\"approach_result_completed\",\"now\":" << now
@@ -433,6 +442,23 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         if(!(choiceIndex<approachPlan.size() && vm->Opcode()==0x3f6)) {
           finish("explicit_choice_required",false);return 1;
         }
+      }
+      if(const auto* active=vm->CurrentProfile()) {
+        const auto sample=std::pair(int32_t(active->CurrentStage()),active->Phase());
+        if(previousProfile!=sample) {
+          const auto& selection=active->Selection();
+          out << "{\"kind\":\"owning_profile_state\",\"now\":" << now << ",\"script\":" << vm->State().ScriptFileId
+              << ",\"command\":" << vm->State().CurrentCommandIndex << ",\"mode_id\":" << vm->State().OtakuMode
+              << ",\"stage\":" << sample.first << ",\"phase\":" << sample.second
+              << ",\"ordinal\":" << selection.Ordinal << ",\"characters\":" << services.Scene().size()
+              << ",\"menu_textures\":" << services.MenuTextureCount() << ",\"day\":" << vm->State().DayEnabled << "}\n";
+          previousProfile=sample;
+        }
+        if(active->CurrentStage()==ProfileMode::Stage::Selection &&
+            (active->Phase()==5 || active->Phase()==6)) {
+          finish("explicit_profile_choice_required",false);return 1;
+        }
+        continue; // The profile outer loop owns updates while the script manager is suspended.
       }
       for (const auto& [id, actor] : vm->State().Characters)
         if (actor.Pose.Ready && actor.Tweens[size_t(CharacterTween::Opacity)].Current != 0) mouths.at(id).Update(now);

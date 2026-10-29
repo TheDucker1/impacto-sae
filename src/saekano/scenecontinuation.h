@@ -13,5 +13,6 @@ int RunSceneContinuation(const std::filesystem::path& usrdir, size_t frameBudget
                          std::optional<size_t> untilMessage, std::ostream& report,
                          bool confirmFirstMission = false,bool chooseFirstApproach = false,
                          std::span<const std::array<size_t,2>> approachPlan = {},
-                         bool confirmApproachResult = false,bool followPostResult = false);
+                         bool confirmApproachResult = false,bool followPostResult = false,
+                         bool followPostChapter = false);
 }
