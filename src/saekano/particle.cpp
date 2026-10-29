@@ -596,6 +596,11 @@ void AgeEffectRow(ParticleEffectState& state, const ParticleEffectProgram& progr
     if (particle.Birth.Flags[1]) AdvanceParticle(particle, &definition->second, delta, random);
 }
 }
+void ParticleEffectState::SetOriginOffset(const std::array<float, 2>& offset) {
+  OriginOffset = offset;
+  for (auto& row : Rows)
+    for (auto& particle : row.Particles) particle.OriginOffset = OriginOffset;
+}
 void ParticleEffectState::Start(const ParticleEffectProgram& program,
     const PreparedParticleEffects& assets, GameRandom& random) {
   Rows.clear(); Rows.resize(program.Points.size()); Counter = 0;

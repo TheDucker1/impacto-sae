@@ -186,6 +186,8 @@ struct ParticleEffectState {
   std::array<float, 2> OriginOffset{};
   int32_t Counter = 0, StartOffset = 0, Repeats = 0;
   bool Enabled = true, Running = true, Emitting = true;
+  // Native494e updates all stored particles, including retired entries.
+  void SetOriginOffset(const std::array<float, 2>& offset);
   void Start(const ParticleEffectProgram& program, const PreparedParticleEffects& assets, GameRandom& random);
   bool Update(const ParticleEffectProgram& program, const PreparedParticleEffects& assets,
               uint64_t elapsedDelta, GameRandom& random);
