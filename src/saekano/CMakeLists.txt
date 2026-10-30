@@ -27,6 +27,7 @@ add_library(saekano_core STATIC formats.cpp commands.cpp flow.cpp vm.cpp resourc
 target_link_libraries(saekano_core PUBLIC ZLIB::ZLIB saekano_audio)
 target_sources(saekano_core PRIVATE missionvoice.cpp)
 target_sources(saekano_core PRIVATE ending.cpp)
+target_sources(saekano_core PRIVATE title.cpp)
 target_sources(saekano_core PRIVATE systemsave.cpp systemowner.cpp slotdata.cpp savemanager.cpp progressstore.cpp)
 target_sources(saekano_core PRIVATE battleversus.cpp)
 target_sources(saekano_core PRIVATE battleselection.cpp)
