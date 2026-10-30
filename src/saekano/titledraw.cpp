@@ -1,4 +1,5 @@
 #include "titledraw.h"
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <limits>
@@ -96,5 +97,69 @@ std::vector<TitleDrawCommand> BuildTitleDraw(const TitleEnvironment& e,const Tit
     auto prompt=e.Sprites.at(0x94);prompt.Color[3]=uint8_t(in.BlinkAlpha);sprite(77,prompt);
   }
   sprite(71,e.Sprites.at(0x3a0));return out;
+}
+std::vector<TitleOverlayCommand> BuildTitleOverlay(const TitleEnvironment& e,const TitleOverlayInputs& in){
+  std::vector<TitleOverlayCommand> out;
+  const auto operation=[&](TitleOverlayKind kind,uint32_t index=0){TitleOverlayCommand c;c.Kind=kind;c.Index=index;out.push_back(c);};
+  // The base resource owner is drawn before the scene's readiness gate.
+  if(in.ResourceOverlayVisible)operation(TitleOverlayKind::Resource);
+  if(in.Phase==2 || in.ResourceDrawBlocked)return out;
+  TitleOverlayCommand dialog;dialog.Kind=TitleOverlayKind::SharedDialog;
+  dialog.Center={480,272};dialog.Color={255,255,255,90};out.push_back(dialog);
+  if(in.Phase==25){operation(TitleOverlayKind::MovieChannel,1);operation(TitleOverlayKind::MovieChannel,0);}
+  else if(in.Phase==12 || in.Phase==15 || in.Phase==18){
+    const uint32_t index=in.Phase==12?0:in.Phase==15?1:2;
+    if(in.SubmenusPresent[index])operation(TitleOverlayKind::Submenu,index);
+  }else{
+    for(size_t i=0;i<2;++i){TitleOverlayCommand c;c.Kind=TitleOverlayKind::Rectangle;c.Rectangle={0,0,960,544};
+      c.Color=e.Colors.at(i==0?0x30:0x38);c.Color[3]=uint8_t(i==0?in.FadeAlpha:in.MovieFadeAlpha);out.push_back(c);}
+  }
+  return out;
+}
+void StartTitleVisuals(TitleVisualState& s,const TitleEnvironment& e,uint64_t now){
+  const auto from=std::bit_cast<int32_t>(e.Scalars.at(0x458));
+  s.Blink={from,from,std::bit_cast<int32_t>(e.Scalars.at(0x45c)),std::bit_cast<int32_t>(e.Scalars.at(0x454)),0};s.BlinkDirection=true;
+  s.Ambient[0].Start(0,360,std::bit_cast<int32_t>(e.Scalars.at(0x2ac)),now);
+  s.Ambient[1].Start(360,0,std::bit_cast<int32_t>(e.Scalars.at(0x2b0)),now);
+}
+void UpdateTitlePressStartVisual(TitleVisualState& s){
+  auto& b=s.Blink;
+  if(b[1]>b[2]){
+    if(b[3]<=0){b[4]=Sub(b[4],1);if(b[4]<=b[3]){b[4]=0;b[0]=Sub(b[0],1);}}
+    else b[0]=Sub(b[0],b[3]);
+    b[0]=std::max(b[0],std::min(b[1],b[2]));
+  }else{
+    if(b[3]<=0){b[4]=Add(b[4],1);if(int64_t(b[4])>=-int64_t(b[3])){b[4]=0;b[0]=Add(b[0],1);}}
+    else b[0]=Add(b[0],b[3]);
+    b[0]=std::min(b[0],std::max(b[1],b[2]));
+  }
+  if(b[0]==b[2]){std::swap(b[1],b[2]);s.BlinkDirection=!s.BlinkDirection;}
+}
+void TickTitleAmbient(TitleVisualState& s,uint64_t now){
+  for(auto& c:s.Ambient){
+    int32_t delta=std::bit_cast<int32_t>(uint32_t(now-c.Sample));
+    // Native infinite-repeat channels restart at the observed clock, carrying
+    // their endpoint-based remainder. Iterate instead of recursive native calls.
+    for(;;){
+      if(delta<0){delta=0;c.Epoch=c.Sample=now;}
+      const auto sample=c.Sample+uint32_t(delta),deadline=c.Epoch+c.Duration;
+      int32_t carry=0;
+      if(sample<deadline){
+        c.Sample=sample;
+        const auto numerator=std::bit_cast<int32_t>(uint32_t(Sub(c.To,c.From))*uint32_t(sample-c.Epoch));
+        const auto divisor=std::bit_cast<int32_t>(c.Duration);
+        if(!divisor)throw FormatError("title ambient interpolation has zero divisor");
+        c.Current=Add(c.From,std::bit_cast<int32_t>(uint32_t(int64_t(numerator)/divisor)));
+      }else{
+        carry=std::bit_cast<int32_t>(uint32_t(sample-deadline));
+        if(carry>0 && c.To>0)carry%=c.To;
+        c.Sample=deadline;c.Current=c.To;
+      }
+      if(!c.Finished())break;
+      c.StartUnsigned(c.From,c.To,c.Duration,now);
+      if(!c.Duration)break;
+      delta=carry;
+    }
+  }
 }
 }
