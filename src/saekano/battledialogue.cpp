@@ -19,4 +19,17 @@ std::array<int32_t,2> BattleDialogueTextOrigin(const BattleDialogueEnvironment& 
   return {std::bit_cast<int32_t>(uint32_t(base[0])+uint32_t(offset[0])-uint32_t(renderedWidth/2)),
       std::bit_cast<int32_t>(uint32_t(base[1])+uint32_t(offset[1]))};
 }
+std::vector<UiTextBlit> BuildBattleDialogueTextDraws(const BattleDialogueEnvironment& e,
+    const OrdinaryTextEnvironment& shared,const OrdinaryMessageText& text,
+    const VoiceTextReveal& reveal,const PlainTextLayout& layout,
+    const TextFormatEnvironment& format,const GsfFont& font,uint32_t utilitySize,
+    uint32_t nominalSize,size_t side,std::array<uint8_t,4> primaryColor) {
+  auto positioned=shared;
+  positioned.Window.TextPosition=BattleDialogueTextOrigin(e,side,layout.LineCount,layout.Width);
+  positioned.Window.WindowTravel=0;positioned.NamePosition={0,0};
+  auto draws=BuildOrdinaryMessageTextDraws(positioned,text,reveal,layout,format,font,
+      utilitySize,nominalSize,100,{0,0},primaryColor);
+  if(!reveal.Started)draws.resize(!text.InheritedName && text.NameEnabled && !text.Name.empty()?1:0);
+  return draws;
+}
 }

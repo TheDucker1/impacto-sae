@@ -17,6 +17,7 @@
 #include "album.h"
 #include "scenemessage.h"
 #include "messagedraw.h"
+#include "battledialogue.h"
 #include "scenequeue.h"
 #include "widgetinput.h"
 #include "skipauto.h"
@@ -874,7 +875,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   const bool captureLip=captureMenuInput==9;
   const bool captureBattle=captureMenuInput==10;
   const bool captureVersus=captureMenuInput==11;
-  const bool captureProfile=captureMenuInput==8 || captureLip || captureBattle || captureVersus;
+  const bool captureDialogue=captureMenuInput==12;
+  const bool captureProfile=captureMenuInput==8 || captureLip || captureBattle || captureVersus || captureDialogue;
   const bool captureResult=captureMenuInput==5 || captureMenuInput==6 || captureChapter || captureProfile;
   const bool captureResultPointer=captureMenuInput==6;
   std::vector<std::array<size_t,2>> choicePlan;size_t choicePlanIndex=0;
@@ -994,6 +996,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   backend.BattleConfig=BattleGaugeEnvironment::Decode(SceneRead(root/"env/env_tukkomi.dat"));
   backend.BattleVersusSettings=BattleVersusEnvironment::Decode(SceneRead(root/"env/env_tukkomi.dat"));
   const auto versusVisual=BattleVersusVisualEnvironment::Decode(SceneRead(root/"env/env_tukkomi.dat"));
+  const auto dialogueVisual=BattleDialogueEnvironment::Decode(SceneRead(root/"env/env_tukkomi.dat"));
   backend.SceneModels = &models;
   backend.MissionVoiceBank=&missionVoice;
   backend.MissionSettings=ApproachMissionEnvironment::Decode(SceneRead(root/"env/env_approach.dat"));
@@ -1066,14 +1069,16 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   const auto seed = capture ? 0u : uint32_t(SDL_GetTicks());
   vm->SeedRandom(seed);
   SDL_SetWindowTitle(window.Window, "Saekano — first scene preview");
-  std::ofstream report, pcm, events;
+  std::ofstream report, pcm, events,dialogueVoiceUpdates;
   if (capture) {
     report.open(captureDirectory / "scene-frames.jsonl");
     pcm.open(captureDirectory / "scene-output.pcm", std::ios::binary);
     events.open(captureDirectory / "scene-events.jsonl");
+    if(captureDialogue){dialogueVoiceUpdates.open(captureDirectory/"dialogue-voice-updates.jsonl");
+      if(!dialogueVoiceUpdates)throw FormatError("cannot create bounded dialogue voice trace");}
     if (!report || !pcm || !events)
       throw FormatError("cannot create scene capture output");
-    if(captureProfile && !captureLip && !captureBattle && !captureVersus){profileFrames.open(captureDirectory/"profile-frames.jsonl");if(!profileFrames)throw FormatError("cannot create profile frame output");}
+    if(captureProfile && !captureLip && !captureBattle && !captureVersus && !captureDialogue){profileFrames.open(captureDirectory/"profile-frames.jsonl");if(!profileFrames)throw FormatError("cannot create profile frame output");}
   }
   const auto drawSprite = [&](const UiSpriteBlit& sprite) {
     renderer.DrawQuad(sprite, renderer.Textures.at(sprite.Texture), false);
@@ -1104,7 +1109,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     const ProfileTextureKey key{ProfileTextureSection::BattleUi,-1,id};
     if(renderer.Textures.contains(key))return;
     const auto pixels=DecodeSceneImage(resources.LoadProfileTexture(key).Data);upload(key,pixels);
-    if(captureVersus) {
+    if(captureVersus || captureDialogue) {
       std::vector<uint8_t> actual(pixels.Rgba.size());GLint previousTexture=0;
       glGetIntegerv(GL_TEXTURE_BINDING_2D,&previousTexture);glBindTexture(GL_TEXTURE_2D,renderer.Textures.at(key).Handle);
       glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_UNSIGNED_BYTE,actual.data());
@@ -1115,6 +1120,9 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   };
   for (auto id : {0u, 1u, 2u, 3u, 9u}) uploadMain(id);
   PlainTextLayout layout;
+  std::array<PlainTextLayout,2> splitLayouts;
+  std::array<std::optional<std::pair<int32_t,size_t>>,2> splitLayoutKeys;
+  size_t dialogueConfirmedCommand=SIZE_MAX;
   size_t layoutCommand = SIZE_MAX;
   bool laidOut = false, quit = false;
   bool pointerDown = false;
@@ -1144,12 +1152,25 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     CommandInput input;
     SkipAutoInput policyInput;
     SDL_Event event;
-    if(captureVersus && vm->State().BattleVersus.Phase==12 && !vm->State().BattleVersus.PendingPhase && !versusConfirmSent) {
+    if((captureVersus || captureDialogue) && vm->State().BattleVersus.Phase==12 && !vm->State().BattleVersus.PendingPhase && !versusConfirmSent) {
       for(const auto type:{SDL_EVENT_KEY_DOWN,SDL_EVENT_KEY_UP}) {
         SDL_Event e{};e.type=type;e.key.windowID=SDL_GetWindowID(window.Window);e.key.key=SDLK_RETURN;
         e.key.down=type==SDL_EVENT_KEY_DOWN;SdlCheck(SDL_PushEvent(&e),"versus capture explicit confirm");
       }
       versusConfirmSent=true;events << "{\"kind\":\"battle_versus_confirmation\",\"now\":" << now << ",\"source\":\"explicit_capture_SDL_key\"}\n";
+    }
+    if(captureDialogue && vm->State().ScriptFileId==343) {
+      const auto* text=backend.CurrentMessage();
+      if(text && text->Reveal.Revealed && text->Command!=dialogueConfirmedCommand &&
+          vm->State().CurrentCommandIndex==int32_t(text->Command)) {
+        for(const auto type:{SDL_EVENT_KEY_DOWN,SDL_EVENT_KEY_UP}) {
+          SDL_Event e{};e.type=type;e.key.windowID=SDL_GetWindowID(window.Window);e.key.key=SDLK_RETURN;
+          e.key.down=type==SDL_EVENT_KEY_DOWN;SdlCheck(SDL_PushEvent(&e),"dialogue capture explicit confirm");
+        }
+        dialogueConfirmedCommand=text->Command;
+        events << "{\"kind\":\"battle_dialogue_confirmation\",\"now\":" << now << ",\"command\":" << text->Command
+               << ",\"source\":\"explicit_capture_SDL_key\"}\n";
+      }
     }
     if(captureProfile && vm->CurrentProfile()) {
       const auto key=profilePresenter.CaptureKey(*vm->CurrentProfile(),profileChoice,now);
@@ -1463,10 +1484,11 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       if(captureParticles && particleCaptureRequested)captureActive=true;
       if(captureResult && !captureChapter && !captureProfile && step.Opcode==0x3f8)captureActive=true;
       if(captureChapter && step.Opcode==0x3ec)captureActive=true;
-      if(captureProfile && !captureLip && !captureBattle && !captureVersus && step.Opcode==0x3ed)captureActive=true;
+      if(captureProfile && !captureLip && !captureBattle && !captureVersus && !captureDialogue && step.Opcode==0x3ed)captureActive=true;
       if(captureLip && step.Opcode==0x2c6)captureActive=true;
       if(captureBattle && step.Opcode==0x3ef)captureActive=true;
       if(captureVersus && step.Opcode==0x3f9)captureActive=true;
+      if(captureDialogue && step.Script==343 && step.Command==33 && step.Opcode==0x64)captureActive=true;
       if(captureVersus && step.Opcode==0x3f9 && step.Boundary==VmBoundary::CommandCompletedBeforeDispatch) {
         const auto& v=vm->State().BattleVersus;
         std::ofstream result(captureDirectory/"battle-versus.json");
@@ -1540,9 +1562,11 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         laidOut = false;
         capturePointerStage = 0;
         if((captureResult && !captureChapter && !captureProfile && resultCompleted) || (captureChapter && chapterCompleted) ||
-            (captureProfile && !captureLip && !captureBattle && !captureVersus && profileReturned)){targetCompleted=true;quit=true;}
+            (captureProfile && !captureLip && !captureBattle && !captureVersus && !captureDialogue && profileReturned)){targetCompleted=true;quit=true;}
         break;
       }
+      if(captureDialogue && step.Script==343 && step.Command==42 && step.Opcode==0x64 &&
+          step.Boundary==VmBoundary::CommandCompletedBeforeDispatch){targetCompleted=true;quit=true;break;}
       if(captureResult && step.Opcode==0x3f8 && step.Boundary==VmBoundary::CommandCompletedBeforeDispatch)
         resultCompleted=true;
       if(captureChapter && step.Opcode==0x3ec && step.Boundary==VmBoundary::CommandCompletedBeforeDispatch)
@@ -1613,7 +1637,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         int w=0,h=0;SdlCheck(SDL_GetWindowSizeInPixels(window.Window,&w,&h),"profile scene viewport");
         profilePresenter.Draw(*mode,vm->State(),w,h);
         const auto signature=profilePresenter.Signature(*mode);
-        if(captureProfile && !captureLip && !captureBattle && !captureVersus && (signature!=profileSignature || now-profileLastSaved>=2000)) {
+        if(captureProfile && !captureLip && !captureBattle && !captureVersus && !captureDialogue && (signature!=profileSignature || now-profileLastSaved>=2000)) {
           const auto file="profile-"+std::to_string(profileSaved++)+".bmp";
           Capture(captureDirectory/file,w,h);profilePresenter.Write(profileFrames,*mode,vm->State(),now,file);
           profileSignature=signature;profileLastSaved=now;
@@ -1657,6 +1681,11 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         mouths.at(id).Update(now);
     backend.UpdateMessage(now);
     const auto& state = vm->State();
+    if(captureDialogue && captureActive)if(const auto* text=backend.CurrentMessage()) {
+      dialogueVoiceUpdates << "{\"now\":" << now << ",\"command\":" << text->Command
+          << ",\"started\":" << text->Reveal.Started << ",\"epoch\":" << text->Reveal.Epoch
+          << ",\"position\":" << text->AudioPosition << ",\"phase\":" << text->VoiceGate.Phase << "}\n";
+    }
     // Run the actual preceding commands/audio to obtain their owning state,
     // but do not render or capture the previously checked scene range again.
     if(capture && !captureActive)continue;
@@ -1714,7 +1743,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       throw UnsupportedCommand("scene screen-fade state is unknown");
     if (!state.Quake[0] || !state.Quake[1] || !state.Quake[2])
       throw UnsupportedCommand("scene quake inputs are missing");
-    if (activeMessage && (!laidOut || layoutCommand != message->Command)) {
+    if (activeMessage && !state.BattleEntry.Enabled && (!laidOut || layoutCommand != message->Command)) {
       layout =
           LayoutPlainText(message->Reveal.Text, format, font.Cached(), metrics,
                           visual.Window.TextWidth, visual.BodyScale,
@@ -1722,7 +1751,20 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       laidOut = true;
       layoutCommand = message->Command;
     }
+    if(state.BattleEntry.Enabled)for(size_t side=0;side<2;++side) {
+      const auto* retained=backend.MessageSide(side);if(!retained)continue;
+      const auto key=std::pair{state.ScriptFileId,retained->Command};
+      if(splitLayoutKeys[side]!=key) {
+        splitLayouts[side]=LayoutPlainText(retained->Reveal.Text,format,font.Cached(),metrics,
+            dialogueVisual.TextWidth,visual.BodyScale,uint32_t(utility.Size),font.NominalSize());
+        splitLayoutKeys[side]=key;
+      }
+    }
+    if(activeMessage && state.BattleEntry.Enabled && (!laidOut || layoutCommand!=message->Command)) {
+      layout=splitLayouts[message->Side];layoutCommand=message->Command;laidOut=true;
+    }
     SceneQueueInputs gates;
+    gates.SplitMessage=state.BattleEntry.Enabled;
     gates.ApproachSelectionVisible=state.ApproachSelection.Visible;
     gates.EffectPlacement = state.RuleWipe.Parameter;
     for (size_t c = 0; c < 2; ++c)
@@ -1817,6 +1859,15 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
           } else {glDisable(GL_SCISSOR_TEST);particleFragment.SetAlphaTest(false,3,0);}
         }
         renderer.SetFilter(*state.ScreenFilter.Mode,*state.ScreenFilter.Intensity);
+      } else if(pass.Kind==SceneDrawKind::SplitFirstWindow || pass.Kind==SceneDrawKind::SplitSecondWindow) {
+        const auto side=pass.Kind==SceneDrawKind::SplitFirstWindow?0u:1u;
+        renderer.SetFilter(0,0.0f);
+        for(const auto& sprite:BuildBattleDialogueBubble(dialogueVisual,side,state.WindowTypes[side],
+            state.WindowOpenness[side],opacity,*state.Quake[2])) {
+          uploadBattleUi(sprite.Texture.Entry);glUniform1i(renderer.AlphaMode,1);
+          drawSprite(sprite);spriteDraws.push_back(sprite);
+        }
+        renderer.SetFilter(*state.ScreenFilter.Mode,*state.ScreenFilter.Intensity);
       } else if (pass.Kind == SceneDrawKind::MessageWindow) {
         OrdinaryMessageWindowState windowState;
         windowState.Openness = state.WindowOpenness[0];
@@ -1853,6 +1904,13 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         }
       } else if (pass.Kind == SceneDrawKind::MessageText) {
         particleFragment.SetBlendMode(1);  // Native GpFont draw.
+        if(state.BattleEntry.Enabled) {
+          const auto* retained=backend.MessageSide(pass.Index);if(!retained)continue;
+          const auto draws=BuildBattleDialogueTextDraws(dialogueVisual,visual,retained->Parsed,retained->Reveal,
+              splitLayouts[pass.Index],format,font.Cached(),uint32_t(utility.Size),font.NominalSize(),pass.Index,visual.UnreadColor);
+          for(const auto& text:draws)fontTextures.DrawString(renderer,font,text.Text,text.Position[0],text.Position[1],text.Size,text.Color);
+          textDraws.insert(textDraws.end(),draws.begin(),draws.end());continue;
+        }
         if(!activeMessage)continue;
         // This entry is an explicitly fresh owner with no loaded read history.
         textDraws = BuildOrdinaryMessageTextDraws(
@@ -1970,6 +2028,11 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       const auto& v=state.BattleVersus;
       signature=std::to_string(v.Phase)+':'+std::to_string(v.PendingPhase.value_or(-1));
       for(const auto& t:v.Tweens)signature+=':'+std::to_string(t.Current/64);
+    }
+    if(captureDialogue) {
+      size_t visible=0;for(const auto& glyph:message->Reveal.Glyphs)visible+=glyph.Alpha.Current>0;
+      signature=std::to_string(message->Command)+':'+std::to_string(message->Reveal.Revealed)+':'+
+          std::to_string(visible/4)+':'+std::to_string(state.WindowOpenness[0]/25)+':'+std::to_string(state.WindowOpenness[1]/25)+':'+std::to_string(quit);
     }
     if(!captureResult)for (const auto& fill : state.SceneImages.Slots.FillRects)
       signature += ':' + std::to_string(fill.Opacity / 16);
@@ -2171,7 +2234,27 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                << ',' << actor.Tweens[size_t(CharacterTween::PreviousPose)].Current
                << ',' << poseInput.Visible << ']';
       }
-      report << "],\"blink\":[";
+      report << "],\"battle_dialogue\":{\"enabled\":" << state.BattleEntry.Enabled
+             << ",\"full_battle_hud_bound\":false,\"atlas_uploads_checked\":" << versusUploadsChecked
+             << ",\"window_types\":[" << state.WindowTypes[0] << ',' << state.WindowTypes[1]
+             << "],\"window_openness\":[" << state.WindowOpenness[0] << ',' << state.WindowOpenness[1] << "],\"messages\":[";
+      for(size_t side=0;side<2;++side) {
+        if(side)report << ',';const auto* retained=backend.MessageSide(side);
+        if(!retained || !state.BattleEntry.Enabled){report << "null";continue;}
+        const auto& body=splitLayouts[side];const auto& reveal=retained->Reveal;
+        report << "{\"command\":" << retained->Command << ",\"side\":" << side << ",\"voice\":" << retained->VoiceId
+               << ",\"slot\":" << retained->VoiceGate.Slot << ",\"line_count\":" << body.LineCount << ",\"width\":" << body.Width
+               << ",\"epoch\":" << reveal.Epoch << ",\"started\":" << reveal.Started << ",\"revealed\":" << reveal.Revealed
+               << ",\"per_character\":" << reveal.PerCharacter << ",\"durations\":[" << reveal.Durations.Selected << ','
+               << reveal.Durations.Reference << "],\"body\":[";
+        for(size_t j=0;j<reveal.Text.size();++j){if(j)report << ',';report << uint16_t(reveal.Text[j]);}
+        report << "]}";
+      }
+      report << "],\"audio_channels\":[";
+      for(uint32_t channel=7;channel<=10;++channel){if(channel!=7)report << ',';
+        report << "{\"channel\":" << channel << ",\"ready\":" << voices.Ready(channel)
+               << ",\"playing\":" << voices.Playing(channel) << ",\"position\":" << voices.Position(channel) << '}';}
+      report << "]},\"blink\":[";
       bool first = true;
       for (const auto& [id, actor] : state.Characters) {
         (void)actor;

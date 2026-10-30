@@ -31,7 +31,7 @@ struct PlainTextLayout {
   std::vector<PlainTextLine> Lines;
   std::vector<Glyph> Glyphs;
   float Scale = 1;
-  uint16_t LineCount = 1, Height = 0;
+  uint16_t LineCount = 1, Height = 0, Width = 0; // Native record+194 max emitted line extent.
 };
 // Prepared/normalized UTF16, no inline style ranges; explicit positive scale.
 // Native175d4..17b78 line traversal, kinsoku and utility-font measurements.

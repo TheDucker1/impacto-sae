@@ -139,6 +139,7 @@ PlainTextLayout LayoutPlainText(std::u16string_view text,
                                                       : int32_t(scaled);
       glyphX += uint32_t(step);
     }
+    if(uint32_t(result.Width)<glyphX)result.Width=uint16_t(glyphX);
   }
   return result;
 }
