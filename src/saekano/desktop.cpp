@@ -3424,6 +3424,8 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
       InitializeFreshProfileEntry(
           *flowOwner, ProfileInitialStats::Decode(read(environmentDat)),
           catalog);
+      const auto historySettings=HistoryEnvironment::DecodeDebug(read(root/"env/env_debug.dat"));
+      LoadSystemOwner(*flowOwner,MakeFreshSystemProgress(read(root/"first.dat"),historySettings.InitiallyRead!=0),flowOwner->CgHistory.Required);
       flowOwner->OtakuMode = int32_t(*itemScene);
       flowFormat = TextFormatEnvironment::Decode(
           read(root / "env/env_string_format.dat"), true);
@@ -4173,7 +4175,9 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
     InitializeFreshProfileEntry(
         owner, ProfileInitialStats::Decode(profileRaw),
         LoadProfileItemCatalog(SceneRead(usrdir / "first.dat")));
-    if(!systemSave.empty())LoadSystemOwner(owner,ReadSystemSaveFile(systemSave),owner.CgHistory.Required);
+    const auto historySettings=HistoryEnvironment::DecodeDebug(SceneRead(usrdir/"env/env_debug.dat"));
+    const auto progress=systemSave.empty()?MakeFreshSystemProgress(SceneRead(usrdir/"first.dat"),historySettings.InitiallyRead!=0):ReadSystemSaveFile(systemSave);
+    LoadSystemOwner(owner,progress,owner.CgHistory.Required);
     ArchiveProfileServices services(
         resources,
         ScriptNameIndex::FromFirstArchive(SceneRead(usrdir / "first.dat")),

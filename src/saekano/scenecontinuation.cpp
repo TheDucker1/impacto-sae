@@ -90,7 +90,9 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
       Read(root / "env/env_omake.dat")).RequiredImages);
   InitializeFreshProfileEntry(owner, ProfileInitialStats::Decode(profileRaw),
                               LoadProfileItemCatalog(Read(root / "first.dat")));
-  if(!systemSave.empty())LoadSystemOwner(owner,ReadSystemSaveFile(systemSave),owner.CgHistory.Required);
+  const auto historySettings=HistoryEnvironment::DecodeDebug(Read(root/"env/env_debug.dat"));
+  const auto progress=systemSave.empty()?MakeFreshSystemProgress(Read(root/"first.dat"),historySettings.InitiallyRead!=0):ReadSystemSaveFile(systemSave);
+  LoadSystemOwner(owner,progress,owner.CgHistory.Required);
   ProfileMode mode(owner, services, profile, shared);
   ProfileSelectionInput selection;
   selection.Accept = true;
@@ -155,7 +157,6 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   const auto battleText=OrdinaryTextEnvironment::Decode(Read(root/"env/env_message_window.dat"));
   const auto selectionColors=SharedSelectionEnvironment::Decode(Read(root/"env/env_script_select.dat"));
   const auto widgetInput=WidgetInputEnvironment::DecodeUtility(Read(root/"env/env_game_utility.dat"));
-  const auto historySettings=HistoryEnvironment::DecodeDebug(Read(root/"env/env_debug.dat"));
   auto registeredHistory=vm->State().SystemProgress?RestoreSystemReadHistory(*vm->State().SystemProgress):
       RegisteredReadHistory::LoadFirst(Read(root/"first.dat"),historySettings.InitiallyRead!=0);
   backend.RegisteredHistory=&registeredHistory;backend.HistorySettings=historySettings;
@@ -284,7 +285,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
     for(const auto& file:registeredHistory.Files)
       for(const auto segment:file.Segments)if(segment&0x8000)++readSegments;
     out << ",\"read_segment_updates_bound\":true,\"read_segments_marked\":" << readSegments;
-    out << ",\"system_progress_loaded\":" << bool(vm->State().SystemProgress) << ",\"system_snapshot_written\":" << snapshotWritten;
+    out << ",\"system_progress_loaded\":" << (!systemSave.empty()) << ",\"system_progress_fresh\":" << systemSave.empty() << ",\"system_snapshot_written\":" << snapshotWritten;
     out
         << ",\"messages_started\":" << messages << ",\"messages_completed\":" << completedMessages
         << ",\"command_boundaries\":" << boundaries << ",\"audio_events\":" << audioEvents
@@ -296,7 +297,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         << ",\"approach_gauge\":" << vm->State().ApproachGauge
         << ",\"battle_gauge\":" << vm->State().BattleGauge << ",\"battle_choices_committed\":" << battleIndex
         << ",\"clock_step_ms\":16,\"seed\":0,\"voice_pcm_decoded\":true,\"bgm_se_playback\":false,"
-           "\"fresh_unread_controls\":" << (!vm->State().SystemProgress) << ",\"history_bound\":" << bool(vm->State().SystemProgress) << ",\"gpu_pixels\":false}\n";
+           "\"fresh_unread_controls\":" << systemSave.empty() << ",\"history_bound\":" << bool(vm->State().SystemProgress) << ",\"gpu_pixels\":false}\n";
   };
   bool confirmationDue=false,confirmationSent=false;
   size_t missionInstance=0;

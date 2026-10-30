@@ -26,6 +26,15 @@ uint8_t Master(std::optional<int32_t> value) {
   return uint8_t(*value/10);
 }
 }
+NativeSystemSave MakeFreshSystemProgress(Bytes firstDat,bool initiallyRead) {
+  NativeSystemSave result;
+  result.Bytes6022c={2,2,0,10,1,1,1,8,8,8,10,5,0};
+  result.Bytes6023a.fill(1);
+  result.Histories[8].Values.resize(44,0);
+  for(const size_t id:{0u,16u,32u,43u})result.Histories[8].Values[id]=1;
+  StoreSystemReadHistory(result,RegisteredReadHistory::LoadFirst(std::move(firstDat),initiallyRead));
+  (void)result.Encode();return result;
+}
 void LoadSystemOwner(SemanticState& owner,const NativeSystemSave& progress,
                      std::vector<int32_t> requiredCg) {
   // Validate the complete input before publishing any owner change.
