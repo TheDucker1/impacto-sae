@@ -135,7 +135,7 @@ class VirtualMachine {
 
  private:
   VirtualMachine(ScriptSource& scripts, VmBackend& backend,
-                 SemanticState initial, MessageRuntimeContext messageContext,
+                 SemanticState&& initial, MessageRuntimeContext messageContext,
                  bool replaceManager);
   struct RuntimeCommand {
     bool Started = false;

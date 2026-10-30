@@ -1,5 +1,6 @@
 #include "scenecontinuation.h"
 #include "endingdialog.h"
+#include "systemowner.h"
 
 #include "mouthselection.h"
 #include "ordinaryvoiceoutput.h"
@@ -64,7 +65,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
                          std::optional<size_t> untilMessage, std::ostream& report,bool confirmFirstMission,bool chooseFirstApproach,
                            std::span<const std::array<size_t,2>> approachPlan,bool confirmApproachResult,bool followPostResult,bool followPostChapter,
                            std::span<const std::array<size_t,2>> profilePlan,bool confirmBattleVersus,
-                           std::span<const std::array<size_t,3>> battlePlan,bool continueBattle,bool confirmBattleResult,bool followBattleResult,std::optional<int32_t> endingDecision,std::optional<size_t> untilApproachChoices) {
+                           std::span<const std::array<size_t,3>> battlePlan,bool continueBattle,bool confirmBattleResult,bool followBattleResult,std::optional<int32_t> endingDecision,std::optional<size_t> untilApproachChoices,const std::filesystem::path& systemSave,const std::filesystem::path& systemOutput) {
   if(endingDecision && *endingDecision!=0 && *endingDecision!=1)throw FormatError("invalid ending decision");
   const std::array<std::array<size_t,2>,1> firstChoice{{{0,0}}};
   if(chooseFirstApproach && approachPlan.empty())approachPlan=firstChoice;
@@ -89,6 +90,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
       Read(root / "env/env_omake.dat")).RequiredImages);
   InitializeFreshProfileEntry(owner, ProfileInitialStats::Decode(profileRaw),
                               LoadProfileItemCatalog(Read(root / "first.dat")));
+  if(!systemSave.empty())LoadSystemOwner(owner,ReadSystemSaveFile(systemSave),owner.CgHistory.Required);
   ProfileMode mode(owner, services, profile, shared);
   ProfileSelectionInput selection;
   selection.Accept = true;
@@ -154,7 +156,8 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   const auto selectionColors=SharedSelectionEnvironment::Decode(Read(root/"env/env_script_select.dat"));
   const auto widgetInput=WidgetInputEnvironment::DecodeUtility(Read(root/"env/env_game_utility.dat"));
   const auto historySettings=HistoryEnvironment::DecodeDebug(Read(root/"env/env_debug.dat"));
-  auto registeredHistory=RegisteredReadHistory::LoadFirst(Read(root/"first.dat"),historySettings.InitiallyRead!=0);
+  auto registeredHistory=vm->State().SystemProgress?RestoreSystemReadHistory(*vm->State().SystemProgress):
+      RegisteredReadHistory::LoadFirst(Read(root/"first.dat"),historySettings.InitiallyRead!=0);
   backend.RegisteredHistory=&registeredHistory;backend.HistorySettings=historySettings;
   AwbBank voiceBank(root/"voice.awb");
   std::unique_ptr<ArchiveBattleSelectionHost> battleHost;
@@ -173,7 +176,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
       voiceOwner = std::make_unique<SceneMessageVoiceOwner>(SceneMessageVoiceOwner{
           voices, spriteMouth, MakeFreshOrdinaryVoiceQueue(),
           resources.LoadScriptVoiceEnvelopes(vm->State().ScriptFileId),
-          LoadOrdinaryVoiceRangesFromFirst(Read(root / "first.dat")), MakeFreshOrdinaryVoiceSettings()});
+          LoadOrdinaryVoiceRangesFromFirst(Read(root / "first.dat")), vm->State().VoiceSettings.value_or(MakeFreshOrdinaryVoiceSettings())});
       auto catalogs=CollectMessageVoiceCatalogs(ScriptObject(resources.Load(vm->State().ScriptFileId)));
       voiceOwner->Queue.Catalog=std::move(catalogs[0]);
       voiceOwner->SecondaryQueue=MakeFreshOrdinaryVoiceQueue();
@@ -261,6 +264,11 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   std::optional<std::array<int32_t,2>> battlePlanDestination;
   std::optional<std::tuple<int32_t,int32_t,size_t>> previousBattleSelection;
   const auto finish = [&](std::string_view reason, bool success) {
+    bool snapshotWritten=false;
+    if(success && !systemOutput.empty()) {
+      if(std::filesystem::exists(systemOutput))throw FormatError("choose a fresh progress snapshot output");
+      WriteSystemSaveFile(systemOutput,SnapshotSystemOwner(vm->State(),registeredHistory));snapshotWritten=true;
+    }
     output.Enabled=true;  // A failure before the requested gate still reports its exact boundary.
     output.Suppressed=false;
     out << "{\"kind\":\"result\",\"success\":" << (success ? "true" : "false") << ",\"reason\":";
@@ -276,6 +284,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
     for(const auto& file:registeredHistory.Files)
       for(const auto segment:file.Segments)if(segment&0x8000)++readSegments;
     out << ",\"read_segment_updates_bound\":true,\"read_segments_marked\":" << readSegments;
+    out << ",\"system_progress_loaded\":" << bool(vm->State().SystemProgress) << ",\"system_snapshot_written\":" << snapshotWritten;
     out
         << ",\"messages_started\":" << messages << ",\"messages_completed\":" << completedMessages
         << ",\"command_boundaries\":" << boundaries << ",\"audio_events\":" << audioEvents
@@ -287,7 +296,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         << ",\"approach_gauge\":" << vm->State().ApproachGauge
         << ",\"battle_gauge\":" << vm->State().BattleGauge << ",\"battle_choices_committed\":" << battleIndex
         << ",\"clock_step_ms\":16,\"seed\":0,\"voice_pcm_decoded\":true,\"bgm_se_playback\":false,"
-           "\"fresh_unread_controls\":true,\"history_bound\":false,\"gpu_pixels\":false}\n";
+           "\"fresh_unread_controls\":" << (!vm->State().SystemProgress) << ",\"history_bound\":" << bool(vm->State().SystemProgress) << ",\"gpu_pixels\":false}\n";
   };
   bool confirmationDue=false,confirmationSent=false;
   size_t missionInstance=0;
@@ -589,6 +598,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
               << ",\"command\":" << event.Command << ",\"now\":" << now << ",\"choice_step\":" << choiceStep
               << ",\"plan_index\":" << choiceIndex-1 << ",\"original_parent\":" << chosen[0] << ",\"child\":" << chosen[1]
               << ",\"destination\":" << vm->State().PendingCommandIndex
+              << ",\"auto\":" << policy.Auto << ",\"mode\":" << vm->State().SkipMode << ",\"skip_phase\":" << vm->State().SkipPhase
               << ",\"used\":[";
           for(size_t i=0;i<18;++i){if(i)out << ',';out << +vm->State().ApproachFlags[i];}out << "]}\n";
           const auto* history=FindChoiceHistory(registeredHistory,event.Script,uint32_t(event.Command));

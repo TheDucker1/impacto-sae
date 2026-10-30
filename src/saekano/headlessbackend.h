@@ -25,6 +25,7 @@ class HeadlessBackend : public VmBackend {
   }
   bool AutoReveal = true;
   bool AutoAdvance = true;
+  bool AutoAdvanceEnabled() const { return ScenePolicy?ScenePolicy->Auto:AutoAdvance; }
   std::function<void(bool)> ParticleReset;
   std::function<void(const GameEvent&)> ParticleRequest;
   void ResetParticles(bool fresh) override { if (ParticleReset) ParticleReset(fresh); }
@@ -106,7 +107,7 @@ class HeadlessBackend : public VmBackend {
     revealed_[command] = AutoReveal;
   }
   bool MessageRevealed(size_t command, uint64_t) override { return revealed_.at(command); }
-  bool MessageAdvanceAllowed(size_t, uint64_t) override { return AutoAdvance; }
+  bool MessageAdvanceAllowed(size_t, uint64_t) override { return AutoAdvanceEnabled(); }
   void RevealMessage(size_t command) override { revealed_.at(command) = true; }
 
  private:

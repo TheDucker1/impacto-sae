@@ -41,7 +41,7 @@ VirtualMachine::VirtualMachine(ScriptSource& scripts, VmBackend& backend,
     : VirtualMachine(scripts, backend, std::move(initial), messageContext,
                      false) {}
 VirtualMachine::VirtualMachine(ScriptSource& scripts, VmBackend& backend,
-                               SemanticState initial,
+                               SemanticState&& initial,
                                MessageRuntimeContext messageContext,
                                bool replaceManager)
     : scripts_(scripts),
@@ -625,6 +625,7 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
       CompleteCommand(state_,opcode,script_->Payload(index),commit);
       const std::array<size_t,2> flags{(*choice)[0]*4,(*choice)[0]*4+(*choice)[1]+1};
       backend_.RecordChoiceHistory(state_.ScriptFileId,uint32_t(index),flags);
+      if(auto* policy=backend_.AutoPolicy())CompleteApproachResultPolicy(state_,*policy);
     }
     return done;
   }
@@ -808,6 +809,7 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
   if (opcode == 0x65) {
     const std::array<size_t,1> flags{*commitInput.Choice};
     backend_.RecordChoiceHistory(state_.ScriptFileId,uint32_t(index),flags);
+    if(auto* policy=backend_.AutoPolicy())CompleteApproachResultPolicy(state_,*policy);
     state_.DayEnabled = int32_t(command.SavedDay);
   }
   return true;

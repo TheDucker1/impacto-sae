@@ -355,6 +355,8 @@ int main(int argc, char* argv[]) {
       if (parsed.ec == std::errc{} && parsed.ptr == text.data()+text.size())
         return Saekano::RunFirstSceneViewer(argv[2], argv[5], true, false, true, target);
     }
+    if(argc==5 && std::string_view(argv[3])=="--system-save")
+      return Saekano::RunFirstSceneViewer(argv[2],{},false,false,false,{},{},{},false,false,0,{},argv[4]);
     if (argc == 3 || (argc == 5 && (std::string_view(argv[3]) == "--capture" ||
                                    std::string_view(argv[3]) == "--capture-auto" ||
                                    std::string_view(argv[3]) == "--capture-auto-button" ||

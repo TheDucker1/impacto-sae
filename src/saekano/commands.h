@@ -1,6 +1,8 @@
 #pragma once
 
 #include "formats.h"
+#include "systemsave.h"
+#include "ordinaryvoice.h"
 #include "live2dstate.h"
 #include "gauge.h"
 #include "random.h"
@@ -40,6 +42,10 @@ struct GameEvent {
 };
 
 struct SemanticState {
+  // Complete raw persistent owner retains all nine history groups, slot metadata,
+  // unknown options/words. Typed gameplay consumers below overlay their fields.
+  std::optional<NativeSystemSave> SystemProgress;
+  std::optional<OrdinaryVoiceSettings> VoiceSettings;
   int32_t ScriptFileId = 0;
   int32_t CurrentCommandIndex = 0;
   int32_t PendingCommandIndex = -1;

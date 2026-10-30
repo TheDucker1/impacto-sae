@@ -166,11 +166,12 @@ void SceneMessageBackend::RevealMessage(size_t command) {
 bool SceneMessageBackend::MessageAdvanceAllowed(size_t command, uint64_t now) {
   if (!current_ || current_->Command != command)
     throw UnsupportedCommand("scene message has not started");
-  if (!AutoAdvance) return false;
+  const bool automatic=AutoAdvanceEnabled();
+  if (!automatic) return false;
   if (!autoSpeed_)
     throw UnsupportedCommand("scene message auto speed is unknown");
   MessageAutoTiming message;
-  message.AutoEnabled = AutoAdvance;
+  message.AutoEnabled = automatic;
   message.PreviousUpdated = current_->PreviousUpdated;
   message.TextRevealed = current_->Reveal.Revealed;
   message.SourceUnits = current_->SourceUnits;

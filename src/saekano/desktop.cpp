@@ -1,3 +1,4 @@
+#include "systemowner.h"
 #include "desktop.h"
 
 #include "live2dsdk.h"
@@ -964,14 +965,14 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   const auto selectionShared=SharedSelectionEnvironment::Decode(SceneRead(root/"env/env_script_select.dat"));
   std::map<int32_t,std::unique_ptr<ModelTextures>> modelTextures;
   SdkLive2dDriver models(resources, Live2dEnvironment::Decode(SceneRead(root / "env/env_live2d.dat")));
-  const auto voiceSettings = MakeFreshOrdinaryVoiceSettings();
+  const auto voiceSettings = owner.VoiceSettings.value_or(MakeFreshOrdinaryVoiceSettings());
   PlaybackMissionVoice missionVoice(playback,root,voiceSettings.Volume,1.0f);
   const auto resultVisual=ModeResultVisualEnvironment::DecodeApproach(SceneRead(root/"env/env_approach.dat"));
   const auto resultCursors=MessageCursorEnvironment::Decode(SceneRead(root/"env/env_message_window.dat"));
   ArchiveApproachResultHost resultHost(resources,missionVoice,skipAuto,format,timing,
       resultVisual,font.Cached(),metrics,uint32_t(utility.Size),font.NominalSize());
   SceneMessageBackend backend(format, timing, *owner.TextSpeed, owner.AutoSpeed);
-  PlaybackProfileVoice profileVoice(playback,10,1.0f);
+  PlaybackProfileVoice profileVoice(playback,voiceSettings.Volume,1.0f);
   ArchiveProfileServices profileServices(resources,ScriptNameIndex::FromFirstArchive(SceneRead(root/"first.dat")),
       format,timing,&profileVoice);
   SceneProfilePresenter profilePresenter(root,resources,renderer,fontTextures,font,profileServices,profileVoice,playback);
@@ -1045,7 +1046,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   SpriteMessageMouth spriteMouth(vm->State(), mouths,&models);
   PlaybackOrdinaryVoice voices(playback, root, voiceSettings.Volume, 1.0f);
   const auto historySettings=HistoryEnvironment::DecodeDebug(SceneRead(root/"env/env_debug.dat"));
-  auto registeredHistory=RegisteredReadHistory::LoadFirst(SceneRead(root/"first.dat"),historySettings.InitiallyRead!=0);
+  auto registeredHistory=vm->State().SystemProgress?RestoreSystemReadHistory(*vm->State().SystemProgress):
+      RegisteredReadHistory::LoadFirst(SceneRead(root/"first.dat"),historySettings.InitiallyRead!=0);
   backend.RegisteredHistory=&registeredHistory;backend.HistorySettings=historySettings;
   AwbBank selectionVoiceBank(root/"voice.awb");
   std::unique_ptr<ArchiveBattleSelectionHost> battleHost;
@@ -4135,7 +4137,7 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
                         std::optional<size_t> captureUntilMessage,
                         std::optional<size_t> captureFromCommand,
                           std::optional<int32_t> captureScriptOverride,bool captureWaitingInput,bool captureConfirmInput,int32_t captureMenuInput,
-                          const std::filesystem::path& capturePlan) {
+                          const std::filesystem::path& capturePlan,const std::filesystem::path& systemSave) {
   bool created = false;
   try {
     const bool capture = !captureDirectory.empty();
@@ -4171,6 +4173,7 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
     InitializeFreshProfileEntry(
         owner, ProfileInitialStats::Decode(profileRaw),
         LoadProfileItemCatalog(SceneRead(usrdir / "first.dat")));
+    if(!systemSave.empty())LoadSystemOwner(owner,ReadSystemSaveFile(systemSave),owner.CgHistory.Required);
     ArchiveProfileServices services(
         resources,
         ScriptNameIndex::FromFirstArchive(SceneRead(usrdir / "first.dat")),
@@ -4198,7 +4201,7 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
     SystemSoundAssets systemSounds(SceneRead(usrdir/"first.dat"));
     MusicPlayback playback(music, capture, &sounds);
     // Fresh standalone viewer has the same native S60235 option8 as profile flow.
-    playback.BindUiSounds(systemSounds,ProfileVoiceGain(8,1.0f));
+    playback.BindUiSounds(systemSounds,ProfileVoiceGain(owner.SystemProgress?owner.SystemProgress->Bytes6022c[9]:8,1.0f));
     return RunCompletedScene(window, renderer, fontTextures, font, resources,
                              playback, music, sounds, std::move(owner), mode,
                              usrdir, captureDirectory, captureAuto, captureButtonAuto, captureVoiced,
