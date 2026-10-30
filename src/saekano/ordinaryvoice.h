@@ -10,7 +10,7 @@ struct OrdinaryVoiceRange { int32_t Group, First, Last; };
 struct OrdinaryVoiceSettings {
   uint8_t Volume;
   bool StopOnAdvance;
-  std::array<uint8_t, 9> Enabled;
+  std::array<uint8_t, 9> Enabled; // S6023a..42; [7] also gates battle previews.
 };
 OrdinaryVoiceSettings MakeFreshOrdinaryVoiceSettings();
 std::vector<OrdinaryVoiceRange> DecodeOrdinaryVoiceRanges(

@@ -4,12 +4,64 @@
 #include <bit>
 
 namespace Impacto::Saekano {
+RegisteredReadHistory RegisteredReadHistory::Decode(
+    std::span<const uint8_t> zz1, std::span<const uint8_t> zz2,
+    std::span<const uint8_t> zz3, bool initiallyRead) {
+  PayloadReader first(zz1), branches(zz2), segments(zz3);
+  const auto count = first.U32();
+  // Native trusts all counts/indexes. Bound allocations and reject corrupt
+  // inputs before indexing; preserve grouping/order/narrowing for valid data.
+  if (count > 65536) throw FormatError("history script count exceeds budget");
+  RegisteredReadHistory result;
+  result.Files.resize(count);
+  const auto branchCount = branches.U32();
+  if (branchCount > branches.Remaining() / 12 || branchCount > 1000000)
+    throw FormatError("truncated registered history branches");
+  std::optional<uint32_t> previous;
+  size_t flagsTotal = 0;
+  for (uint32_t i = 0; i < branchCount; ++i) {
+    const auto file = branches.U32();
+    const auto endpoint = uint16_t(branches.U32()); // High16 reserved/ignored.
+    const auto length = branches.U32();
+    if (file >= count || length > 1000000 || flagsTotal > 1000000 - length)
+      throw FormatError("registered history branch exceeds bounds");
+    flagsTotal += length;
+    auto& rows = result.Files[file].Branches;
+    // The native temporary list is flushed on each group change. A repeated
+    // noncontiguous group replaces its earlier contents, rather than appending.
+    if (!previous || *previous != file) rows.clear();
+    rows.push_back({endpoint, std::vector<uint8_t>(length, initiallyRead ? 1 : 0)});
+    previous = file;
+  }
+  const auto segmentCount = segments.U32();
+  if (segmentCount > segments.Remaining() / 8 || segmentCount > 1000000)
+    throw FormatError("truncated or excessive registered history segments");
+  previous.reset();
+  for (uint32_t i = 0; i < segmentCount; ++i) {
+    const auto file = segments.U32();
+    auto endpoint = segments.U32();
+    if (file >= count) throw FormatError("registered history script out of range");
+    auto& rows = result.Files[file].Segments;
+    if (!previous || *previous != file) rows.clear();
+    if (initiallyRead) endpoint |= 0x8000;
+    rows.push_back(uint16_t(endpoint));
+    previous = file;
+  }
+  return result;
+}
+RegisteredReadHistory RegisteredReadHistory::LoadFirst(Bytes firstDat,
+                                                       bool initiallyRead) {
+  GpdaArchive first(std::move(firstDat));
+  GpdaArchive tables(first.Data(4));
+  const auto zz1 = tables.Data(0), zz2 = tables.Data(1), zz3 = tables.Data(2);
+  return Decode(zz1, zz2, zz3, initiallyRead);
+}
 HistoryEnvironment HistoryEnvironment::DecodeDebug(std::span<const uint8_t> bytes) {
   // Three header flags;20 feature bytes; two scalar words; one preceding
   // feature byte; then native8025c25d. The prefix has no counted fields.
   constexpr size_t At = 3 + 20 + 2 * 4 + 1;
   if (bytes.size() <= At) throw FormatError("truncated history debug settings");
-  return {bytes[At], At + 1};
+  return {bytes[At], At + 1, bytes[3 + 11]};
 }
 bool SkipHistoryEligible(const HistoryEnvironment& environment,
                           std::span<const ScriptRecord> records,

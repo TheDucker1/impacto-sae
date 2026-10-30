@@ -7,6 +7,7 @@ struct SemanticState;
 struct HistoryEnvironment {
   uint8_t SuppressReadHistory = 0;
   size_t PrefixBytes = 0;
+  uint8_t InitiallyRead = 0; // env_debug8025c24b; startup table fill only.
   static HistoryEnvironment DecodeDebug(std::span<const uint8_t> bytes);
 };
 struct ReadHistoryBranch {
@@ -18,6 +19,16 @@ struct ReadHistoryBranch {
 struct ScriptReadHistory {
   std::vector<uint16_t> Segments;  // Low15 endpoint, high bit read.
   std::vector<ReadHistoryBranch> Branches;
+};
+// Native startup801937f8 on first.dat child4. The initial-read flag is an
+// explicit native configuration input (8025c24b), not restored save state.
+struct RegisteredReadHistory {
+  std::vector<ScriptReadHistory> Files;
+  static RegisteredReadHistory Decode(std::span<const uint8_t> zz1,
+                                      std::span<const uint8_t> zz2,
+                                      std::span<const uint8_t> zz3,
+                                      bool initiallyRead);
+  static RegisteredReadHistory LoadFirst(Bytes firstDat, bool initiallyRead);
 };
 bool SkipHistoryEligible(const HistoryEnvironment& environment,
                           std::span<const ScriptRecord> records,
