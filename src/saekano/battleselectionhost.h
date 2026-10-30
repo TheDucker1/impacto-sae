@@ -14,7 +14,7 @@ class ArchiveBattleSelectionHost final:public BattleSelectionHost,public BattleS
       UiSpriteDefinition sharedBubble,uint32_t holdFrames,const SharedSelectionEnvironment& selection,
       const OrdinaryTextEnvironment& text,const TextFormatEnvironment& format,const GsfFont& font,
       TextLayoutMetrics metrics,uint32_t utilitySize,uint32_t nominalSize,
-      const AwbIndex& voiceBank,SceneMessageVoiceOwner& voices,SemanticState& owner,
+      const AwbIndex& voiceBank,SceneMessageVoiceOwner& voices,const SemanticState& owner,
       RegisteredReadHistory& history,HistoryEnvironment historyEnvironment);
   void BeginFrame(uint64_t now,WidgetInputHistory::Snapshot contacts,uint32_t faceMask);
   void Begin(const ChoiceMenu& menu,int32_t script,int32_t command)override;
@@ -33,17 +33,19 @@ class ArchiveBattleSelectionHost final:public BattleSelectionHost,public BattleS
   bool Playing(uint32_t channel)override;
   bool PreviewEnabled()const override{return voices_.Settings.Enabled[7]!=0;}
   void PlayUiSound(uint32_t id)override;
+  std::vector<uint32_t> TakeSounds()override;
   std::vector<BattleSelectionDraw> Draw()const;
   const BattleSelectionUiState& State()const{return state_;}
  private:
   const BattleSelectionEnvironment& environment_;
   const AwbIndex& voiceBank_;
   SceneMessageVoiceOwner& voices_;
-  SemanticState& owner_;
+  const SemanticState& owner_;
   RegisteredReadHistory& history_;
   HistoryEnvironment historyEnvironment_;
   BattleSelectionUiState state_;
   std::optional<uint64_t> now_;
+  std::vector<uint32_t> sounds_;
   void RequireFrame()const;
   static void ValidateChannel(uint32_t channel);
   ReadHistoryBranch* HistoryRow(int32_t script,int32_t command)const;

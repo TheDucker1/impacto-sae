@@ -1,12 +1,13 @@
 #include "battleselectionhost.h"
 #include <algorithm>
+#include <utility>
 
 namespace Impacto::Saekano {
 ArchiveBattleSelectionHost::ArchiveBattleSelectionHost(const BattleSelectionEnvironment& environment,
     UiSpriteDefinition sharedBubble,uint32_t holdFrames,const SharedSelectionEnvironment& selection,
     const OrdinaryTextEnvironment& text,const TextFormatEnvironment& format,const GsfFont& font,
     TextLayoutMetrics metrics,uint32_t utilitySize,uint32_t nominalSize,
-    const AwbIndex& voiceBank,SceneMessageVoiceOwner& voices,SemanticState& owner,
+    const AwbIndex& voiceBank,SceneMessageVoiceOwner& voices,const SemanticState& owner,
     RegisteredReadHistory& history,HistoryEnvironment historyEnvironment)
     :BattleSelectionPresentation(environment,sharedBubble,holdFrames,selection,text,format,font,metrics,utilitySize,nominalSize),
       environment_(environment),voiceBank_(voiceBank),voices_(voices),owner_(owner),history_(history),
@@ -65,8 +66,9 @@ void ArchiveBattleSelectionHost::Prepare(uint32_t channel,int16_t id){
 void ArchiveBattleSelectionHost::Start(uint32_t channel){ValidateChannel(channel);voices_.Output.Start(channel);}
 bool ArchiveBattleSelectionHost::Playing(uint32_t channel){ValidateChannel(channel);return voices_.Output.Playing(channel);}
 void ArchiveBattleSelectionHost::PlayUiSound(uint32_t id){
-  owner_.PendingEvents.push_back({GameEventKind::Sound,int32_t(id)});
+  sounds_.push_back(id);
 }
+std::vector<uint32_t> ArchiveBattleSelectionHost::TakeSounds(){return std::exchange(sounds_,{});}
 std::vector<BattleSelectionDraw> ArchiveBattleSelectionHost::Draw()const{
   if(!state_.Enabled)return {};
   if(!owner_.ReadColorEnabled)throw UnsupportedCommand("battle history color setting is unknown");

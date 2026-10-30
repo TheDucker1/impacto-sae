@@ -29,6 +29,12 @@ class HeadlessBackend : public VmBackend {
   BattleResources* BattleResourceBank=nullptr;
   BattleResources* BattleAssets() override { return BattleResourceBank; }
   std::optional<BattleVersusEnvironment> BattleVersusSettings;
+  std::optional<BattleSelectionEnvironment> BattleSelectionSettings;
+  BattleSelectionHost* BattleSelectionConsumerHost=nullptr;
+  const BattleSelectionEnvironment* BattleSelectionConfig()const override {
+    return BattleSelectionSettings?&*BattleSelectionSettings:nullptr;
+  }
+  BattleSelectionHost* BattleSelectionConsumer()override{return BattleSelectionConsumerHost;}
   const BattleVersusEnvironment* BattleVersusConfig() const override {
     return BattleVersusSettings?&*BattleVersusSettings:nullptr;
   }

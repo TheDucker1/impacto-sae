@@ -9,6 +9,8 @@
 #include "missionvoice.h"
 #include "approachresulttext.h"
 #include "dialog.h"
+#include "battleselectionhost.h"
+#include "battledialogue.h"
 #ifdef SAEKANO_SCENE_CUBISM2
 #include "live2ddriver.h"
 #endif
@@ -59,7 +61,8 @@ void String(std::ostream& out, std::string_view value) {
 int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
                          std::optional<size_t> untilMessage, std::ostream& report,bool confirmFirstMission,bool chooseFirstApproach,
                            std::span<const std::array<size_t,2>> approachPlan,bool confirmApproachResult,bool followPostResult,bool followPostChapter,
-                           std::span<const std::array<size_t,2>> profilePlan,bool confirmBattleVersus) {
+                           std::span<const std::array<size_t,2>> profilePlan,bool confirmBattleVersus,
+                           std::span<const std::array<size_t,3>> battlePlan) {
   const std::array<std::array<size_t,2>,1> firstChoice{{{0,0}}};
   if(chooseFirstApproach && approachPlan.empty())approachPlan=firstChoice;
   chooseFirstApproach=!approachPlan.empty();
@@ -111,6 +114,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   backend.BattleResourceBank=&battleAssets;
   backend.BattleConfig=BattleGaugeEnvironment::Decode(Read(root/"env/env_tukkomi.dat"));
   backend.BattleVersusSettings=BattleVersusEnvironment::Decode(Read(root/"env/env_tukkomi.dat"));
+  backend.BattleSelectionSettings=BattleSelectionEnvironment::Decode(Read(root/"env/env_tukkomi.dat"));
   backend.MissionVoiceBank=&missionVoice;
   backend.MissionSettings=ApproachMissionEnvironment::Decode(Read(root/"env/env_approach.dat"));
   backend.SelectionSettings=ApproachSelectionEnvironment::Decode(Read(root/"env/env_approach.dat"));
@@ -137,10 +141,23 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
       ,&models
 #endif
   );
+  const auto resultFont=GsfFont::Decode(Read(root/"Font.gsf"));
+  const auto metrics=TextLayoutMetrics::Decode(Read(root/"env/env_global.dat"),Read(root/"env/env_message_window.dat"));
+  const auto utility=GameUtilityFont::Decode(Read(root/"env/env_game_utility.dat"));
+  const auto battleBubble=BattleDialogueEnvironment::Decode(Read(root/"env/env_tukkomi.dat"));
+  const auto battleText=OrdinaryTextEnvironment::Decode(Read(root/"env/env_message_window.dat"));
+  const auto selectionColors=SharedSelectionEnvironment::Decode(Read(root/"env/env_script_select.dat"));
+  const auto widgetInput=WidgetInputEnvironment::DecodeUtility(Read(root/"env/env_game_utility.dat"));
+  const auto historySettings=HistoryEnvironment::DecodeDebug(Read(root/"env/env_debug.dat"));
+  auto registeredHistory=RegisteredReadHistory::LoadFirst(Read(root/"first.dat"),historySettings.InitiallyRead!=0);
+  AwbBank voiceBank(root/"voice.awb");
+  std::unique_ptr<ArchiveBattleSelectionHost> battleHost;
+  std::optional<uint64_t> battleFrame;
   std::unique_ptr<SceneMessageVoiceOwner> voiceOwner;
   int32_t voiceScript = -1;
   const auto sync = [&] {
     if (voiceScript != vm->State().ScriptFileId) {
+      backend.BattleSelectionConsumerHost=nullptr;battleHost.reset();battleFrame.reset();
       if (!vm->State().Random.Known()) vm->SeedRandom(0);
       backend.ResetMessages(); mouths.clear();
       voiceOwner = std::make_unique<SceneMessageVoiceOwner>(SceneMessageVoiceOwner{
@@ -161,6 +178,10 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         out << "]}\n";
       }
       backend.BindVoiceOwner(*voiceOwner); voiceScript = vm->State().ScriptFileId;
+      battleHost=std::make_unique<ArchiveBattleSelectionHost>(*backend.BattleSelectionSettings,battleBubble.Bubble,
+          widgetInput.HoldFrames,selectionColors,battleText,format,resultFont,metrics,uint32_t(utility.Size),36,
+          voiceBank.Index(),*voiceOwner,vm->State(),registeredHistory,historySettings);
+      backend.BattleSelectionConsumerHost=battleHost.get();
     }
     for (const auto& [id, actor] : vm->State().Characters) {
       if (!actor.RuntimeKnown) throw UnsupportedCommand("continuation actor runtime is unknown");
@@ -170,10 +191,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   };
   const auto policyConfig = SkipAutoEnvironment::Decode(Read(root / "env/env_global.dat"));
   SkipAutoState policy;
-  const auto resultFont=GsfFont::Decode(Read(root/"Font.gsf"));
   const auto dialogEnvironment=DialogEnvironment::Decode(Read(root/"env/env_dialog.dat"));
-  const auto metrics=TextLayoutMetrics::Decode(Read(root/"env/env_global.dat"),Read(root/"env/env_message_window.dat"));
-  const auto utility=GameUtilityFont::Decode(Read(root/"env/env_game_utility.dat"));
   VoiceTextReveal prompt;prompt.PrepareUtf16(DecodeProfileConfirmationPrompt(profileRaw),format,0);
   const auto promptLayout=LayoutPlainText(prompt.Text,format,resultFont,metrics,dialogEnvironment.Settings[6],
       dialogEnvironment.TextScales[1],uint32_t(utility.Size),36);
@@ -205,7 +223,10 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   std::optional<std::tuple<int32_t,int32_t,int32_t>> previousMission;
   std::optional<std::tuple<int32_t,int32_t,bool>> previousResult;
   std::optional<std::pair<int32_t,int32_t>> previousProfile;
-  size_t choiceIndex=0,profileIndex=0;
+  size_t choiceIndex=0,profileIndex=0,battleIndex=0;
+  bool battleInputSent=false;
+  std::optional<std::array<int32_t,2>> battlePlanDestination;
+  std::optional<std::tuple<int32_t,int32_t,size_t>> previousBattleSelection;
   const auto finish = [&](std::string_view reason, bool success) {
     output.Enabled=true;  // A failure before the requested gate still reports its exact boundary.
     output.Suppressed=false;
@@ -316,10 +337,45 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         out << "{\"kind\":\"battle_versus_confirmation\",\"now\":" << now << ",\"source\":\"explicit_probe_Advance\"}\n";}
       for (size_t work = 0; work < 256; ++work) {
         sync();
-        if(vm->Opcode()==0x3f2 && vm->State().BattleEntry.Enabled) {
-          finish("battle_selection_lifecycle_not_bound",false);return 1;
+        if(!battleFrame || *battleFrame!=now) {
+          uint32_t faces=0;
+          if(battleHost->Phase()==4 && vm->Opcode()==0x3f2 && !battleInputSent && battleIndex<battlePlan.size()) {
+            const auto& planned=battlePlan[battleIndex];
+            if(planned[0]!=size_t(vm->State().ScriptFileId)||planned[1]!=size_t(vm->State().CurrentCommandIndex)||planned[2]>2)
+              throw FormatError("explicit battle plan does not match interactive scene");
+            faces=1u<<planned[2];battleInputSent=true;
+            out << "{\"kind\":\"battle_selection_face_input\",\"now\":" << now << ",\"script\":" << planned[0]
+                << ",\"command\":" << planned[1] << ",\"control\":" << planned[2] << ",\"source\":\"explicit_probe_face_control\"}\n";
+          }
+          battleHost->BeginFrame(now,{},faces);battleFrame=now;
         }
         const auto event = vm->Step(now,commandInput);commandInput.Advance=false;commandInput.Approach={};
+        if(event.Opcode==0x3f2 && vm->State().BattleSelection.Started) {
+          const auto& state=battleHost->State();const auto sample=std::tuple(state.Script,state.Phase,state.Ordinal);
+          if(previousBattleSelection!=sample || vm->State().BattleSelection.Completed) {
+            out << "{\"kind\":\"battle_selection_state\",\"now\":" << now << ",\"script\":" << event.Script
+                << ",\"command\":" << event.Command << ",\"phase\":" << state.Phase << ",\"ordinal\":" << state.Ordinal
+                << ",\"enabled\":" << state.Enabled << ",\"voice_slot\":" << state.SelectedVoiceSlot
+                << ",\"done\":" << vm->State().BattleSelection.Completed << ",\"pending\":" << vm->State().PendingCommandIndex
+                << ",\"submissions\":" << battleHost->Draw().size() << ",\"history\":[";
+            const auto& rows=registeredHistory.Files.at(size_t(event.Script)).Branches;
+            const auto row=std::find_if(rows.begin(),rows.end(),[&](const auto& h){return h.Endpoint==event.Command;});
+            if(row!=rows.end())for(size_t i=0;i<row->Flags.size();++i){if(i)out << ',';out << unsigned(row->Flags[i]);}
+            out << "]}\n";
+            previousBattleSelection=sample;
+          }
+          if(event.Boundary==VmBoundary::CommandCompletedBeforeDispatch && battleInputSent) {
+            if(state.Ordinal!=battlePlan[battleIndex][2]+1)throw FormatError("SDK battle committed another ordinal");
+            ++battleIndex;battleInputSent=false;
+            if(battleIndex==battlePlan.size())battlePlanDestination=std::array{event.Script,vm->State().PendingCommandIndex};
+          }
+        }
+        if(battlePlanDestination && event.Boundary==VmBoundary::BeforeStart &&
+           event.Script==(*battlePlanDestination)[0] && event.Command==(*battlePlanDestination)[1]) {
+          out << "{\"kind\":\"battle_selection_dispatched\",\"now\":" << now << ",\"script\":" << event.Script
+              << ",\"command\":" << event.Command << "}\n";
+          finish("battle_plan_complete",true);return 0;
+        }
         if(event.Opcode==0x3f9 && vm->State().BattleVersus.Started) {
           const auto& v=vm->State().BattleVersus;const auto sample=std::pair(v.Phase,v.PendingPhase.value_or(-1));
           if(previousVersus!=sample || v.Completed) {

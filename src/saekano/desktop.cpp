@@ -18,6 +18,7 @@
 #include "scenemessage.h"
 #include "messagedraw.h"
 #include "battledialogue.h"
+#include "battleselectionhost.h"
 #include "scenequeue.h"
 #include "widgetinput.h"
 #include "skipauto.h"
@@ -876,7 +877,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   const bool captureBattle=captureMenuInput==10;
   const bool captureVersus=captureMenuInput==11;
   const bool captureDialogue=captureMenuInput==12;
-  const bool captureProfile=captureMenuInput==8 || captureLip || captureBattle || captureVersus || captureDialogue;
+  const bool captureSelection=captureMenuInput==13;
+  const bool captureProfile=captureMenuInput==8 || captureLip || captureBattle || captureVersus || captureDialogue || captureSelection;
   const bool captureResult=captureMenuInput==5 || captureMenuInput==6 || captureChapter || captureProfile;
   const bool captureResultPointer=captureMenuInput==6;
   std::vector<std::array<size_t,2>> choicePlan;size_t choicePlanIndex=0;
@@ -995,6 +997,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   backend.BattleResourceBank=&battleAssets;
   backend.BattleConfig=BattleGaugeEnvironment::Decode(SceneRead(root/"env/env_tukkomi.dat"));
   backend.BattleVersusSettings=BattleVersusEnvironment::Decode(SceneRead(root/"env/env_tukkomi.dat"));
+  backend.BattleSelectionSettings=BattleSelectionEnvironment::Decode(SceneRead(root/"env/env_tukkomi.dat"));
   const auto versusVisual=BattleVersusVisualEnvironment::Decode(SceneRead(root/"env/env_tukkomi.dat"));
   const auto dialogueVisual=BattleDialogueEnvironment::Decode(SceneRead(root/"env/env_tukkomi.dat"));
   backend.SceneModels = &models;
@@ -1035,10 +1038,16 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   std::map<uint16_t, ProfileMouthPlayback> mouths;
   SpriteMessageMouth spriteMouth(vm->State(), mouths,&models);
   PlaybackOrdinaryVoice voices(playback, root, voiceSettings.Volume, 1.0f);
+  const auto historySettings=HistoryEnvironment::DecodeDebug(SceneRead(root/"env/env_debug.dat"));
+  auto registeredHistory=RegisteredReadHistory::LoadFirst(SceneRead(root/"first.dat"),historySettings.InitiallyRead!=0);
+  AwbBank selectionVoiceBank(root/"voice.awb");
+  std::unique_ptr<ArchiveBattleSelectionHost> battleHost;
+  std::optional<uint64_t> battleFrame;
   std::unique_ptr<SceneMessageVoiceOwner> voiceOwner;
   int32_t voiceScript = -1;
   const auto bindScriptVoices = [&] {
     if (voiceScript == vm->State().ScriptFileId) return;
+    backend.BattleSelectionConsumerHost=nullptr;battleHost.reset();battleFrame.reset();
     // File load creates a fresh manager RNG. The headless route supplies this
     // same host seed at that boundary; PC must also seed before sprite updates.
     if(!vm->State().Random.Known())vm->SeedRandom(capture?0u:uint32_t(SDL_GetTicks()));
@@ -1055,6 +1064,10 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     voiceOwner->SecondaryQueue->Catalog=std::move(catalogs[1]);
     backend.BindVoiceOwner(*voiceOwner);
     voiceScript = vm->State().ScriptFileId;
+    battleHost=std::make_unique<ArchiveBattleSelectionHost>(*backend.BattleSelectionSettings,dialogueVisual.Bubble,
+        inputEnvironment.HoldFrames,selectionShared,visual,format,font.Cached(),metrics,uint32_t(utility.Size),font.NominalSize(),
+        selectionVoiceBank.Index(),*voiceOwner,vm->State(),registeredHistory,historySettings);
+    backend.BattleSelectionConsumerHost=battleHost.get();
   };
   bindScriptVoices();
   const auto syncMouths = [&] {
@@ -1078,7 +1091,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       if(!dialogueVoiceUpdates)throw FormatError("cannot create bounded dialogue voice trace");}
     if (!report || !pcm || !events)
       throw FormatError("cannot create scene capture output");
-    if(captureProfile && !captureLip && !captureBattle && !captureVersus && !captureDialogue){profileFrames.open(captureDirectory/"profile-frames.jsonl");if(!profileFrames)throw FormatError("cannot create profile frame output");}
+    if(captureProfile && !captureLip && !captureBattle && !captureVersus && !captureDialogue && !captureSelection){profileFrames.open(captureDirectory/"profile-frames.jsonl");if(!profileFrames)throw FormatError("cannot create profile frame output");}
   }
   const auto drawSprite = [&](const UiSpriteBlit& sprite) {
     renderer.DrawQuad(sprite, renderer.Textures.at(sprite.Texture), false);
@@ -1109,7 +1122,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     const ProfileTextureKey key{ProfileTextureSection::BattleUi,-1,id};
     if(renderer.Textures.contains(key))return;
     const auto pixels=DecodeSceneImage(resources.LoadProfileTexture(key).Data);upload(key,pixels);
-    if(captureVersus || captureDialogue) {
+    if(captureVersus || captureDialogue || captureSelection) {
       std::vector<uint8_t> actual(pixels.Rgba.size());GLint previousTexture=0;
       glGetIntegerv(GL_TEXTURE_BINDING_2D,&previousTexture);glBindTexture(GL_TEXTURE_2D,renderer.Textures.at(key).Handle);
       glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_UNSIGNED_BYTE,actual.data());
@@ -1138,6 +1151,9 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   std::string previousSignature;
   size_t saved = 0;
   bool versusConfirmSent=false;
+  bool selectionFaceSent=false;
+  std::optional<int32_t> selectionDestination;
+  std::optional<std::pair<int32_t,size_t>> previousBattleUi;
   std::map<uint16_t, bool> actorEligibility;
   WidgetInputHistory menuPointer;
   std::vector<WidgetEventHistory> menuParents,menuChildren,menuArrows;
@@ -1150,16 +1166,18 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     particleClock=now;
     messageCursor.Update(now);
     CommandInput input;
+    uint32_t battleFaces=0;
+    WidgetInputHistory::Snapshot pointerSnapshot;
     SkipAutoInput policyInput;
     SDL_Event event;
-    if((captureVersus || captureDialogue) && vm->State().BattleVersus.Phase==12 && !vm->State().BattleVersus.PendingPhase && !versusConfirmSent) {
+    if((captureVersus || captureDialogue || captureSelection) && vm->State().BattleVersus.Phase==12 && !vm->State().BattleVersus.PendingPhase && !versusConfirmSent) {
       for(const auto type:{SDL_EVENT_KEY_DOWN,SDL_EVENT_KEY_UP}) {
         SDL_Event e{};e.type=type;e.key.windowID=SDL_GetWindowID(window.Window);e.key.key=SDLK_RETURN;
         e.key.down=type==SDL_EVENT_KEY_DOWN;SdlCheck(SDL_PushEvent(&e),"versus capture explicit confirm");
       }
       versusConfirmSent=true;events << "{\"kind\":\"battle_versus_confirmation\",\"now\":" << now << ",\"source\":\"explicit_capture_SDL_key\"}\n";
     }
-    if(captureDialogue && vm->State().ScriptFileId==343) {
+    if((captureDialogue || captureSelection) && vm->State().ScriptFileId==343) {
       const auto* text=backend.CurrentMessage();
       if(text && text->Reveal.Revealed && text->Command!=dialogueConfirmedCommand &&
           vm->State().CurrentCommandIndex==int32_t(text->Command)) {
@@ -1171,6 +1189,11 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         events << "{\"kind\":\"battle_dialogue_confirmation\",\"now\":" << now << ",\"command\":" << text->Command
                << ",\"source\":\"explicit_capture_SDL_key\"}\n";
       }
+    }
+    if(captureSelection && battleHost->State().Enabled && battleHost->Phase()==4 && !selectionFaceSent) {
+      SDL_Event e{};e.type=SDL_EVENT_KEY_DOWN;e.key.windowID=SDL_GetWindowID(window.Window);e.key.key=SDLK_1;e.key.down=true;
+      SdlCheck(SDL_PushEvent(&e),"battle selection capture face key");selectionFaceSent=true;
+      events << "{\"kind\":\"battle_selection_face_input\",\"now\":" << now << ",\"control\":0,\"source\":\"SDL_key_1\"}\n";
     }
     if(captureProfile && vm->CurrentProfile()) {
       const auto key=profilePresenter.CaptureKey(*vm->CurrentProfile(),profileChoice,now);
@@ -1308,6 +1331,18 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
            !vm->State().ApproachSelection.Visible))
         quit = true;
       if(vm->CurrentProfile()){profilePresenter.Handle(event,input.Profile);continue;}
+      if(battleHost->State().Enabled && battleHost->Phase()==4) {
+        if(event.type==SDL_EVENT_KEY_DOWN && !event.key.repeat) {
+          if(event.key.key==SDLK_1)battleFaces|=1;
+          if(event.key.key==SDLK_2)battleFaces|=2;
+          if(event.key.key==SDLK_3)battleFaces|=4;
+        }
+        if(event.type==SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+          if(event.gbutton.button==SDL_GAMEPAD_BUTTON_NORTH)battleFaces|=1;
+          if(event.gbutton.button==SDL_GAMEPAD_BUTTON_WEST)battleFaces|=2;
+          if(event.gbutton.button==SDL_GAMEPAD_BUTTON_EAST)battleFaces|=4;
+        }
+      }
       if(event.type==SDL_EVENT_KEY_DOWN && !event.key.repeat && vm->State().ApproachSelection.Visible) {
         input.Approach.Previous|=event.key.key==SDLK_UP;
         input.Approach.Next|=event.key.key==SDLK_DOWN;
@@ -1343,6 +1378,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         skipKeysHeld = {};
         policyInput.SkipPressed = false;
         sceneInput.CancelPointer();
+        battleHost->CancelPointer();battleFaces=0;
         menuPointer={};menuParents.clear();menuChildren.clear();menuArrows.clear();menuIdentity={-1,-1};
       }
     }
@@ -1383,7 +1419,6 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       events << "{\"kind\":\"auto_policy\",\"frame\":" << frame
              << ",\"now\":" << now << ",\"pressed\":" << policyInput.AutoPressed
              << ",\"held\":" << autoKeyHeld << ",\"auto\":" << skipAuto.Auto << "}\n";
-    WidgetInputHistory::Snapshot pointerSnapshot;
     if (pointerDown) {
       int logicalWidth = 0, logicalHeight = 0;
       SdlCheck(SDL_GetWindowSize(window.Window, &logicalWidth, &logicalHeight),
@@ -1469,10 +1504,27 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     for (size_t work = 0; work < 256; ++work) {
       bindScriptVoices();
       syncMouths();
-      if(vm->Opcode()==0x3f2 && vm->State().BattleEntry.Enabled)
-        throw UnsupportedCommand("battle selection owning lifecycle/HUD/input is not bound");
+      if(!battleFrame || *battleFrame!=now){battleHost->BeginFrame(now,pointerSnapshot,battleFaces);battleFrame=now;}
       const bool acceptedInput=input.Advance;
       const auto step = vm->Step(now, input);
+      if(captureSelection && step.Script==343 && step.Command==56 && step.Opcode==0x3f2) {
+        captureActive=true;const auto& selection=battleHost->State();const auto sample=std::pair(selection.Phase,selection.Ordinal);
+        if(previousBattleUi!=sample || vm->State().BattleSelection.Completed) {
+          events << "{\"kind\":\"battle_selection_state\",\"now\":" << now << ",\"phase\":" << selection.Phase
+              << ",\"ordinal\":" << selection.Ordinal << ",\"enabled\":" << selection.Enabled << ",\"done\":" << vm->State().BattleSelection.Completed
+              << ",\"pending\":" << vm->State().PendingCommandIndex << ",\"voice_slot\":" << selection.SelectedVoiceSlot
+              << ",\"voice_position\":" << voices.Position(11+selection.SelectedVoiceSlot) << ",\"history\":[";
+          const auto& rows=registeredHistory.Files.at(343).Branches;
+          const auto row=std::find_if(rows.begin(),rows.end(),[](const auto& r){return r.Endpoint==56;});
+          if(row!=rows.end())for(size_t i=0;i<row->Flags.size();++i){if(i)events << ',';events << unsigned(row->Flags[i]);}
+          events << "]}\n";previousBattleUi=sample;
+        }
+        if(step.Boundary==VmBoundary::CommandCompletedBeforeDispatch)selectionDestination=vm->State().PendingCommandIndex;
+      }
+      if(captureSelection && selectionDestination && step.Script==343 && step.Command==*selectionDestination && step.Boundary==VmBoundary::BeforeStart) {
+        events << "{\"kind\":\"battle_selection_dispatched\",\"now\":" << now << ",\"script\":343,\"command\":" << step.Command << "}\n";
+        targetCompleted=true;quit=true;break;
+      }
       if(!choicePlan.empty() && step.Opcode==0x3f6 && step.Boundary==VmBoundary::CommandCompletedBeforeDispatch) {
         const auto chosen=CompletedApproachChoice(vm->State().ApproachSelection);
         if(!chosen || choicePlanIndex>=choicePlan.size() || *chosen!=choicePlan[choicePlanIndex])
@@ -1484,7 +1536,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       if(captureParticles && particleCaptureRequested)captureActive=true;
       if(captureResult && !captureChapter && !captureProfile && step.Opcode==0x3f8)captureActive=true;
       if(captureChapter && step.Opcode==0x3ec)captureActive=true;
-      if(captureProfile && !captureLip && !captureBattle && !captureVersus && !captureDialogue && step.Opcode==0x3ed)captureActive=true;
+      if(captureProfile && !captureLip && !captureBattle && !captureVersus && !captureDialogue && !captureSelection && step.Opcode==0x3ed)captureActive=true;
       if(captureLip && step.Opcode==0x2c6)captureActive=true;
       if(captureBattle && step.Opcode==0x3ef)captureActive=true;
       if(captureVersus && step.Opcode==0x3f9)captureActive=true;
@@ -1562,7 +1614,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         laidOut = false;
         capturePointerStage = 0;
         if((captureResult && !captureChapter && !captureProfile && resultCompleted) || (captureChapter && chapterCompleted) ||
-            (captureProfile && !captureLip && !captureBattle && !captureVersus && !captureDialogue && profileReturned)){targetCompleted=true;quit=true;}
+            (captureProfile && !captureLip && !captureBattle && !captureVersus && !captureDialogue && !captureSelection && profileReturned)){targetCompleted=true;quit=true;}
         break;
       }
       if(captureDialogue && step.Script==343 && step.Command==42 && step.Opcode==0x64 &&
@@ -1637,7 +1689,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         int w=0,h=0;SdlCheck(SDL_GetWindowSizeInPixels(window.Window,&w,&h),"profile scene viewport");
         profilePresenter.Draw(*mode,vm->State(),w,h);
         const auto signature=profilePresenter.Signature(*mode);
-        if(captureProfile && !captureLip && !captureBattle && !captureVersus && !captureDialogue && (signature!=profileSignature || now-profileLastSaved>=2000)) {
+        if(captureProfile && !captureLip && !captureBattle && !captureVersus && !captureDialogue && !captureSelection && (signature!=profileSignature || now-profileLastSaved>=2000)) {
           const auto file="profile-"+std::to_string(profileSaved++)+".bmp";
           Capture(captureDirectory/file,w,h);profilePresenter.Write(profileFrames,*mode,vm->State(),now,file);
           profileSignature=signature;profileLastSaved=now;
@@ -1985,6 +2037,10 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       if(d.IsText){fontTextures.DrawString(renderer,font,d.Text.Text,d.Text.Position[0],d.Text.Position[1],d.Text.Size,d.Text.Color);textDraws.push_back(d.Text);}
       else {uploadBattleUi(d.Sprite.Texture.Entry);drawSprite(d.Sprite);spriteDraws.push_back(d.Sprite);}
     }
+    for(const auto& d:battleHost->Draw()) {
+      if(d.IsText){fontTextures.DrawString(renderer,font,d.Text.Text,d.Text.Position[0],d.Text.Position[1],d.Text.Size,d.Text.Color);textDraws.push_back(d.Text);}
+      else {uploadBattleUi(d.Sprite.Texture.Entry);drawSprite(d.Sprite);spriteDraws.push_back(d.Sprite);}
+    }
     // Native HUD tail8007708c draws white after queued presentation/HUD.
     if (const auto fade = BuildScreenFade(*state.ScreenFade)) {
       glUniform1i(renderer.AlphaMode, 1);
@@ -2028,6 +2084,11 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       const auto& v=state.BattleVersus;
       signature=std::to_string(v.Phase)+':'+std::to_string(v.PendingPhase.value_or(-1));
       for(const auto& t:v.Tweens)signature+=':'+std::to_string(t.Current/64);
+    }
+    if(captureSelection) {
+      const auto& selection=battleHost->State();signature=std::to_string(selection.Phase)+':'+std::to_string(selection.Ordinal)+':'+std::to_string(quit);
+      for(const auto& fade:selection.Fades)signature+=':'+std::to_string(fade.Current/32);
+      for(const auto y:selection.Offsets)signature+=':'+std::to_string(y/8);
     }
     if(captureDialogue) {
       size_t visible=0;for(const auto& glyph:message->Reveal.Glyphs)visible+=glyph.Alpha.Current>0;

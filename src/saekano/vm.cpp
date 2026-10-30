@@ -203,6 +203,7 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     state_.Battle = {true,0,{0,0},{1,1}};
     state_.BattleEntry={};state_.BattleEntry.Known=true;
     state_.BattleVersus={};state_.BattleVersus.Known=true;
+    state_.BattleSelection={};
     if(auto* resources=backend_.BattleAssets())resources->Reset();
     state_.BgmTrack.reset();
     state_.BgmCommandVolume.reset();
@@ -396,6 +397,12 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
       const auto* environment=backend_.BattleVersusConfig();
       if(!environment)throw UnsupportedCommand("versus environment is unavailable");
       StartBattleVersus(state_,*environment,backend_.Models(),now);
+    }
+  } else if(opcode==0x3f2 && state_.BattleEntry.Enabled) {
+    if(!lane) {
+      auto* host=backend_.BattleSelectionConsumer();const auto* environment=backend_.BattleSelectionConfig();
+      if(!host || !environment)throw UnsupportedCommand("battle selection presentation/audio/history host is unavailable");
+      StartBattleSelection(state_,DecodeChoice(script_->Payload(index),true),*environment,*host,now);
     }
   } else if (opcode == 0x3ee && !lane) {
     auto* resources = backend_.ApproachAssets();
@@ -726,6 +733,14 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
   }
   if(opcode==0x2c6)return true; // Shared main/skip/lane updates only mark completion.
   if(opcode==0x3f9)return lane || UpdateBattleVersus(state_,backend_.Models(),input.Advance,now);
+  if(opcode==0x3f2 && state_.BattleEntry.Enabled) {
+    if(lane)return true;
+    auto* host=backend_.BattleSelectionConsumer();
+    if(!host)throw UnsupportedCommand("battle selection host disappeared during update");
+    const bool done=UpdateBattleSelection(state_,*host,now);
+    for(const auto sound:host->TakeSounds())state_.PendingEvents.push_back({GameEventKind::Sound,int32_t(sound)});
+    return done;
+  }
   if(opcode==0x3ef) {
     if(lane)return true;
     auto* resources=backend_.BattleAssets();if(!resources)throw UnsupportedCommand("battle entry resources are unavailable");

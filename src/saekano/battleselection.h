@@ -104,6 +104,7 @@ class BattleSelectionHost {
   virtual bool HistorySuppressed()const=0;
   // Touch only a registered owner-history row; do not invent restored flags.
   virtual void MarkHistory(int32_t script,int32_t command,size_t ordinal)=0;
+  virtual std::vector<uint32_t> TakeSounds(){return {};}
 };
 void StartBattleSelection(SemanticState& owner,const ChoiceMenu& menu,
     const BattleSelectionEnvironment& environment,BattleSelectionHost& host,uint64_t now);
