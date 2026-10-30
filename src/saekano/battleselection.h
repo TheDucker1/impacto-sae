@@ -59,14 +59,14 @@ class BattleSelectionUiServices:public OrdinaryVoicePreparation {
   virtual void PrepareRow(size_t row,const BattleSelectionRow& value,int32_t width)=0;
   virtual void RegisterPreview(int16_t id)=0;
   virtual void ClearControl(size_t control)=0;
-  // Two native widget states, each containing one sprite. Geometry comes from
-  // the shared battle bubble descriptor, not the separate HUD card table.
+  // Two unconditional native widget groups, each containing one sprite; both
+  // layers draw. Geometry uses the shared bubble, not the HUD card table.
   virtual void AddControlState(size_t control,uint32_t texture,std::array<int32_t,2> position,
       float scale,std::array<uint8_t,4> color,bool interactive)=0;
   virtual void SetControlPulse(size_t control,size_t state,const BattleSelectionEnvironment::Pulse& pulse)=0;
   virtual void SetControlOffset(size_t control,int32_t y)=0;
   virtual bool FacePressed(size_t control)=0;
-  virtual bool PointerReleased(size_t control)=0;
+  virtual bool PointerPressed(size_t control)=0; // Native virtual+24: Enabled && Flags&1.
   virtual void PlayUiSound(uint32_t id)=0;
   virtual bool PreviewEnabled()const=0;
   virtual bool Playing(uint32_t channel)=0;

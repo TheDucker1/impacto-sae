@@ -116,7 +116,7 @@ bool UpdateBattleSelectionUi(BattleSelectionUiState& s,const BattleSelectionEnvi
   }
   if(s.Phase==3){s.Ordinal=0;s.Phase=4;}
   if(s.Phase==4) {
-    for(size_t i=0;i<3;++i)if(output.FacePressed(i)||output.PointerReleased(i)) {
+    for(size_t i=0;i<3;++i)if(output.FacePressed(i)||output.PointerPressed(i)) {
       if(i+1>=s.Rows.size())throw FormatError("battle control has no loaded row");
       output.PlayUiSound(3);s.Ordinal=i+1;s.Phase=6;break;
     }
