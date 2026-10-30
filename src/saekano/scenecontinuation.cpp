@@ -154,6 +154,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   const auto widgetInput=WidgetInputEnvironment::DecodeUtility(Read(root/"env/env_game_utility.dat"));
   const auto historySettings=HistoryEnvironment::DecodeDebug(Read(root/"env/env_debug.dat"));
   auto registeredHistory=RegisteredReadHistory::LoadFirst(Read(root/"first.dat"),historySettings.InitiallyRead!=0);
+  backend.RegisteredHistory=&registeredHistory;backend.HistorySettings=historySettings;
   AwbBank voiceBank(root/"voice.awb");
   std::unique_ptr<ArchiveBattleSelectionHost> battleHost;
   std::unique_ptr<ArchiveBattleResultHost> battleResultHost;
@@ -270,6 +271,10 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
     if(reason=="ending_title_requested")out << ",\"completion_scope\":\"title_request_only\",\"outer_handoff_bound\":false,\"title_constructed\":false";
     if(ending.Started)out << ",\"ending_controller_bound\":true,\"ending_phase\":" << ending.Phase << ",\"ending_save_backend_bound\":false";
 
+    size_t readSegments=0;
+    for(const auto& file:registeredHistory.Files)
+      for(const auto segment:file.Segments)if(segment&0x8000)++readSegments;
+    out << ",\"read_segment_updates_bound\":true,\"read_segments_marked\":" << readSegments;
     out
         << ",\"messages_started\":" << messages << ",\"messages_completed\":" << completedMessages
         << ",\"command_boundaries\":" << boundaries << ",\"audio_events\":" << audioEvents
@@ -332,6 +337,8 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         policyInput.AutoHeld = elapsed >= 96 && elapsed < 1296;
       }
       if(!vm->CurrentProfile()) {
+        policyInput.HistoryGate=vm->SkipHistoryGate(historySettings,
+            &registeredHistory.Files.at(size_t(vm->State().ScriptFileId)));
         vm->UpdateSkipAuto(policy, policyInput, policyConfig.AutoKeyDuration, now);
         backend.AutoAdvance = policy.Auto;
         voices.Update(now);

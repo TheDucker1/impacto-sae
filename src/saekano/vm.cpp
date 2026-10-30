@@ -880,7 +880,10 @@ VmEvent VirtualMachine::Step(uint64_t now, const CommandInput& input) {
     // Native7417a selects vslot28 whenever C1ba8 is nonzero. Resource commands
     // can set this phase independently of a user skip request.
     if (state_.SkipPhase != 0) routedInput.Route = UpdateRoute::Skipping;
-    if (Update(index, now, routedInput, false)) boundary_ = VmBoundary::CommandCompletedBeforeDispatch;
+    if (Update(index, now, routedInput, false)) {
+      backend_.RecordReadHistory(state_.ScriptFileId,uint32_t(index));
+      boundary_ = VmBoundary::CommandCompletedBeforeDispatch;
+    }
     else {
       const auto& selection=state_.ApproachSelection;
       boundary_ = (Opcode() == 0x65 || Opcode() == 0x3f2 ||

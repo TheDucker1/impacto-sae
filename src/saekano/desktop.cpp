@@ -1046,6 +1046,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   PlaybackOrdinaryVoice voices(playback, root, voiceSettings.Volume, 1.0f);
   const auto historySettings=HistoryEnvironment::DecodeDebug(SceneRead(root/"env/env_debug.dat"));
   auto registeredHistory=RegisteredReadHistory::LoadFirst(SceneRead(root/"first.dat"),historySettings.InitiallyRead!=0);
+  backend.RegisteredHistory=&registeredHistory;backend.HistorySettings=historySettings;
   AwbBank selectionVoiceBank(root/"voice.awb");
   std::unique_ptr<ArchiveBattleSelectionHost> battleHost;
   std::unique_ptr<ArchiveBattleResultHost> battleResultHost;
@@ -1407,9 +1408,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       }
     }
     if (quit) break;
-    // Dedicated fresh scene: no hidden-message mode or blocking overlay, and
-    // no restored read history. History eligibility is an explicit false input
-    // for this fresh-unread preview; a loaded-history owner must supply its lookup.
+    // Current read tables include commands completed earlier in this session.
     // Policy consumes prior widget samples before this frame's updates.
     if(vm->CurrentProfile())profilePresenter.BeforeStep(input.Profile,now);
     if(!vm->CurrentProfile()) {
@@ -1428,6 +1427,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         (policyInput.AutoPressed ? 128u : 0u) | (policyInput.AutoHeld ? 256u : 0u) |
         (policyInput.AutoButtonReleased ? 512u : 0u) | (policyInput.PrimaryFullHold ? 1024u : 0u);
     const bool wasAuto = skipAuto.Auto;
+    policyInput.HistoryGate=vm->SkipHistoryGate(historySettings,
+        &registeredHistory.Files.at(size_t(vm->State().ScriptFileId)));
     vm->UpdateSkipAuto(skipAuto, policyInput, skipAutoEnvironment.AutoKeyDuration, now);
     backend.AutoAdvance = skipAuto.Auto;
     input.Route = vm->State().SkipPhase ? UpdateRoute::Skipping : UpdateRoute::Normal;

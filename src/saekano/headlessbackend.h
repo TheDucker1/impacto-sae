@@ -1,6 +1,7 @@
 #pragma once
 
 #include "vm.h"
+#include "skipauto.h"
 #include "texttiming.h"
 #include "textreveal.h"
 
@@ -11,6 +12,14 @@ namespace Impacto::Saekano {
 // class does not claim to draw, decode media or complete unknown opcodes.
 class HeadlessBackend : public VmBackend {
  public:
+  RegisteredReadHistory* RegisteredHistory=nullptr;
+  HistoryEnvironment HistorySettings;
+  void RecordReadHistory(int32_t script,uint32_t command) override {
+    if(!RegisteredHistory || HistorySettings.SuppressReadHistory)return;
+    if(script<0 || size_t(script)>=RegisteredHistory->Files.size())
+      throw FormatError("completed command outside registered history scripts");
+    MarkHistoryRead(HistorySettings,RegisteredHistory->Files[size_t(script)],command);
+  }
   bool AutoReveal = true;
   bool AutoAdvance = true;
   std::function<void(bool)> ParticleReset;

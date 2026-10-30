@@ -4,6 +4,7 @@
 #include <filesystem>
 
 namespace Impacto::Saekano {
+struct RegisteredReadHistory;
 // Preserve numeric/byte fields without inventing meanings for untraced consumers.
 // Source offsets refer to the native ScenarioOwner, not serialized file offsets.
 struct SystemSaveChoice { int16_t Id=0;Bytes Values; };
@@ -24,6 +25,9 @@ struct NativeSystemSave {
   static NativeSystemSave Decode(std::span<const uint8_t> bytes);
   Bytes Encode()const;
 };
+// Restore/store both per-script collections, preserving raw endpoint bits and flags.
+RegisteredReadHistory RestoreSystemReadHistory(const NativeSystemSave& state);
+void StoreSystemReadHistory(NativeSystemSave& state,const RegisteredReadHistory& history);
 NativeSystemSave ReadSystemSaveFile(const std::filesystem::path& path);
 // A flushed sibling file replaces the destination only after complete encoding.
 // An existing .pending file is preserved and rejected for explicit recovery.

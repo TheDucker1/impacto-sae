@@ -1,5 +1,6 @@
 #include "systemsave.h"
 #include "commands.h"
+#include "skipauto.h"
 #include <bit>
 #include <fstream>
 #include <limits>
@@ -47,6 +48,28 @@ Bytes NativeSystemSave::Encode()const{
   for(size_t i=0;i<7;++i)history(Histories[i]);put(Word60318,4);
   for(auto v:Bytes6022c)put(v,1);count(Bytes6023a.size());for(auto v:Bytes6023a)put(v,1);put(Byte60239,1);
   for(size_t i=7;i<9;++i)history(Histories[i]);b.resize(FileBytes,0);return b;
+}
+RegisteredReadHistory RestoreSystemReadHistory(const NativeSystemSave& state) {
+  if(state.Rows60244.size()!=state.Rows60254.size())
+    throw FormatError("saved read/choice history script counts differ");
+  RegisteredReadHistory history;
+  history.Files.resize(state.Rows60244.size());
+  for(size_t i=0;i<history.Files.size();++i) {
+    auto& file=history.Files[i];file.Segments=state.Rows60244[i];
+    for(const auto& choice:state.Rows60254[i])
+      file.Branches.push_back({std::bit_cast<uint16_t>(choice.Id),choice.Values});
+  }
+  return history;
+}
+void StoreSystemReadHistory(NativeSystemSave& state,const RegisteredReadHistory& history) {
+  std::vector<std::vector<uint16_t>> segments;
+  std::vector<std::vector<SystemSaveChoice>> branches;
+  for(const auto& file:history.Files) {
+    segments.push_back(file.Segments);auto& row=branches.emplace_back();
+    for(const auto& choice:file.Branches)
+      row.push_back({std::bit_cast<int16_t>(choice.Endpoint),choice.Flags});
+  }
+  state.Rows60244=std::move(segments);state.Rows60254=std::move(branches);
 }
 NativeSystemSave ReadSystemSaveFile(const std::filesystem::path& path){
   std::ifstream f(path,std::ios::binary|std::ios::ate);if(!f || f.tellg()!=std::streampos(NativeSystemSave::FileBytes))throw FormatError("cannot read native system save");
