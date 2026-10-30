@@ -61,7 +61,8 @@ Bytes InflateGzip(std::span<const uint8_t> input, size_t outputLimit) {
   stream.next_in = const_cast<Bytef*>(input.data());
   stream.avail_in = static_cast<uInt>(input.size());
   Bytes result;
-  std::array<uint8_t, 65536> block;
+  // Keep the bounded scratch buffer off deeply nested VM/diagnostic stacks.
+  std::vector<uint8_t> block(65536);
   for (;;) {
     stream.next_out = block.data();
     stream.avail_out = static_cast<uInt>(block.size());
@@ -81,6 +82,9 @@ Bytes InflateGzip(std::span<const uint8_t> input, size_t outputLimit) {
   }
 }
 
+struct GameResources::FrontendAssets {
+  std::optional<GpdaArchive> TitleUi,SystemUi,SystemVoices;
+};
 GameResources::GameResources(Bytes resourceDat)
     : GameResources(GpdaArchive(std::move(resourceDat))) {}
 
@@ -88,11 +92,16 @@ GameResources::GameResources(const GpdaArchive& root)
     : scripts_(ResourceSection(root, 4)), live2d_(ResourceSection(root, 0)) {
   if (root.Entries().size() > 1) mainUi_.emplace(ResourceSection(root, 1));
   if(root.Entries().size()>16)battleUi_.emplace(ResourceSection(root,16));
+  auto frontend=std::make_shared<FrontendAssets>();
+  if(root.Entries().size()>15)frontend->TitleUi.emplace(ResourceSection(root,15));
+  if(root.Entries().size()>13)frontend->SystemUi.emplace(ResourceSection(root,13));
   if (root.Entries().size() > 14) {
-    const auto voices = ResourceSection(root, 14);
+    auto voices = ResourceSection(root, 14);
     if (voices.Entries().size() > 5)
       battleResultVoices_.emplace(RawEntry(voices, 5));
+    frontend->SystemVoices.emplace(std::move(voices));
   }
+  frontend_=std::move(frontend);
   if (root.Entries().size() > 6)
     characterPoses_.emplace(ResourceSection(root, 6));
   if(root.Entries().size()>7)battleFaces_.emplace(ResourceSection(root,7));
@@ -124,6 +133,19 @@ ResourceAsset GameResources::LoadBattleResultVoice(size_t entry) const {
   if (!battleResultVoices_ || entry >= 8 || entry >= battleResultVoices_->Entries().size())
     throw FormatError("battle result voice outside original descriptor array");
   return {battleResultVoices_->Entries()[entry].Name, RawEntry(*battleResultVoices_, entry)};
+}
+size_t GameResources::TitleTextureCount()const{return frontend_->TitleUi?frontend_->TitleUi->Entries().size():0;}
+size_t GameResources::SystemTextureCount()const{return frontend_->SystemUi?frontend_->SystemUi->Entries().size():0;}
+size_t GameResources::SystemVoiceBankCount()const{return frontend_->SystemVoices?frontend_->SystemVoices->Entries().size():0;}
+size_t GameResources::SystemVoiceCount(size_t bank)const{
+  if(bank>=SystemVoiceBankCount())throw FormatError("system voice bank outside original archive");
+  return GpdaArchive(RawEntry(*frontend_->SystemVoices,bank)).Entries().size();
+}
+ResourceAsset GameResources::LoadSystemVoice(size_t bank,size_t entry)const{
+  if(bank>=SystemVoiceBankCount())throw FormatError("system voice bank outside original archive");
+  const GpdaArchive voices(RawEntry(*frontend_->SystemVoices,bank));
+  if(entry>=voices.Entries().size())throw FormatError("system voice entry outside original bank");
+  return {voices.Entries()[entry].Name,RawEntry(voices,entry)};
 }
 size_t GameResources::EffectCount() const {
   return effects_ ? effects_->Entries().size() : 0;
@@ -202,6 +224,10 @@ ProfileMenuAsset GameResources::LoadProfileTexture(ProfileTextureKey key) const 
     return load(*mainUi_);
   if(key.Section==ProfileTextureSection::BattleUi && battleUi_)
     return load(*battleUi_);
+  if(key.Section==ProfileTextureSection::TitleUi && frontend_->TitleUi)
+    return load(*frontend_->TitleUi);
+  if(key.Section==ProfileTextureSection::SystemUi && frontend_->SystemUi)
+    return load(*frontend_->SystemUi);
   throw FormatError("profile texture section is unavailable");
 }
 std::vector<ResourceAsset> GameResources::LoadApproachTextures(size_t id) const {

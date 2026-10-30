@@ -4,7 +4,7 @@
 #include <optional>
 
 namespace Impacto::Saekano {
-enum class TitleSubmenu { Load,Extras,Config };
+enum class TitleSubmenu { Load,Config,Extras };
 struct TitleInput {
   bool Accept=false,Cancel=false,Start=false,AnyActivity=false,PressStartReleased=false;
   std::optional<size_t> ReleasedMenuButton;

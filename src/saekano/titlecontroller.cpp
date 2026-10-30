@@ -91,11 +91,11 @@ void UpdateTitle(TitleState& s,const TitleEnvironment& e,TitleServices& h,const 
     if(status==3){s.TargetScene=2;h.StopBgm();scene();}
     else if(status==2){request(10);h.DestroySubmenu(TitleSubmenu::Load);}
   }
-  if(s.Phase==13){s.Fade.Tick(now);if(s.Fade.Finished()){h.BeginSubmenu(TitleSubmenu::Extras);request(15);}}
-  if(s.Phase==15 && h.UpdateSubmenu(TitleSubmenu::Extras)==1){h.DestroySubmenu(TitleSubmenu::Extras);s.Fade.Reverse(now);request(19,true);}
+  if(s.Phase==13){s.Fade.Tick(now);if(s.Fade.Finished()){h.BeginSubmenu(TitleSubmenu::Config);request(15);}}
+  if(s.Phase==15 && h.UpdateSubmenu(TitleSubmenu::Config)==1){h.DestroySubmenu(TitleSubmenu::Config);s.Fade.Reverse(now);request(19,true);}
   if(s.Phase==16){s.Fade.Tick(now);if(s.Fade.Finished())request(10);}
-  if(s.Phase==17){s.Fade.Tick(now);if(s.Fade.Finished()){h.BeginSubmenu(TitleSubmenu::Config);request(18);}}
-  if(s.Phase==18 && h.UpdateSubmenu(TitleSubmenu::Config)==2){h.DestroySubmenu(TitleSubmenu::Config);s.Fade.Reverse(now);request(19,true);}
+  if(s.Phase==17){s.Fade.Tick(now);if(s.Fade.Finished()){h.BeginSubmenu(TitleSubmenu::Extras);request(18);}}
+  if(s.Phase==18 && h.UpdateSubmenu(TitleSubmenu::Extras)==2){h.DestroySubmenu(TitleSubmenu::Extras);s.Fade.Reverse(now);request(19,true);}
   if(s.Phase==19){s.Fade.Tick(now);if(s.Fade.Finished())request(10);}
   if(s.Phase==20){
     if(h.VoiceMode()==4){if(h.ChannelPlaying(6))request(21);}

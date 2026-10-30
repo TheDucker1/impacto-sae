@@ -21,4 +21,6 @@ struct TitleEnvironment {
   std::vector<std::u16string> MenuLabels;
   static TitleEnvironment Decode(std::span<const uint8_t> bytes);
 };
+// Presentation variant chosen by title RNG, not a global story character ID.
+ProfileTextureKey TitlePortraitTexture(uint32_t presentationVariant);
 }

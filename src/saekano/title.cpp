@@ -3,6 +3,11 @@
 #include <bit>
 
 namespace Impacto::Saekano {
+ProfileTextureKey TitlePortraitTexture(uint32_t presentationVariant) {
+  constexpr std::array<uint32_t,4> Entries{72,81,76,75}; // Native80254280.
+  if(presentationVariant>=Entries.size())throw FormatError("title portrait variant outside native mapping");
+  return {ProfileTextureSection::TitleUi,-1,Entries[presentationVariant]};
+}
 TitleEnvironment TitleEnvironment::Decode(std::span<const uint8_t> bytes) {
   if(bytes.size()<3 || bytes.size()>32*1024*1024)throw FormatError("invalid title environment extent");
   TitleEnvironment e;PayloadReader r(bytes);

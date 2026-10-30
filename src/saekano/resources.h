@@ -101,6 +101,11 @@ class GameResources final : public ScriptSource {
   ProfileScene LoadProfileScene(size_t sceneId) const;
   std::vector<ProfileMenuAsset> LoadProfileMenu() const;
   ProfileMenuAsset LoadProfileTexture(ProfileTextureKey key) const;
+  size_t TitleTextureCount() const;
+  size_t SystemTextureCount() const;
+  size_t SystemVoiceBankCount() const;
+  size_t SystemVoiceCount(size_t bank) const;
+  ResourceAsset LoadSystemVoice(size_t bank,size_t entry) const;
   std::vector<ResourceAsset> LoadApproachTextures(size_t id) const;
   std::vector<ResourceAsset> LoadBattleFaces(size_t group,size_t costume,size_t side) const;
   size_t EffectCount() const;
@@ -125,6 +130,8 @@ class GameResources final : public ScriptSource {
   std::optional<GpdaArchive> profilePortraits_, profileCharacterUi_, profileUi_;
   std::optional<GpdaArchive> mainUi_;
   std::optional<GpdaArchive> battleUi_;
+  struct FrontendAssets;
+  std::shared_ptr<const FrontendAssets> frontend_;
   std::optional<GpdaArchive> battleFaces_;
   std::optional<GpdaArchive> effects_;
   std::map<ImageSection, GpdaArchive> images_;
