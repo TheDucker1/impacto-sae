@@ -62,7 +62,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
                          std::optional<size_t> untilMessage, std::ostream& report,bool confirmFirstMission,bool chooseFirstApproach,
                            std::span<const std::array<size_t,2>> approachPlan,bool confirmApproachResult,bool followPostResult,bool followPostChapter,
                            std::span<const std::array<size_t,2>> profilePlan,bool confirmBattleVersus,
-                           std::span<const std::array<size_t,3>> battlePlan) {
+                           std::span<const std::array<size_t,3>> battlePlan,bool continueBattle) {
   const std::array<std::array<size_t,2>,1> firstChoice{{{0,0}}};
   if(chooseFirstApproach && approachPlan.empty())approachPlan=firstChoice;
   chooseFirstApproach=!approachPlan.empty();
@@ -242,6 +242,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         << ",\"choice_plan_entries\":" << approachPlan.size() << ",\"choices_committed\":" << choiceIndex
         << ",\"profile_plan_entries\":" << profilePlan.size() << ",\"profiles_committed\":" << profileIndex
         << ",\"approach_gauge\":" << vm->State().ApproachGauge
+        << ",\"battle_gauge\":" << vm->State().BattleGauge << ",\"battle_choices_committed\":" << battleIndex
         << ",\"clock_step_ms\":16,\"seed\":0,\"voice_pcm_decoded\":true,\"bgm_se_playback\":false,"
            "\"fresh_unread_controls\":true,\"history_bound\":false,\"gpu_pixels\":false}\n";
   };
@@ -339,6 +340,9 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         sync();
         if(!battleFrame || *battleFrame!=now) {
           uint32_t faces=0;
+          if(continueBattle && battleHost->Phase()==4 && vm->Opcode()==0x3f2 && battleIndex>=battlePlan.size()) {
+            finish("battle_selection_requires_plan",false);return 1;
+          }
           if(battleHost->Phase()==4 && vm->Opcode()==0x3f2 && !battleInputSent && battleIndex<battlePlan.size()) {
             const auto& planned=battlePlan[battleIndex];
             if(planned[0]!=size_t(vm->State().ScriptFileId)||planned[1]!=size_t(vm->State().CurrentCommandIndex)||planned[2]>2)
@@ -374,7 +378,8 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
            event.Script==(*battlePlanDestination)[0] && event.Command==(*battlePlanDestination)[1]) {
           out << "{\"kind\":\"battle_selection_dispatched\",\"now\":" << now << ",\"script\":" << event.Script
               << ",\"command\":" << event.Command << "}\n";
-          finish("battle_plan_complete",true);return 0;
+          if(!continueBattle){finish("battle_plan_complete",true);return 0;}
+          battlePlanDestination.reset();
         }
         if(event.Opcode==0x3f9 && vm->State().BattleVersus.Started) {
           const auto& v=vm->State().BattleVersus;const auto sample=std::pair(v.Phase,v.PendingPhase.value_or(-1));

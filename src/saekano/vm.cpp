@@ -404,6 +404,8 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
       if(!host || !environment)throw UnsupportedCommand("battle selection presentation/audio/history host is unavailable");
       StartBattleSelection(state_,DecodeChoice(script_->Payload(index),true),*environment,*host,now);
     }
+  } else if(opcode==0x3fa && state_.BattleEntry.Enabled && !lane) {
+    throw UnsupportedCommand("battle result animation/audio/exit restoration lifecycle is not bound");
   } else if (opcode == 0x3ee && !lane) {
     auto* resources = backend_.ApproachAssets();
     if (!resources) throw UnsupportedCommand("approach entry resource backend is unavailable");
