@@ -159,7 +159,8 @@ void ScriptReversingTween::Advance(int32_t delta,uint64_t clock,size_t depth){
 
 static BattleGaugeEnvironment ReadBattleEnvironment(std::span<const uint8_t> bytes,
     BattleVersusEnvironment* versus=nullptr,BattleVersusVisualEnvironment* visual=nullptr,BattleDialogueEnvironment* dialogue=nullptr,
-    BattleSelectionEnvironment* selection=nullptr,BattleResultEnvironment* battleResult=nullptr) {
+    BattleSelectionEnvironment* selection=nullptr,BattleResultEnvironment* battleResult=nullptr,
+    BattleResultVisualEnvironment* resultVisual=nullptr) {
   EnvironmentReader reader(bytes);
   BattleGaugeEnvironment result;
   reader.Skip(3 + 3 * 4);  // flags and colors
@@ -199,16 +200,24 @@ static BattleGaugeEnvironment ReadBattleEnvironment(std::span<const uint8_t> byt
   for (size_t i = 0; i < groups; ++i) reader.Table(8);
   reader.Skip(2 * 34 + 4 + 34 + 3 * 4);
   reader.Table(4);
-  reader.Skip(34 + 2 * 8 + 5 * 34 + 4);
-  reader.Table(16);
-  reader.Table(8);
-  reader.Skip(2 * 34 + 2 * 4);
-  reader.Table(16);
-  reader.Table(16);
-  for (size_t i = 0; i < 4; ++i) reader.Table(8);
+  reader.Skip(34 + 2 * 8 + 3 * 34);
+  const auto resultSprite=[&](size_t i){auto s=reader.VisualSprite();if(resultVisual)resultVisual->Sprites[i]=s;};
+  const auto resultColor=[&](std::array<uint8_t,4>* out){const auto c=uint32_t(reader.Word());
+    if(out)*out={uint8_t(c>>16),uint8_t(c>>8),uint8_t(c),uint8_t(c>>24)};};
+  const auto rectangles=[&](std::vector<std::array<int32_t,4>>* out){const auto count=reader.Count(16);
+    for(size_t i=0;i<count;++i){std::array<int32_t,4> r;for(auto& word:r)word=reader.Word();if(out)out->push_back(r);}};
+  resultSprite(0);resultSprite(1);resultColor(resultVisual?&resultVisual->GlyphColor:nullptr);
+  rectangles(resultVisual?&resultVisual->EqualRectangles:nullptr);
+  points(resultVisual?&resultVisual->EqualPositions:nullptr);
+  resultSprite(2);resultSprite(3);
+  resultColor(resultVisual?&resultVisual->UpperFrameColor:nullptr);resultColor(resultVisual?&resultVisual->LowerFrameColor:nullptr);
+  rectangles(resultVisual?&resultVisual->UpperRectangles:nullptr);rectangles(resultVisual?&resultVisual->LowerRectangles:nullptr);
+  points(resultVisual?&resultVisual->UpperPositions:nullptr);points(resultVisual?&resultVisual->LowerPositions:nullptr);
+  points(resultVisual?&resultVisual->UpperBases:nullptr);points(resultVisual?&resultVisual->LowerBases:nullptr);
   std::array<int32_t,13> settings;for(auto& word:settings)word=reader.Word();
   if(battleResult){battleResult->ItemAmplitude=settings[0];battleResult->ItemDuration=settings[1];
     battleResult->RevealDuration=settings[6];battleResult->FadeDuration=settings[12];}
+  if(resultVisual)resultVisual->UpperGlyphScale=std::bit_cast<float>(settings[2]);
   if(selection)selection->RevealDuration=settings[3]; // global80261a74, distinct from card motion.
   if(versus){versus->Offscreen=settings[4];versus->SlideDuration=settings[5];
     versus->FirstDuration=settings[6];versus->SecondDuration=settings[7];
@@ -258,6 +267,16 @@ BattleResultEnvironment BattleResultEnvironment::Decode(std::span<const uint8_t>
   BattleResultEnvironment out;ReadBattleEnvironment(bytes,nullptr,nullptr,nullptr,nullptr,&out);
   if(out.ItemDuration<0 || out.ItemDuration>INT32_MAX/2 || out.RevealDuration<0 || out.FadeDuration<0)
     throw FormatError("invalid battle result environment timing");
+  return out;
+}
+BattleResultVisualEnvironment BattleResultVisualEnvironment::Decode(std::span<const uint8_t> bytes){
+  BattleResultVisualEnvironment out;ReadBattleEnvironment(bytes,nullptr,nullptr,nullptr,nullptr,nullptr,&out);
+  if(!std::isfinite(out.UpperGlyphScale))throw FormatError("invalid battle result glyph scale");
+  if(out.EqualPositions.size()>4 || out.UpperPositions.size()>4 ||
+     out.EqualRectangles.size()<out.EqualPositions.size() || out.UpperRectangles.size()<out.UpperPositions.size() ||
+     out.LowerPositions.size()<out.UpperPositions.size() || out.LowerRectangles.size()<out.UpperPositions.size() ||
+     (!out.UpperPositions.empty() && (out.UpperBases.size()<2 || out.LowerBases.size()<2)))
+    throw FormatError("battle result geometry exceeds owning animation/table bounds");
   return out;
 }
 BattleVersusEnvironment BattleVersusEnvironment::Decode(std::span<const uint8_t> bytes) {

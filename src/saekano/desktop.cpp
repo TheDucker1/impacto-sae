@@ -999,6 +999,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   backend.BattleVersusSettings=BattleVersusEnvironment::Decode(SceneRead(root/"env/env_tukkomi.dat"));
   backend.BattleSelectionSettings=BattleSelectionEnvironment::Decode(SceneRead(root/"env/env_tukkomi.dat"));
   const auto versusVisual=BattleVersusVisualEnvironment::Decode(SceneRead(root/"env/env_tukkomi.dat"));
+  const auto battleResultVisual=BattleResultVisualEnvironment::Decode(SceneRead(root/"env/env_tukkomi.dat"));
   const auto dialogueVisual=BattleDialogueEnvironment::Decode(SceneRead(root/"env/env_tukkomi.dat"));
   backend.SceneModels = &models;
   backend.MissionVoiceBank=&missionVoice;
@@ -1778,7 +1779,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     renderer.SetFilter(*state.ScreenFilter.Mode, *state.ScreenFilter.Intensity);
     const auto* activeMessage = backend.CurrentMessage();
     const bool approach=state.ApproachMode.Enabled.value_or(false);
-    if (!activeMessage && !approach && !state.BattleVersus.Visible && !state.TitleDisplay.value_or(false)) {
+    if (!activeMessage && !approach && !state.BattleVersus.Visible && !state.BattleResult.Visible && !state.TitleDisplay.value_or(false)) {
       UiSpriteBlit white;
       white.Destination = {0, 0, 960, 544};
       white.Color = {255, 255, 255, 255};
@@ -2036,6 +2037,9 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         uint32_t(utility.Size),[&](auto text,int32_t size){return int32_t(MeasurePvfText(font.Cached(),text,uint32_t(size),font.NominalSize()));})) {
       if(d.IsText){fontTextures.DrawString(renderer,font,d.Text.Text,d.Text.Position[0],d.Text.Position[1],d.Text.Size,d.Text.Color);textDraws.push_back(d.Text);}
       else {uploadBattleUi(d.Sprite.Texture.Entry);drawSprite(d.Sprite);spriteDraws.push_back(d.Sprite);}
+    }
+    for(const auto& sprite:BuildBattleResultDraws(battleResultVisual,state.BattleResult,state.BattleVersus.Visible)) {
+      uploadBattleUi(sprite.Texture.Entry);drawSprite(sprite);spriteDraws.push_back(sprite);
     }
     for(const auto& d:battleHost->Draw()) {
       if(d.IsText){fontTextures.DrawString(renderer,font,d.Text.Text,d.Text.Position[0],d.Text.Position[1],d.Text.Size,d.Text.Color);textDraws.push_back(d.Text);}

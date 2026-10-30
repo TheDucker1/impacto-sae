@@ -4,6 +4,47 @@
 #include <bit>
 
 namespace Impacto::Saekano {
+std::vector<UiSpriteBlit> BuildBattleResultDraws(const BattleResultVisualEnvironment& e,
+    const BattleResultState& s,bool versusVisible){
+  std::vector<UiSpriteBlit> out;if(!s.Visible || versusVisible || s.Outcome>2)return out;
+  const auto add=[](int32_t a,int32_t b){return std::bit_cast<int32_t>(uint32_t(a)+uint32_t(b));};
+  const auto subtract=[](int32_t a,int32_t b){return std::bit_cast<int32_t>(uint32_t(a)-uint32_t(b));};
+  const auto emit=[&](uint32_t entry,UiSpriteDefinition sprite,std::array<int32_t,2> position,
+                      std::array<uint8_t,4> color,size_t item,float scale=1.0f){
+    sprite.X=position[0];sprite.Y=position[1];sprite.Color=color;sprite.Color[3]=uint8_t(s.Alpha.at(item).Current);
+    out.push_back(ResolveUiSprite({ProfileTextureSection::BattleUi,-1,entry},sprite,scale,scale));
+  };
+  const auto glyph=[&](uint32_t entry,const std::array<int32_t,4>& rect,std::array<int32_t,2> position,size_t item,float scale){
+    auto sprite=e.Sprites[1];sprite.SourceX=rect[0];sprite.SourceY=rect[1];sprite.Width=rect[2];sprite.Height=rect[3];
+    emit(entry,sprite,position,e.GlyphColor,item,scale);
+  };
+  if(s.Outcome==2){
+    for(size_t i=0;i<e.EqualPositions.size();++i){auto position=e.EqualPositions[i];
+      position[1]=subtract(position[1],s.Items.at(i).Channel.Current);
+      emit(15,e.Sprites[0],position,e.Sprites[0].Color,i);
+      emit(14,e.Sprites[1],position,e.GlyphColor,i);
+      glyph(20,e.EqualRectangles.at(i),position,i,1);
+    }
+  }else{
+    const auto side=s.Outcome==0?1:0;
+    for(size_t i=0;i<e.UpperPositions.size();++i){auto position=e.UpperPositions[i];
+      position[0]=add(position[0],e.UpperBases.at(side)[0]);
+      position[1]=subtract(add(position[1],e.UpperBases.at(side)[1]),s.Items.at(i).Channel.Current);
+      emit(15,e.Sprites[0],position,e.Sprites[2].Color,i);
+      emit(14,e.Sprites[1],position,e.UpperFrameColor,i);
+      glyph(22,e.UpperRectangles.at(i),position,i,e.UpperGlyphScale);
+    }
+    // The original lower loop uses the upper position count, not its own count.
+    for(size_t i=0;i<e.UpperPositions.size();++i){auto position=e.LowerPositions.at(i);
+      position[0]=add(position[0],e.LowerBases.at(side)[0]);
+      position[1]=add(add(position[1],e.LowerBases.at(side)[1]),s.Travel.at(i).Current);
+      emit(34,e.Sprites[2],position,e.Sprites[2].Color,i);
+      emit(33,e.Sprites[3],position,e.LowerFrameColor,i);
+      glyph(21,e.LowerRectangles.at(i),position,i,1);
+    }
+  }
+  return out;
+}
 BattleResultCommand BattleResultCommand::Decode(std::span<const uint8_t> bytes){
   PayloadReader reader(bytes);BattleResultCommand out;
   for(auto& destination:out.Destinations){destination=reader.I32();if(destination<0)throw FormatError("negative battle result destination");}

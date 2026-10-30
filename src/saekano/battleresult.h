@@ -1,5 +1,6 @@
 #pragma once
 #include "gauge.h"
+#include "uisprite.h"
 
 namespace Impacto::Saekano {
 struct SemanticState;
@@ -31,6 +32,18 @@ struct BattleResultState {
   std::array<bool,4> TravelEnabled{},AlphaEnabled{};
   std::vector<BattleResultRequest> Requests;
 };
+struct BattleResultVisualEnvironment {
+  // Equal/upper background and frame, then lower background and frame.
+  std::array<UiSpriteDefinition,4> Sprites;
+  std::array<uint8_t,4> GlyphColor{},UpperFrameColor{},LowerFrameColor{};
+  std::vector<std::array<int32_t,4>> EqualRectangles,UpperRectangles,LowerRectangles;
+  std::vector<std::array<int32_t,2>> EqualPositions,UpperPositions,LowerPositions,UpperBases,LowerBases;
+  float UpperGlyphScale=0;
+  static BattleResultVisualEnvironment Decode(std::span<const uint8_t> bytes);
+};
+// Native ScriptBattleMode_Draw7b3f2: versus pass has priority over result.
+std::vector<UiSpriteBlit> BuildBattleResultDraws(const BattleResultVisualEnvironment& environment,
+    const BattleResultState& result,bool versusVisible=false);
 void StartBattleResult(SemanticState& owner,const BattleResultCommand& command,
     const BattleResultEnvironment& environment,uint64_t now);
 // Normal and skip share this controller. The owning frontend MUST consume the
