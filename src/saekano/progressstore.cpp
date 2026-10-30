@@ -112,6 +112,18 @@ void ProgressTransaction::CommitSlots(const NativeSlotData& slots) {
   WriteExclusiveFlushed(pending,std::span(reinterpret_cast<const uint8_t*>(index.data()),index.size()));
   Publish(pending,impl_->Root/"current");impl_->Committed=true;impl_->Lock.reset();
 }
+ProgressPair OpenProgressStore(const std::filesystem::path& root,const NativeSystemSave& fresh,
+                              const std::filesystem::path& systemImport) {
+  if(root.empty())throw FormatError("progress store path is empty");
+  if(auto existing=ReadProgressStore(root)) {
+    if(!systemImport.empty())throw FormatError("cannot combine a committed progress store with an explicit system import");
+    return std::move(*existing);
+  }
+  auto pair=systemImport.empty()?ProgressPair{fresh,NativeSlotData::Fresh(),{},true}
+                               :ReadProgressPairFiles(systemImport,systemImport.parent_path()/"data.bin");
+  ProgressTransaction initial(root,pair.System);initial.CommitSlots(pair.Slots);
+  pair.Generation=initial.Generation();return pair;
+}
 SessionSaveWrites::SessionSaveWrites(std::filesystem::path root,const NativeSlotData& slots,
     std::function<NativeSystemSave()> snapshotSystem):root_(std::move(root)),slots_(slots),snapshotSystem_(std::move(snapshotSystem)) {
   if(!snapshotSystem_)throw FormatError("missing system snapshot service");

@@ -30,7 +30,8 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
                         bool captureConfirmInput = false,
                         int32_t captureMenuInput = 0,
                         const std::filesystem::path& capturePlan = {},
-                        const std::filesystem::path& systemSave = {});
+                        const std::filesystem::path& systemSave = {},
+                        const std::filesystem::path& progressRoot = {});
 int RunFontSample(const std::filesystem::path& usrdir,
                    const std::filesystem::path& captureDirectory = {});
 // Diagnostic entry point for the loader/SDK rendering path intended for the

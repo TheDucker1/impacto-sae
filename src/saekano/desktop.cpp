@@ -1,4 +1,5 @@
 #include "systemowner.h"
+#include "progressstore.h"
 #include "desktop.h"
 
 #include "live2dsdk.h"
@@ -856,6 +857,61 @@ Bytes SceneRead(const std::filesystem::path& path) {
 }
 #include "desktopprofile.inc"
 
+// Shared native dialog geometry, authored labels, font and atlas resources.
+// This layer measures/draws; DialogState owns input/timing and saving owns I/O.
+struct SceneDialogLayer {
+  UiBlitRenderer& Renderer;FontTextures& Textures;PcFontFace& Font;GameResources& Resources;
+  const TextFormatEnvironment& Format;TextLayoutMetrics Metrics;int32_t FontSize;
+  DialogEnvironment Environment;
+  SharedUiAssets Shared;
+  std::map<std::u16string,PlainTextLayout> Prompts;
+  SceneDialogLayer(UiBlitRenderer& renderer,FontTextures& textures,PcFontFace& font,GameResources& resources,
+      const TextFormatEnvironment& format,TextLayoutMetrics metrics,int32_t size,DialogEnvironment environment,Bytes firstDat)
+      :Renderer(renderer),Textures(textures),Font(font),Resources(resources),Format(format),Metrics(std::move(metrics)),
+       FontSize(size),Environment(std::move(environment)),Shared(std::move(firstDat)){}
+  const PlainTextLayout& Prompt(const std::u16string& text) {
+    if(const auto found=Prompts.find(text);found!=Prompts.end())return found->second;
+    VoiceTextReveal reveal;reveal.PrepareUtf16(text,Format,0);
+    auto layout=LayoutPlainText(reveal.Text,Format,Font.Cached(),Metrics,Environment.Settings[6],
+        Environment.TextScales[1],uint32_t(FontSize),Font.NominalSize());
+    return Prompts.emplace(text,std::move(layout)).first->second;
+  }
+  DialogContentLayout Layout(const std::u16string& text,size_t buttons) {
+    return BuildDialogContentLayout(Environment,{480,272},Prompt(text).Height,buttons,FontSize);
+  }
+  void Sprite(const UiSpriteBlit& sprite) {
+    if(!Renderer.Textures.contains(sprite.Texture))
+      Renderer.Upload(sprite.Texture,DecodeSceneImage(sprite.Texture.Section==ProfileTextureSection::SharedUi?
+          Shared.Load(sprite.Texture.Entry).Data:Resources.LoadProfileTexture(sprite.Texture).Data));
+    Renderer.DrawQuad(sprite,Renderer.Textures.at(sprite.Texture),false);
+  }
+  void Draw(const DialogState& modal,const std::u16string& prompt,const DialogContentLayout& layout,size_t group) {
+    if(!modal.Visible)return;
+    glUseProgram(Renderer.Program);glBindVertexArray(Renderer.Vao);glBindBuffer(GL_ARRAY_BUFFER,Renderer.Buffer);
+    glActiveTexture(GL_TEXTURE0);glDisable(GL_DEPTH_TEST);glDisable(GL_STENCIL_TEST);glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);glUniform1i(Renderer.AlphaMode,0);Renderer.SetFilter(0,0);
+    const auto progress=modal.Opacity.Current;
+    const auto frame=BuildDialogFrame(Environment,{480,272},layout.Width,layout.BodyHeight,progress,{0,0,0,90});
+    UiSpriteBlit overlay;overlay.Destination=frame.Overlay.Rectangle;overlay.Color=frame.Overlay.Color;
+    Renderer.DrawQuad(overlay,{0,1,1},true);
+    for(const auto& sprite:frame.Tiles)Sprite(sprite);
+    for(const auto& sprite:BuildDialogDecoration(Environment,frame,progress))Sprite(sprite);
+    for(const auto& text:BuildPlainTextDraws(Prompt(prompt),layout.PromptPosition,uint32_t(FontSize),Environment.Colors[0],uint8_t(progress*255/100)))
+      Textures.DrawString(Renderer,Font,text.Text,text.Position[0],text.Position[1],text.Size,text.Color);
+    if(modal.ButtonCount) {
+      const auto& labels=Environment.ButtonGroups.at(group);
+      if(labels.size()!=modal.ButtonCount)throw FormatError("dialog button group does not match its controller");
+      for(const auto& button:BuildDialogButtons(Environment,{480,272},layout,labels,modal.Selected,modal.FocusEnabled,
+          progress,FontSize,Font.Cached(),Font.NominalSize())) {
+        for(const auto& sprite:button.Background)Sprite(sprite);
+        const auto& text=button.Label;
+        Textures.DrawString(Renderer,Font,text.Text,text.Position[0],text.Position[1],text.Size,text.Color);
+      }
+    }
+    GlCheck("ending shared modal composition");
+  }
+};
+
 // An ordinary-dialogue frontend. Unbound auxiliary/effect passes are
 // reported explicitly; this is not yet the complete scenario renderer.
 int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
@@ -871,8 +927,10 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                       std::optional<size_t> captureFromCommand = {},
                       std::optional<int32_t> captureScriptOverride = {},
                       bool captureWaitingInput = false,bool captureConfirmInput = false,int32_t captureMenuInput = 0,
-                      const std::filesystem::path& capturePlan = {}) {
+                      const std::filesystem::path& capturePlan = {},
+                      const std::filesystem::path& progressRoot = {},const NativeSlotData* slotProgress=nullptr) {
   const bool capture = !captureDirectory.empty();
+  const bool captureEnding=captureMenuInput==16;
   const bool captureParticles=captureMenuInput==4;
   const bool captureChapter=captureMenuInput==7;
   const bool captureLip=captureMenuInput==9;
@@ -1026,7 +1084,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       throw FormatError("capture target is not a valid entry-script command/message");
     if (!capture || !captureAuto)
       throw FormatError("capture target requires automatic capture mode");
-    if(captureMenuInput && script.Records()[*captureUntilMessage].Opcode!=(captureBranch?0x64:0x3f6))
+    if(captureMenuInput && !captureEnding && script.Records()[*captureUntilMessage].Opcode!=(captureBranch?0x64:0x3f6))
       throw FormatError("menu capture target requires approach selection");
   }
   bool targetCompleted = false, targetWaitingReached = false;
@@ -1145,6 +1203,50 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     }
   };
   for (auto id : {0u, 1u, 2u, 3u, 9u}) uploadMain(id);
+  SceneDialogLayer endingLayer(renderer,fontTextures,font,resources,format,metrics,utility.Size,
+      DialogEnvironment::Decode(SceneRead(root/"env/env_dialog.dat")),SceneRead(root/"first.dat"));
+  const auto endingPrompt=EndingEnvironment::Decode(SceneRead(root/"env/env_script.dat")).SystemSavePrompt;
+  const auto endingLayout=endingLayer.Layout(endingPrompt,endingLayer.Environment.ButtonGroups.at(1).size());
+  struct ReadOnlySave final:EndingSaveServices {
+    void Begin(int32_t,uint64_t)override{throw UnsupportedCommand("writable ending save requires a complete progress store");}
+    EndingSaveStatus Update(uint64_t)override{throw UnsupportedCommand("read-only scene has no save worker");}
+  }readOnlySave;
+  std::unique_ptr<SessionSaveWrites> endingFiles;
+  std::unique_ptr<SaveManagerDialogHost> saveHost;
+  if(!progressRoot.empty()) {
+    if(!slotProgress)throw FormatError("writable scene is missing its complete slot owner");
+    endingFiles=std::make_unique<SessionSaveWrites>(progressRoot,*slotProgress,[&]{return SnapshotSystemOwner(vm->State(),registeredHistory);});
+    saveHost=std::make_unique<SaveManagerDialogHost>(SaveManagerEnvironment::Decode(SceneRead(root/"env/env_save_manager.dat")),
+        [&](const std::u16string& text,size_t buttons){return endingLayer.Layout(text,buttons);},*endingFiles);
+  }
+  ScenarioEndingState endingState;bool titleRequested=false;
+  ScenarioEndingDialogHost endingHost(endingPrompt,endingLayout,endingLayer.Environment.ButtonGroups.at(1).size(),
+      saveHost?static_cast<EndingSaveServices&>(*saveHost):static_cast<EndingSaveServices&>(readOnlySave),[&]{titleRequested=true;});
+  bool endingConfirmInjected=false,saveConfirmInjected=false,endingProbeStarted=false;
+  std::ofstream endingTrace;
+  if(captureEnding) {
+    if(!saveHost || !captureUntilMessage)throw FormatError("ending UI capture needs a store and a real message target");
+    endingTrace.open(captureDirectory/"ending-states.jsonl");if(!endingTrace)throw FormatError("cannot create ending UI trace");
+  }
+  std::optional<std::tuple<int32_t,int32_t,int32_t,bool,int32_t,int32_t,bool,bool>> previousEndingState;
+  const auto updateEnding=[&](uint64_t now) {
+    UpdateScenarioEnding(endingState,endingHost,now);
+    auto* modal=saveHost && saveHost->State().Started?&saveHost->Modal:&endingHost.Modal;
+    for(auto sound:modal->UiSounds)playback.Submit({GameEventKind::Sound,sound});
+    modal->UiSounds.clear();
+    if(captureEnding) {
+      const auto sample=std::tuple(endingState.Phase,endingState.PendingPhase.value_or(-1),modal->Phase,modal->Visible,
+          saveHost->State().Phase,saveHost->State().PendingPhase.value_or(-1),saveHost->State().Active,saveHost->State().Accepted);
+      if(previousEndingState!=sample) {
+        endingTrace << "{\"kind\":\"ending_state\",\"now\":" << now << ",\"phase\":" << endingState.Phase << ",\"pending\":" << endingState.PendingPhase.value_or(-1)
+            << ",\"modal_phase\":" << modal->Phase << ",\"modal_visible\":" << modal->Visible << ",\"buttons\":" << modal->ButtonCount
+            << ",\"save_phase\":" << saveHost->State().Phase << ",\"save_pending\":" << saveHost->State().PendingPhase.value_or(-1)
+            << ",\"save_active\":" << saveHost->State().Active << ",\"save_accepted\":" << saveHost->State().Accepted
+            << ",\"script\":" << vm->State().ScriptFileId << ",\"command\":" << vm->State().CurrentCommandIndex << ",\"manager_retained\":true}\n";
+        previousEndingState=sample;
+      }
+    }
+  };
   PlainTextLayout layout;
   std::array<PlainTextLayout,2> splitLayouts;
   std::array<std::optional<std::pair<int32_t,size_t>>,2> splitLayoutKeys;
@@ -1187,6 +1289,22 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     WidgetInputHistory::Snapshot pointerSnapshot;
     SkipAutoInput policyInput;
     SDL_Event event;
+    DialogInput modalInput;
+    if(captureEnding && endingState.Started) {
+      SDL_Keycode key=0;
+      if(endingHost.Modal.Visible && endingHost.Modal.Phase==3 && !endingConfirmInjected) {
+        if(endingHost.Modal.Selected!=1)key=SDLK_RIGHT;
+        else{key=SDLK_RETURN;endingConfirmInjected=true;}
+      } else if(saveHost->State().Phase==19 && saveHost->Modal.Visible && saveHost->Modal.Phase==3 && !saveConfirmInjected) {
+        key=SDLK_RETURN;saveConfirmInjected=true;
+      }
+      if(key)for(const auto type:{SDL_EVENT_KEY_DOWN,SDL_EVENT_KEY_UP}) {
+        SDL_Event e{};e.type=type;e.key.windowID=SDL_GetWindowID(window.Window);e.key.key=key;e.key.down=type==SDL_EVENT_KEY_DOWN;
+        SdlCheck(SDL_PushEvent(&e),"ending capture explicit SDL input");
+        if(type==SDL_EVENT_KEY_DOWN)endingTrace << "{\"kind\":\"sdl_input\",\"now\":" << now << ",\"key\":" << key << ",\"save_phase\":" << saveHost->State().Phase << "}\n";
+      }
+    }
+    if(!endingState.Started) {
     if((captureVersus || captureDialogue || captureSelection) && vm->State().BattleVersus.Phase==12 && !vm->State().BattleVersus.PendingPhase && !versusConfirmSent) {
       for(const auto type:{SDL_EVENT_KEY_DOWN,SDL_EVENT_KEY_UP}) {
         SDL_Event e{};e.type=type;e.key.windowID=SDL_GetWindowID(window.Window);e.key.key=SDLK_RETURN;
@@ -1230,7 +1348,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         if(type==SDL_EVENT_KEY_DOWN)events << "{\"kind\":\"profile_input\",\"now\":" << now << ",\"source\":\"SDL_key\",\"key\":" << key << "}\n";
       }
     }
-    if(capture && captureMenuInput) {
+    if(capture && captureMenuInput && !captureEnding) {
       const auto& menu=vm->State().ApproachSelection;
       if(captureBranch && menu.Visible) {
         const auto site=std::pair{vm->State().ScriptFileId,vm->State().CurrentCommandIndex};
@@ -1352,7 +1470,22 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         ++captureAutoStage;
       }
     }
+    }
     while (SDL_PollEvent(&event)) {
+      if(endingState.Started) {
+        if(event.type==SDL_EVENT_KEY_DOWN && !event.key.repeat) {
+          modalInput.Left|=event.key.key==SDLK_LEFT;modalInput.Right|=event.key.key==SDLK_RIGHT;
+          modalInput.Accept|=event.key.key==SDLK_RETURN || event.key.key==SDLK_SPACE;
+          modalInput.Cancel|=event.key.key==SDLK_ESCAPE || event.key.key==SDLK_BACKSPACE;
+        }
+        if(event.type==SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+          modalInput.Left|=event.gbutton.button==SDL_GAMEPAD_BUTTON_DPAD_LEFT;
+          modalInput.Right|=event.gbutton.button==SDL_GAMEPAD_BUTTON_DPAD_RIGHT;
+          modalInput.Accept|=event.gbutton.button==SDL_GAMEPAD_BUTTON_EAST;
+          modalInput.Cancel|=event.gbutton.button==SDL_GAMEPAD_BUTTON_SOUTH;
+        }
+        if(event.type==SDL_EVENT_KEY_DOWN || event.type==SDL_EVENT_KEY_UP || event.type==SDL_EVENT_GAMEPAD_BUTTON_DOWN)continue;
+      }
       if (event.type == SDL_EVENT_QUIT ||
           (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE &&
            !vm->State().ApproachSelection.Visible))
@@ -1410,10 +1543,15 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       }
     }
     if (quit) break;
+    if(endingState.Started) {
+      if(saveHost && saveHost->State().Started)saveHost->Input=modalInput;
+      else endingHost.Input=modalInput;
+      updateEnding(now);
+    }
     // Current read tables include commands completed earlier in this session.
     // Policy consumes prior widget samples before this frame's updates.
     if(vm->CurrentProfile())profilePresenter.BeforeStep(input.Profile,now);
-    if(!vm->CurrentProfile()) {
+    if(!vm->CurrentProfile() && !endingState.Started) {
     policyInput.AutoHeld = autoKeyHeld;
     policyInput.SkipHeld = skipKeysHeld[0] || skipKeysHeld[1];
     policyInput.SkipButtonReleased = sceneInput.Query(
@@ -1528,7 +1666,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     }
     previous = now;
     battleAssets.Pump();
-    for (size_t work = 0; work < 256; ++work) {
+    if(!endingState.Started)for (size_t work = 0; work < 256; ++work) {
       bindScriptVoices();
       syncMouths();
       if(!battleFrame || *battleFrame!=now){battleHost->BeginFrame(now,pointerSnapshot,battleFaces);battleFrame=now;}
@@ -1694,12 +1832,16 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                ? step.Script == captureScript && size_t(step.Command) == *captureUntilMessage
                : step.Opcode == 0x64 && (!captureVoiced || step.Command >= 67))) {
         targetCompleted = true;
-        quit = true;
+        if(captureEnding) {
+          StartScenarioEnding(endingState);endingProbeStarted=true;updateEnding(now);
+          endingTrace << "{\"kind\":\"component_probe_entry\",\"script\":" << vm->State().ScriptFileId
+              << ",\"command\":" << vm->State().CurrentCommandIndex << ",\"manager_ended\":false,\"cursor_reassigned\":false}\n";
+        } else quit = true;
         break;
       }
       if (step.Boundary == VmBoundary::WaitingInput ||
           step.Boundary == VmBoundary::WaitingBackend) {
-        if(captureMenuInput && !menuMissionSent && step.Opcode==0x3f7 && step.Boundary==VmBoundary::WaitingInput)
+        if(captureMenuInput && !captureEnding && !menuMissionSent && step.Opcode==0x3f7 && step.Boundary==VmBoundary::WaitingInput)
           menuMissionDue=true;
         if(captureResult && !resultConfirmationSent && step.Opcode==0x3f8 && step.Boundary==VmBoundary::WaitingInput)
           resultConfirmationDue=true;
@@ -1713,8 +1855,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         break;
       }
       if (step.Boundary == VmBoundary::Ended) {
-        quit = true;
-        break;
+        StartScenarioEnding(endingState);updateEnding(now);break;
       }
       if (work == 255)
         throw UnsupportedCommand("scene per-frame command budget exceeded");
@@ -1842,7 +1983,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
     renderer.SetFilter(*state.ScreenFilter.Mode, *state.ScreenFilter.Intensity);
     const auto* activeMessage = backend.CurrentMessage();
     const bool approach=state.ApproachMode.Enabled.value_or(false);
-    if (!activeMessage && !approach && !state.BattleVersus.Visible && !state.BattleResult.Visible && !state.TitleDisplay.value_or(false)) {
+    if (!endingState.Started && !activeMessage && !approach && !state.BattleVersus.Visible && !state.BattleResult.Visible && !state.TitleDisplay.value_or(false)) {
       UiSpriteBlit white;
       white.Destination = {0, 0, 960, 544};
       white.Color = {255, 255, 255, 255};
@@ -2117,6 +2258,10 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       renderer.DrawQuad(*fade, {0, 1, 1}, true);
       spriteDraws.push_back(*fade);
     }
+    if(endingState.Started) {
+      if(endingHost.Modal.Visible)endingLayer.Draw(endingHost.Modal,endingHost.Prompt(),endingLayout,1);
+      if(saveHost && saveHost->Modal.Visible)endingLayer.Draw(saveHost->Modal,saveHost->Prompt(),saveHost->Layout(),0);
+    }
     GlCheck("first scene composition");
     std::string signature = std::to_string(message->Reveal.Revealed) + ':' +
                             std::to_string(backend.CursorVisible()) + ':' +
@@ -2124,6 +2269,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
                             std::to_string(skipAuto.Auto) + ':' + std::to_string(autoKeyHeld);
     if (captureVoiced) signature = std::to_string(message->Command) + ':' +
         std::to_string(message->Reveal.Revealed) + ':' + std::to_string(message->VoiceGate.Phase);
+    if(endingState.Started)signature+=':'+std::to_string(endingState.Phase)+':'+std::to_string(endingHost.Modal.Phase)+':'+std::to_string(endingHost.Modal.Opacity.Current/25)+':'+std::to_string(saveHost?saveHost->Modal.Phase:0)+':'+std::to_string(saveHost?saveHost->Modal.Opacity.Current/25:0);
     signature += ':' + std::to_string(state.RuleWipe.Active) + ':' +
         std::to_string(state.RuleWipe.Auxiliary) + ':' + std::to_string(state.RuleWipe.Progress.value_or(0) / 25);
     signature += ':' + std::to_string(*state.ScreenFilter.Mode) + ':' +
@@ -2420,7 +2566,21 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       lastSaved = now;
     }
     SdlCheck(SDL_GL_SwapWindow(window.Window), "scene frame swap");
+    if(titleRequested) {
+      if(captureEnding){quit=true;break;}
+      throw UnsupportedCommand("PC ending reached title request; title construction is not bound");
+    }
     if (!capture) SDL_Delay(16);
+    else if(endingState.Started)SDL_Delay(1);
+  }
+  if(captureEnding) {
+    if(!titleRequested || !endingProbeStarted || !saveConfirmInjected)throw FormatError("ending UI component capture did not finish");
+    const auto pair=ReadProgressStore(progressRoot);
+    if(!pair || pair->System.Encode()!=SnapshotSystemOwner(vm->State(),registeredHistory).Encode() || pair->Slots.Encode()!=slotProgress->Encode())
+      throw FormatError("ending UI did not preserve its complete system/slot pair");
+    endingTrace.close();std::ofstream summary(captureDirectory/"ending.json");
+    summary << "{\"passed\":true,\"component_probe\":true,\"manager_ended\":false,\"cursor_reassigned\":false,\"script\":" << vm->State().ScriptFileId
+        << ",\"command\":" << vm->State().CurrentCommandIndex << ",\"paired_save_written\":true,\"separate_success_ack\":true,\"title_requested\":true,\"title_constructed\":false,\"generation\":\"" << pair->Generation << "\"}\n";
   }
   if (capture) {
     report.close();
@@ -3414,10 +3574,13 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
     size_t flowUiSoundRequests = 0;
     std::vector<std::array<int64_t, 2>> flowSoundHistory;
     uint32_t flowBlinkSeed = 0;
+    std::optional<ProgressPair> flowProgress;
+    std::filesystem::path flowProgressRoot;
     if (owningFlow) {
       const auto root = resourceDat.parent_path();
       flowOwner = std::make_unique<SemanticState>();
       InitializeFreshAudioOwner(*flowOwner);
+      InitializeFreshBattleOwner(*flowOwner);
       InitializeFreshMessageOwner(*flowOwner);
       InitializeFreshCgHistory(*flowOwner, LoadAlbumConfiguration(read(root / "first.dat"),
           read(root / "env/env_omake.dat")).RequiredImages);
@@ -3425,7 +3588,9 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
           *flowOwner, ProfileInitialStats::Decode(read(environmentDat)),
           catalog);
       const auto historySettings=HistoryEnvironment::DecodeDebug(read(root/"env/env_debug.dat"));
-      LoadSystemOwner(*flowOwner,MakeFreshSystemProgress(read(root/"first.dat"),historySettings.InitiallyRead!=0),flowOwner->CgHistory.Required);
+      auto progress=MakeFreshSystemProgress(read(root/"first.dat"),historySettings.InitiallyRead!=0);
+      if(!capture){flowProgressRoot=std::filesystem::current_path()/"saves/saekano";flowProgress=OpenProgressStore(flowProgressRoot,progress);progress=flowProgress->System;}
+      LoadSystemOwner(*flowOwner,progress,flowOwner->CgHistory.Required);
       flowOwner->OtakuMode = int32_t(*itemScene);
       flowFormat = TextFormatEnvironment::Decode(
           read(root / "env/env_string_format.dat"), true);
@@ -3447,7 +3612,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
       flowSystemSounds =
           std::make_unique<SystemSoundAssets>(read(root / "first.dat"));
       // Fresh settings7350: option S60235=8; channel coefficient starts at1.
-      flowPlayback->BindUiSounds(*flowSystemSounds, ProfileVoiceGain(8, 1.0f));
+      flowPlayback->BindUiSounds(*flowSystemSounds, ProfileVoiceGain(flowOwner->SystemProgress?flowOwner->SystemProgress->Bytes6022c[9]:8, 1.0f));
       // Fresh settings7350 writes S60236=10; fresh channel coefficient is1.
       flowVoice =
           std::make_unique<PlaybackProfileVoice>(*flowPlayback, 10, 1.0f);
@@ -4112,7 +4277,8 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
       return RunCompletedScene(window, renderer, fontTextures, *font, resources,
                                *flowPlayback, *flowMusic, *flowSounds,
                                std::move(*flowOwner), *flowMode,
-                               resourceDat.parent_path());
+                               resourceDat.parent_path(),{},false,false,false,{},{},{},false,false,0,{},flowProgressRoot,
+                               flowProgress?&flowProgress->Slots:nullptr);
     return 0;
   } catch (const std::exception& error) {
     if (captureCreated) {
@@ -4139,7 +4305,7 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
                         std::optional<size_t> captureUntilMessage,
                         std::optional<size_t> captureFromCommand,
                           std::optional<int32_t> captureScriptOverride,bool captureWaitingInput,bool captureConfirmInput,int32_t captureMenuInput,
-                          const std::filesystem::path& capturePlan,const std::filesystem::path& systemSave) {
+                          const std::filesystem::path& capturePlan,const std::filesystem::path& systemSave,const std::filesystem::path& requestedProgressRoot) {
   bool created = false;
   try {
     const bool capture = !captureDirectory.empty();
@@ -4176,7 +4342,10 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
         owner, ProfileInitialStats::Decode(profileRaw),
         LoadProfileItemCatalog(SceneRead(usrdir / "first.dat")));
     const auto historySettings=HistoryEnvironment::DecodeDebug(SceneRead(usrdir/"env/env_debug.dat"));
-    const auto progress=systemSave.empty()?MakeFreshSystemProgress(SceneRead(usrdir/"first.dat"),historySettings.InitiallyRead!=0):ReadSystemSaveFile(systemSave);
+    const auto progressRoot=!requestedProgressRoot.empty()?requestedProgressRoot:(!capture && systemSave.empty()?std::filesystem::current_path()/"saves/saekano":std::filesystem::path{});
+    auto progress=systemSave.empty()?MakeFreshSystemProgress(SceneRead(usrdir/"first.dat"),historySettings.InitiallyRead!=0):ReadSystemSaveFile(systemSave);
+    std::optional<ProgressPair> session;
+    if(!progressRoot.empty()){session=OpenProgressStore(progressRoot,progress,systemSave);progress=session->System;}
     LoadSystemOwner(owner,progress,owner.CgHistory.Required);
     ArchiveProfileServices services(
         resources,
@@ -4209,7 +4378,7 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
     return RunCompletedScene(window, renderer, fontTextures, font, resources,
                              playback, music, sounds, std::move(owner), mode,
                              usrdir, captureDirectory, captureAuto, captureButtonAuto, captureVoiced,
-                             captureUntilMessage, captureFromCommand,captureScriptOverride,captureWaitingInput,captureConfirmInput,captureMenuInput,capturePlan);
+                             captureUntilMessage, captureFromCommand,captureScriptOverride,captureWaitingInput,captureConfirmInput,captureMenuInput,capturePlan,progressRoot,session?&session->Slots:nullptr);
   } catch (const std::exception& error) {
     if (created) {
       std::ofstream out(captureDirectory / "error.txt");

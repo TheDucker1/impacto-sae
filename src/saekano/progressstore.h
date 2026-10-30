@@ -10,11 +10,14 @@ struct ProgressPair {
   NativeSystemSave System;
   NativeSlotData Slots;
   std::string Generation;
+  bool InitializedFresh=false;
 };
 // Files retain native names/encoding inside immutable generation directories.
 // A single flushed index replacement publishes both files together.
 std::optional<ProgressPair> ReadProgressStore(const std::filesystem::path& root);
 ProgressPair ReadProgressPairFiles(const std::filesystem::path& system,const std::filesystem::path& slots);
+ProgressPair OpenProgressStore(const std::filesystem::path& root,const NativeSystemSave& fresh,
+                              const std::filesystem::path& systemImport={});
 class ProgressTransaction {
  public:
   ProgressTransaction(const std::filesystem::path& root,const NativeSystemSave& system);

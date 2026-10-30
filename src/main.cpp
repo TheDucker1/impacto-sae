@@ -304,6 +304,12 @@ int main(int argc, char* argv[]) {
   if (argc == 4 && std::string_view(argv[1]) == "--saekano-sdk-ui-check")
     return Saekano::RunSceneSdkUiProbe(argv[2],argv[3]);
   if (argc >= 2 && std::string_view(argv[1]) == "--saekano-first-scene") {
+    if(argc==5 && std::string_view(argv[3])=="--save-dir")
+      return Saekano::RunFirstSceneViewer(argv[2],{},false,false,false,{},{},{},false,false,0,{},{},argv[4]);
+    if(argc==5 && std::string_view(argv[3])=="--capture-ending-save") {
+      const std::filesystem::path output=argv[4];
+      return Saekano::RunFirstSceneViewer(argv[2],output,true,false,true,67,{},{},false,false,16,{},{},output/"savedata");
+    }
     if(argc==5 && std::string_view(argv[3])=="--capture-particles")
       return Saekano::RunFirstSceneViewer(argv[2],argv[4],true,false,true,{}, {},1,false,false,4);
     if(argc==5 && std::string_view(argv[3])=="--capture-result")
@@ -367,7 +373,7 @@ int main(int argc, char* argv[]) {
           argc == 5 && std::string_view(argv[3]) == "--capture-auto-button",
           argc == 5 && std::string_view(argv[3]) == "--capture-voiced");
     ImpLog(LogLevel::Error, LogChannel::General,
-           "Usage: --saekano-first-scene USRDIR [--capture DIRECTORY | --capture-auto DIRECTORY | --capture-auto-button DIRECTORY | --capture-voiced DIRECTORY | --capture-particles DIRECTORY | --capture-result DIRECTORY | --capture-result-plan PLAN DIRECTORY | --capture-until MESSAGE_COMMAND DIRECTORY | --capture-range FIRST_COMMAND LAST_COMMAND DIRECTORY | --capture-script-range SCRIPT FIRST LAST DIRECTORY [--wait|--confirm|--menu|--menu-pointer|--branch]]\n");
+           "Usage: --saekano-first-scene USRDIR [--save-dir DIRECTORY | --system-save FILE | --capture-ending-save DIRECTORY | --capture DIRECTORY | --capture-auto DIRECTORY | --capture-auto-button DIRECTORY | --capture-voiced DIRECTORY | --capture-particles DIRECTORY | --capture-result DIRECTORY | --capture-result-plan PLAN DIRECTORY | --capture-until MESSAGE_COMMAND DIRECTORY | --capture-range FIRST_COMMAND LAST_COMMAND DIRECTORY | --capture-script-range SCRIPT FIRST LAST DIRECTORY [--wait|--confirm|--menu|--menu-pointer|--branch]]\n");
     return 1;
   }
   if (argc >= 2 && std::string_view(argv[1]) == "--saekano-profile-items") {

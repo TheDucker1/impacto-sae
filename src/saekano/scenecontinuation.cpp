@@ -96,17 +96,8 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   auto progress=systemSave.empty()?MakeFreshSystemProgress(Read(root/"first.dat"),historySettings.InitiallyRead!=0):ReadSystemSaveFile(systemSave);
   bool progressFresh=systemSave.empty();std::optional<NativeSlotData> slotProgress;
   if(!progressRoot.empty()) {
-    auto pair=ReadProgressStore(progressRoot);
-    if(pair) {
-      if(!systemSave.empty())throw FormatError("cannot combine a committed progress store with an explicit system import");
-      progress=std::move(pair->System);slotProgress=std::move(pair->Slots);progressFresh=false;
-    } else {
-      if(!systemSave.empty()) {
-        auto imported=ReadProgressPairFiles(systemSave,systemSave.parent_path()/"data.bin");
-        progress=std::move(imported.System);slotProgress=std::move(imported.Slots);
-      } else slotProgress=NativeSlotData::Fresh();
-      ProgressTransaction initial(progressRoot,progress);initial.CommitSlots(*slotProgress);
-    }
+    auto pair=OpenProgressStore(progressRoot,progress,systemSave);
+    progressFresh=pair.InitializedFresh;progress=std::move(pair.System);slotProgress=std::move(pair.Slots);
   }
   LoadSystemOwner(owner,progress,owner.CgHistory.Required);
   ProfileMode mode(owner, services, profile, shared);
