@@ -58,7 +58,7 @@ std::u16string DecodeCp932(std::string_view text) {
 PlainTextLayout LayoutPlainText(std::u16string_view text,
     const TextFormatEnvironment& format, const GsfFont& font,
     const TextLayoutMetrics& metrics, int32_t width, float scale,
-    uint32_t utilitySize, uint32_t nominalSize) {
+    uint32_t utilitySize, uint32_t nominalSize,std::span<const TextRubyRange> ruby) {
   if (format.Following.size() < 6 || format.Following[3].empty() ||
       format.Tokens[4].size() < 2 || width <= 0 || !std::isfinite(scale) ||
       scale <= 0 || text.size() > 65535)
@@ -66,6 +66,8 @@ PlainTextLayout LayoutPlainText(std::u16string_view text,
   text = text.substr(0, text.find(u'\0'));
   if (text.find_first_of(format.Tokens[2]) != std::u16string::npos)
     throw UnsupportedCommand("styled text requires layout ranges");
+  for(const auto& range:ruby)
+    if(range.Begin>=range.End || range.End>text.size())throw FormatError("ruby range outside prepared text");
   PlainTextLayout result;
   result.Scale = scale;
   result.LineCount = 0;
@@ -109,6 +111,12 @@ PlainTextLayout LayoutPlainText(std::u16string_view text,
              format.Following[5].find(text[end]) != std::u16string::npos)
         --end;
       if (end != before) split = end + 1;
+      for(const auto& range:ruby)if(range.Begin<=split && split<range.End){
+        split=range.Begin;
+        if(split==start && i>start)
+          throw UnsupportedCommand("ruby base span exceeds line width");
+        break;
+      }
       emit(split);
       start = split;
       i = split;
@@ -224,10 +232,26 @@ OrdinaryMessageText ParseOrdinaryMessageControls(
   source = source.substr(0, source.find(u'\0'));
   if (format.Tokens[2].empty() || source.find_first_of(format.Tokens[2]) == source.npos)
     return SplitOrdinaryMessageText(source, format);
-  if (format.Following.size() < 19 || format.Following[15].empty() ||
+  if (format.Following.size() < 19 || format.CharacterMaps.size() < 2 ||
+      format.CharacterMaps[0].size() != format.CharacterMaps[1].size() ||
+      format.Following[0].size() < 2 || format.Following[1].empty() ||
+      format.Following[2].size() < 2 || format.Following[3].empty() ||
+      format.Following[8].empty() || format.Following[9].empty() ||
+      format.Following[10].empty() || format.Following[15].empty() ||
       format.Following[16].size() != 1 || format.Following[18].empty() ||
       format.Tokens[0].size() != 1 || format.Tokens[1].size() != 1)
     throw UnsupportedCommand("inline queue format tokens are missing");
+  // Native ordinary parsing strips aside quotation marks before it scans
+  // controls, while retaining the speaker selected from the original source.
+  std::optional<std::u16string> asideName;
+  std::u16string asideSource;
+  const auto quote=source.find(format.Following[1]);
+  if(quote!=source.npos && quote>0 && quote+1<source.size() &&
+     format.Following[0].substr(0,2).find(source[quote+1])!=std::u16string::npos){
+    asideName=std::u16string(source.substr(0,quote));
+    for(const auto c:source)if(c!=format.Following[2][0] && c!=format.Following[2][1])asideSource.push_back(c);
+    source=asideSource;
+  }
   const auto number = [](std::u16string_view word) {
     uint32_t value = 0; bool negative = false;
     for (const auto c : word) {
@@ -241,6 +265,8 @@ OrdinaryMessageText ParseOrdinaryMessageControls(
   const auto ids=OriginalMessageKeywords(std::u16string(source));
   std::vector<OrdinaryMessageText::Keyword> keywords;
   std::optional<OrdinaryMessageText::Keyword> keyword;
+  std::vector<TextRubyRange> ruby;
+  std::optional<TextRubyRange> rubyBase;
   const auto glyphCount=[&](){return plain.size()-size_t(std::count(plain.begin(),plain.end(),format.Following[3][0]));};
   for (size_t cursor = 0; cursor < source.size();) {
     const auto ch = source[cursor];
@@ -250,6 +276,19 @@ OrdinaryMessageText ParseOrdinaryMessageControls(
     if (end == source.npos) throw FormatError("unterminated inline directive");
     auto tag = std::u16string(source.substr(cursor + 1, end - cursor - 1));
     for(auto& value:tag)if(value>=u'a' && value<=u'z')value-=u'a'-u'A';
+    if(format.Following.size()>10 && tag==format.Following[8]){
+      if(rubyBase)throw FormatError("nested ruby base");
+      rubyBase=TextRubyRange{plain.size(),0,{}};cursor=end+1;continue;
+    }
+    if(format.Following.size()>10 && tag==format.Following[9]){
+      if(!rubyBase || rubyBase->Begin==plain.size())throw FormatError("ruby reading has no base");
+      const auto close=source.find(format.Following[10],end+1);
+      if(close==source.npos)throw FormatError("unclosed ruby reading");
+      rubyBase->End=plain.size();rubyBase->Reading=std::u16string(source.substr(end+1,close-end-1));
+      for(auto& c:rubyBase->Reading){const auto at=format.CharacterMaps[0].find(c);
+        if(at!=std::u16string::npos)c=format.CharacterMaps[1][at];}
+      ruby.push_back(std::move(*rubyBase));rubyBase.reset();cursor=close+format.Following[10].size();continue;
+    }
     if(tag.starts_with(format.Following[11]+u" ")) {
       if(keyword || keywords.size()>=ids.size())throw FormatError("invalid ordinary keyword range");
       keyword=OrdinaryMessageText::Keyword{glyphCount(),0,ids[keywords.size()]};cursor=end+1;continue;
@@ -275,6 +314,16 @@ OrdinaryMessageText ParseOrdinaryMessageControls(
     cursor = end + 1;
   }
   auto parsed = SplitOrdinaryMessageText(plain, format);
+  if(asideName){
+    for(auto& c:*asideName){const auto at=format.CharacterMaps[0].find(c);if(at!=std::u16string::npos)c=format.CharacterMaps[1][at];}
+    parsed.Name=std::move(*asideName);parsed.NameEnabled=true;parsed.Body=parsed.Body.substr(parsed.Name.size());
+  }
+  if(rubyBase)throw FormatError("ruby base has no reading");
+  for(auto& range:ruby){
+    if(range.Begin<parsed.Name.size() || range.End<range.Begin)throw FormatError("ruby overlaps ordinary name");
+    range.Begin-=parsed.Name.size();range.End-=parsed.Name.size();
+  }
+  parsed.Ruby=std::move(ruby);
   if (parsed.Body.size() != plain.size() - parsed.Name.size())
     throw UnsupportedCommand("inline controls with aside name stripping are not bound");
   for (auto& marker : markers) {

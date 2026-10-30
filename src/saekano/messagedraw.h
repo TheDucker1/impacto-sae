@@ -9,6 +9,9 @@ struct OrdinaryTextEnvironment {
   uint32_t DefaultScale = 0;
   std::vector<float> Scales;
   float BodyScale = 0, NameScale = 0;
+  int32_t RubyYOffset=0;
+  float RubyScale=0;
+  std::array<uint8_t,4> RubyShadowColor{};
   std::array<uint8_t, 4> NameColor{}, UnreadColor{}, ReadColor{};
   std::optional<std::array<std::array<uint8_t,4>,2>> KeywordColors;
   size_t PrefixBytes = 0;

@@ -17,6 +17,10 @@ struct TextFormatEnvironment {
                                       bool readFontTokens = false);
 };
 std::u16string DecodeCp932(std::string_view text);
+struct TextRubyRange {
+  size_t Begin=0,End=0; // Prepared body UTF16 indices, including explicit breaks.
+  std::u16string Reading;
+};
 struct PlainTextLine {
   std::u16string Text;
   uint32_t X = 0, Y = 0, Begin = 0, Line = 0;
@@ -33,14 +37,14 @@ struct PlainTextLayout {
   float Scale = 1;
   uint16_t LineCount = 1, Height = 0, Width = 0; // Native record+194 max emitted line extent.
 };
-// Prepared/normalized UTF16, no inline style ranges; explicit positive scale.
+// Prepared/normalized UTF16 with optional ruby base spans; positive scale.
 // Native175d4..17b78 line traversal, kinsoku and utility-font measurements.
 PlainTextLayout LayoutPlainText(std::u16string_view prepared,
                                 const TextFormatEnvironment& format,
                                 const GsfFont& font,
                                 const TextLayoutMetrics& metrics, int32_t width,
                                 float scale, uint32_t utilitySize,
-                                uint32_t nominalSize);
+                                uint32_t nominalSize,std::span<const TextRubyRange> ruby={});
 // Fully revealed, plain mode3 glyph path used by the confirmation prompt.
 std::vector<UiTextBlit> BuildPlainTextDraws(const PlainTextLayout& layout,
                                             std::array<int32_t, 2> origin,
@@ -67,6 +71,7 @@ struct OrdinaryMessageText {
   bool InheritedName = false, NameEnabled = false;
   std::vector<TextQueueMarker> QueueMarkers;
   std::vector<Keyword> Keywords;
+  std::vector<TextRubyRange> Ruby;
 };
 // Shared parse-only representation. Timed reveal/lane consumption must be bound
 // before a frontend admits QueueMarkers; plain Split retains its current guard.

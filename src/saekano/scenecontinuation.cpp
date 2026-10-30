@@ -63,7 +63,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
                          std::optional<size_t> untilMessage, std::ostream& report,bool confirmFirstMission,bool chooseFirstApproach,
                            std::span<const std::array<size_t,2>> approachPlan,bool confirmApproachResult,bool followPostResult,bool followPostChapter,
                            std::span<const std::array<size_t,2>> profilePlan,bool confirmBattleVersus,
-                           std::span<const std::array<size_t,3>> battlePlan,bool continueBattle,bool confirmBattleResult) {
+                           std::span<const std::array<size_t,3>> battlePlan,bool continueBattle,bool confirmBattleResult,bool followBattleResult) {
   const std::array<std::array<size_t,2>,1> firstChoice{{{0,0}}};
   if(chooseFirstApproach && approachPlan.empty())approachPlan=firstChoice;
   chooseFirstApproach=!approachPlan.empty();
@@ -393,7 +393,9 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         }
         if(battleResultDestination && event.Script==(*battleResultDestination)[0] && event.Command==(*battleResultDestination)[1] && event.Boundary==VmBoundary::BeforeStart){
           out << "{\"kind\":\"battle_result_dispatched\",\"now\":" << now << ",\"script\":" << event.Script << ",\"command\":" << event.Command << "}\n";
-          battleResultDispatched=true;if(confirmBattleResult)break;
+          battleResultDispatched=true;
+          if(confirmBattleResult && !followBattleResult)break;
+          battleResultDestination.reset();
         }
         if(event.Opcode==0x3f2 && vm->State().BattleSelection.Started) {
           const auto& state=battleHost->State();const auto sample=std::tuple(state.Script,state.Phase,state.Ordinal);
@@ -550,6 +552,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
               << ",\"voice\":" << message->VoiceId << ",\"slot\":" << message->VoiceGate.Slot
               << ",\"epoch\":" << message->Epoch << ",\"source_units\":" << message->SourceUnits
               << ",\"revealed\":" << (message->Reveal.Revealed ? "true" : "false")
+              << ",\"ruby_count\":" << message->Parsed.Ruby.size()
               << ",\"side\":" << message->Side << ",\"base\":"
               << (message->Side?voiceOwner->SecondaryQueue->BaseChannel:voiceOwner->Queue.BaseChannel)
               << ",\"retained\":[" << bool(backend.MessageSide(0)) << ',' << bool(backend.MessageSide(1)) << ']';
@@ -629,7 +632,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         if(confirmBattleVersus && !versusSent)versusDue=true;
         else {finish("battle_versus_confirmation_required",false);return 1;}
       }
-      if(battleResultDispatched && confirmBattleResult){finish("battle_result_dispatched",true);return 0;}
+      if(battleResultDispatched && confirmBattleResult && !followBattleResult){finish("battle_result_dispatched",true);return 0;}
       if(waitingBattleResult){
         if(confirmBattleResult && !battleResultSent)battleResultDue=true;
         else{finish("battle_result_confirmation_required",false);return 1;}

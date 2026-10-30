@@ -878,7 +878,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   const bool captureBattle=captureMenuInput==10;
   const bool captureVersus=captureMenuInput==11;
   const bool captureDialogue=captureMenuInput==12;
-  const bool captureBattleResult=captureMenuInput==14;
+  const bool captureRuby=captureMenuInput==15;
+  const bool captureBattleResult=captureMenuInput==14 || captureRuby;
   const bool captureSelection=captureMenuInput==13 || captureBattleResult;
   const bool captureProfile=captureMenuInput==8 || captureLip || captureBattle || captureVersus || captureDialogue || captureSelection;
   const bool captureResult=captureMenuInput==5 || captureMenuInput==6 || captureChapter || captureProfile;
@@ -1550,7 +1551,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         ++battleChoicesCompleted;selectionDestination.reset();selectionFaceSent=false;previousBattleUi.reset();
       }
       if(captureBattleResult && step.Opcode==0x3fa && vm->State().BattleResult.Started){
-        captureActive=true;const auto& result=vm->State().BattleResult;const auto sample=std::tuple(result.Phase,result.PendingPhase.value_or(-1),result.Item);
+        if(!captureRuby)captureActive=true;const auto& result=vm->State().BattleResult;const auto sample=std::tuple(result.Phase,result.PendingPhase.value_or(-1),result.Item);
         if(previousBattleResult!=sample || result.Completed){
           events << "{\"kind\":\"battle_result_state\",\"now\":" << now << ",\"script\":" << step.Script << ",\"command\":" << step.Command
               << ",\"phase\":" << result.Phase << ",\"pending_phase\":" << result.PendingPhase.value_or(-1) << ",\"outcome\":" << result.Outcome
@@ -1571,7 +1572,19 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
             << ",\"gauge\":" << state.BattleGauge << ",\"outcome\":" << state.BattleResult.Outcome << ",\"confirmation_sent\":" << battleResultConfirmSent
             << ",\"message_mode\":" << unsigned(state.BattleEntry.MessageModeByte) << ",\"skip\":[" << state.SkipMode << ',' << state.SkipPhase
             << "],\"visible\":" << state.BattleResult.Visible << ",\"fade\":" << state.ScreenFade.value_or(-1) << ",\"voice_playing\":" << voices.Playing(7) << "}\n";
-        targetCompleted=true;quit=true;break;
+        if(!captureRuby){targetCompleted=true;quit=true;break;}
+        battleResultDestination.reset();
+      }
+      if(captureRuby && step.Script==67 && step.Command==484 && step.Opcode==0x64){
+        captureActive=true;
+        if(step.Boundary==VmBoundary::CommandCompletedBeforeDispatch){
+          const auto* message=backend.CurrentMessage();
+          if(!message || message->Parsed.Ruby.size()!=4 || !message->Reveal.Revealed)
+            throw FormatError("ruby capture target did not complete");
+          std::ofstream out(captureDirectory/"ruby.json");
+          out << "{\"passed\":true,\"script\":67,\"command\":484,\"ranges\":4,\"revealed\":true,\"battle_choices\":" << battleChoicesCompleted << "}\n";
+          targetCompleted=true;quit=true;break;
+        }
       }
       if(!choicePlan.empty() && step.Opcode==0x3f6 && step.Boundary==VmBoundary::CommandCompletedBeforeDispatch) {
         const auto chosen=CompletedApproachChoice(vm->State().ApproachSelection);
@@ -1847,7 +1860,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       layout =
           LayoutPlainText(message->Reveal.Text, format, font.Cached(), metrics,
                           visual.Window.TextWidth, visual.BodyScale,
-                          uint32_t(utility.Size), font.NominalSize());
+                          uint32_t(utility.Size), font.NominalSize(),message->Parsed.Ruby);
       laidOut = true;
       layoutCommand = message->Command;
     }
@@ -1856,7 +1869,7 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       const auto key=std::pair{state.ScriptFileId,retained->Command};
       if(splitLayoutKeys[side]!=key) {
         splitLayouts[side]=LayoutPlainText(retained->Reveal.Text,format,font.Cached(),metrics,
-            dialogueVisual.TextWidth,visual.BodyScale,uint32_t(utility.Size),font.NominalSize());
+            dialogueVisual.TextWidth,visual.BodyScale,uint32_t(utility.Size),font.NominalSize(),retained->Parsed.Ruby);
         splitLayoutKeys[side]=key;
       }
     }
@@ -2157,6 +2170,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       if (captureUntilMessage) signature += ':' + std::to_string(actor.Pose.Current) + ':' +
           std::to_string(actor.Tweens[size_t(CharacterTween::PreviousPose)].Current / 64);
     }
+    if(captureRuby)signature=std::to_string(message->Command)+':'+std::to_string(message->Reveal.Revealed)+':'+
+        std::to_string((now-message->Epoch)/500)+':'+std::to_string(quit);
     if (capture && captureActive && (saved == 0 || signature != previousSignature ||
                     now - lastSaved >= 1500 || quit)) {
       const auto file = "scene-" + std::to_string(saved++) + ".bmp";
@@ -2235,6 +2250,15 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         if (i) report << ',';
         WriteUiBlit(report, spriteDraws[i]);
       }
+      report << "],\"ruby\":[";
+      for(size_t i=0;i<message->Parsed.Ruby.size();++i){
+        if(i)report << ',';const auto& ruby=message->Parsed.Ruby[i];
+        report << "{\"begin\":" << ruby.Begin << ",\"end\":" << ruby.End << ",\"reading\":[";
+        for(size_t j=0;j<ruby.Reading.size();++j){if(j)report << ',';report << unsigned(ruby.Reading[j]);}
+        report << "]}";
+      }
+      report << "],\"reveal_alphas\":[";
+      for(size_t i=0;i<message->Reveal.Glyphs.size();++i){if(i)report << ',';report << message->Reveal.Glyphs[i].Alpha.Current;}
       report << "],\"input_ring\":[" << sceneInput.Input().Count << ','
              << sceneInput.Input().Oldest << ',' << sceneInput.Input().Next
              << "],\"input_offset\":[" << (*state.Quake[2])[0] << ','
