@@ -160,6 +160,7 @@ static BattleGaugeEnvironment ReadBattleEnvironment(std::span<const uint8_t> byt
   if(dialogue){dialogue->Bubble=bubble;dialogue->Scale=scale;}
   for(size_t i=0;i<2;++i){std::array<int32_t,2> p{reader.Word(),reader.Word()};if(dialogue)dialogue->LineOffsets[i]=p;}
   const auto textWidth=reader.Word();if(dialogue)dialogue->TextWidth=textWidth;
+  if(selection)selection->TextWidth=textWidth;
   reader.Skip(5*34);
   const auto groups = reader.Count(4);
   for (size_t i = 0; i < groups; ++i) reader.Table(8);

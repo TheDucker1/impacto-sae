@@ -1,6 +1,7 @@
 #pragma once
 #include "gauge.h"
 #include "uisprite.h"
+#include "ordinaryvoice.h"
 #include <vector>
 
 namespace Impacto::Saekano {
@@ -29,9 +30,54 @@ struct BattleSelectionEnvironment {
   std::array<Pulse,3> Pulses{};
   std::vector<std::u16string> Labels;
   std::vector<std::array<uint8_t,4>> FillColors,FrameColors;
-  int32_t MotionDuration=0,Travel=0,FadeDuration=0;
+  int32_t MotionDuration=0,Travel=0,FadeDuration=0,TextWidth=0;
   static BattleSelectionEnvironment Decode(std::span<const uint8_t> bytes);
 };
+struct BattleSelectionRow {
+  int32_t Destination=0,Presentation=0;
+  int16_t Preview=-1;
+  std::u16string Label;
+};
+struct BattleSelectionUiState {
+  bool Known=false,Enabled=false;
+  int32_t Phase=-268435456,Script=0,Command=0;
+  std::optional<int32_t> PendingPhase;
+  size_t Ordinal=0;
+  std::vector<BattleSelectionRow> Rows;
+  std::array<BattleCardMotion,3> Motions;
+  std::array<ScriptLinearTween,3> Fades;
+  std::array<bool,3> FadeEnabled{};
+  std::array<int32_t,3> Offsets{};
+  // Fresh constructor starts base7; phase0 binds11. Reset preserves the queue.
+  OrdinaryVoiceQueue Voices=MakeFreshOrdinaryVoiceQueue();
+  uint32_t SelectedVoiceSlot=0;
+};
+class BattleSelectionUiServices:public OrdinaryVoicePreparation {
+ public:
+  // Shared record: bind actual font owner, parse/wrap at width, unread color,
+  // clear row+220 and fully reveal. The UI retains the prepared text record.
+  virtual void PrepareRow(size_t row,const BattleSelectionRow& value,int32_t width)=0;
+  virtual void RegisterPreview(int16_t id)=0;
+  virtual void ClearControl(size_t control)=0;
+  // Two native widget states, each containing one sprite. Geometry comes from
+  // the shared battle bubble descriptor, not the separate HUD card table.
+  virtual void AddControlState(size_t control,uint32_t texture,std::array<int32_t,2> position,
+      float scale,std::array<uint8_t,4> color,bool interactive)=0;
+  virtual void SetControlPulse(size_t control,size_t state,const BattleSelectionEnvironment::Pulse& pulse)=0;
+  virtual void SetControlOffset(size_t control,int32_t y)=0;
+  virtual bool FacePressed(size_t control)=0;
+  virtual bool PointerReleased(size_t control)=0;
+  virtual void PlayUiSound(uint32_t id)=0;
+  virtual bool PreviewEnabled()const=0;
+  virtual bool Playing(uint32_t channel)=0;
+};
+void ResetBattleSelectionUi(BattleSelectionUiState& state,const ChoiceMenu& menu,
+    int32_t script,int32_t command,const BattleSelectionEnvironment& environment,uint64_t now);
+void EnableBattleSelectionUi(BattleSelectionUiState& state);
+// Phase only. The command host's Timeout also sets Enabled=false separately.
+void TimeoutBattleSelectionUi(BattleSelectionUiState& state);
+bool UpdateBattleSelectionUi(BattleSelectionUiState& state,const BattleSelectionEnvironment& environment,
+    std::array<float,4> curve,BattleSelectionUiServices& services,uint64_t now);
 // Command-owned countdown/reveal state; distinct from the UI's phases0..10.
 struct BattleSelectionState {
   bool Started=false,Active=false,Completed=false,CountdownEnabled=false,Paused=false;

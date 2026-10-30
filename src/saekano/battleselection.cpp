@@ -1,5 +1,7 @@
 #include "battleselection.h"
 #include "commands.h"
+#include "music.h"
+#include <algorithm>
 #include <bit>
 #include <cmath>
 
@@ -38,6 +40,109 @@ void BattleCardMotion::Tick(uint64_t now) {
   const float ratio=float(Elapsed)/float(Duration),curve=EaseCard(ratio,Curve);
   const float delta=To-From,product=delta*curve;
   Current=From+product;
+}
+void ResetBattleSelectionUi(BattleSelectionUiState& s,const ChoiceMenu& menu,int32_t script,int32_t command,
+    const BattleSelectionEnvironment& e,uint64_t now) {
+  if(menu.Entries.empty() || menu.Entries.size()>4)throw FormatError("battle UI row count outside1..4");
+  s.Enabled=false;s.Ordinal=0;s.Script=script;s.Command=command;s.Rows.clear();
+  for(const auto& row:menu.Entries) {
+    // Original copies an uninitialized word for missing extras. Initialize the
+    // unused timeout presentation safely; decimal parsing matches strtol32.
+    const auto presentation=row.ExtraStrings.empty()?0:ParseBgmTrack(row.ExtraStrings.front());
+    s.Rows.push_back({row.Destination,presentation,row.PreviewDescriptor,row.Label});
+  }
+  for(size_t i=0;i<3;++i){s.Fades[i].Start(255,0,e.FadeDuration,now);s.FadeEnabled[i]=false;}
+  // Native reset deliberately retains current/pending phase, float motions,
+  // widget state, selected voice slot and the descriptor/prepared queue.
+  s.Known=true;
+}
+void EnableBattleSelectionUi(BattleSelectionUiState& s) { s.Enabled=true;s.PendingPhase=0; }
+void TimeoutBattleSelectionUi(BattleSelectionUiState& s) {
+  // Original8b04a changes only phase; command7ea6a separately disables UI+8.
+  s.Phase=8;s.PendingPhase.reset();
+}
+bool UpdateBattleSelectionUi(BattleSelectionUiState& s,const BattleSelectionEnvironment& e,
+    std::array<float,4> curve,BattleSelectionUiServices& output,uint64_t now) {
+  if(!s.Known)throw UnsupportedCommand("battle selection UI owning context is missing");
+  if(s.PendingPhase){s.Phase=*s.PendingPhase;s.PendingPhase.reset();}
+  const auto restart=[&](size_t i){auto& t=s.Fades.at(i);t.StartUnsigned(t.From,t.To,t.Duration,now);s.FadeEnabled[i]=true;};
+  const auto tick=[&](size_t i){if(s.FadeEnabled[i])s.Fades[i].Tick(now);};
+  if(s.Phase==0) {
+    s.Voices.BaseChannel=11;
+    for(size_t i=0;i<s.Rows.size();++i) {
+      const auto& row=s.Rows[i];output.PrepareRow(i,row,e.TextWidth); // global80261758.
+      if(row.Preview!=-1) {
+        output.RegisterPreview(row.Preview);
+        if(std::find(s.Voices.Catalog.begin(),s.Voices.Catalog.end(),row.Preview)==s.Voices.Catalog.end())
+          s.Voices.Catalog.push_back(row.Preview);
+      }
+    }
+    constexpr std::array<std::array<uint32_t,2>,3> textures{{{4,6},{1,3},{7,9}}};
+    for(size_t i=1;i<s.Rows.size();++i) {
+      const auto control=i-1;output.ClearControl(control);const auto type=s.Rows[i].Presentation;
+      if(type<0 || type>2)continue; // Native leaves this control without states.
+      output.AddControlState(control,textures[type][0],e.Positions.at(control),e.CardScale,e.FillColors.at(control),true);
+      output.AddControlState(control,textures[type][1],e.Positions.at(control),e.CardScale,e.FrameColors.at(control),false);
+      for(size_t j=0;j<2;++j)output.SetControlPulse(control,j,e.Pulses[size_t(type)]);
+    }
+    s.Phase=1;
+  }
+  if(s.Phase==1) {
+    for(size_t i=0;i<3;++i) {
+      s.Motions[i].Configure(float(e.Travel),0,e.MotionDuration,curve,false,now);
+      s.Fades[i].Start(0,255,e.MotionDuration,now);s.FadeEnabled[i]=false;
+    }
+    s.Motions[0].Restart(now);restart(0);s.Phase=2;
+  }
+  if(s.Phase==2) {
+    bool done=true;
+    for(size_t i=0;i<3;++i) {
+      s.Motions[i].Tick(now);tick(i);
+      if(i<2 && s.Motions[i].Current<=float(e.Travel/2)) {
+        s.Motions[i+1].EnableIfDormant(now);if(!s.FadeEnabled[i+1])restart(i+1);
+      }
+      done=(s.Motions[i].Current==s.Motions[i].To)&&done;
+    }
+    for(size_t i=1;i<s.Rows.size();++i) {
+      const float position=s.Motions[i-1].Current;
+      if(!std::isfinite(position) || double(position)<INT32_MIN || double(position)>INT32_MAX)
+        throw FormatError("battle card offset outside integer range");
+      s.Offsets[i-1]=int32_t(position);output.SetControlOffset(i-1,s.Offsets[i-1]);
+    }
+    if(done) {
+      s.Phase=3;
+      for(size_t i=0;i<3;++i){s.Fades[i].Start(255,0,e.FadeDuration,now);s.FadeEnabled[i]=false;}
+    }
+  }
+  if(s.Phase==3){s.Ordinal=0;s.Phase=4;}
+  if(s.Phase==4) {
+    for(size_t i=0;i<3;++i)if(output.FacePressed(i)||output.PointerReleased(i)) {
+      if(i+1>=s.Rows.size())throw FormatError("battle control has no loaded row");
+      output.PlayUiSound(3);s.Ordinal=i+1;s.Phase=6;break;
+    }
+    for(size_t i=1;i<s.Rows.size();++i){s.Offsets[i-1]=0;output.SetControlOffset(i-1,0);}
+  }
+  if(s.Phase==6) {
+    for(size_t i=0;i<3;++i)if(i+1!=s.Ordinal)restart(i);
+    if(!output.PreviewEnabled())s.Phase=8;
+    else {
+      s.SelectedVoiceSlot=0;const auto preview=s.Rows.at(s.Ordinal).Preview;
+      if(preview!=-1)s.SelectedVoiceSlot=PrepareOrdinaryVoice(s.Voices,preview,false,output);
+      s.Phase=7;
+    }
+  }
+  if(s.Phase==7) {
+    bool done=true;
+    for(size_t i=0;i<3;++i){tick(i);if(i+1!=s.Ordinal)done=s.Fades[i].Finished()&&done;}
+    if(!output.Playing(11+s.SelectedVoiceSlot) && done)s.Phase=8;
+  }
+  if(s.Phase==8) {
+    if(s.Ordinal==0 || s.Ordinal>3)throw UnsupportedCommand("battle timeout dismissal has no interactive ordinal");
+    restart(s.Ordinal-1);s.Phase=9;
+  }
+  if(s.Phase==9) { const auto selected=s.Ordinal-1;tick(selected);if(s.Fades.at(selected).Finished())s.Phase=10; }
+  if(s.Phase==10){s.Enabled=false;return false;}
+  return true;
 }
 void StartBattleSelection(SemanticState& owner,const ChoiceMenu& menu,
     const BattleSelectionEnvironment& environment,BattleSelectionHost& host,uint64_t now) {
