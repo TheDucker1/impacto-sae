@@ -61,7 +61,7 @@ class MusicPlayback {
   std::unique_ptr<Impl> impl_;
 };
 
-// On-demand voice.awb preparation on the same two channels as profile voices.
+// On-demand voice.awb preparation7..12, with11 sharing the mission source.
 // Text/actor actions and the frontend's update clock remain with their owner.
 class PlaybackOrdinaryVoice final : public OrdinaryVoiceOutput {
  public:
@@ -81,7 +81,7 @@ class PlaybackOrdinaryVoice final : public OrdinaryVoiceOutput {
   float gain_;
 };
 
-// Native mission channel11 has its own source on the shared audio device.
+// Native mission channel11 shares its source with battle preview11.
 // Uses the existing HCA stream; settings/coefficient must be known current state.
 class PlaybackMissionVoice final : public ApproachMissionAudio {
  public:
@@ -136,6 +136,8 @@ int RunProfileVoiceSession(const std::filesystem::path& usrdir,
                            const std::filesystem::path& captureDirectory = {});
 int RunOrdinaryVoiceSession(const std::filesystem::path& usrdir,
                             const std::filesystem::path& captureDirectory);
+int RunBattlePreviewVoiceSession(const std::filesystem::path& usrdir,
+                                 const std::filesystem::path& captureDirectory);
 int RunMissionVoiceSession(const std::filesystem::path& usrdir,
                            const std::filesystem::path& captureDirectory,bool lifecycleOnly=false);
 int RunMissionVoicePrepareSession(const std::filesystem::path& usrdir,

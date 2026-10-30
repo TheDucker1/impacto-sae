@@ -96,7 +96,8 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   ArchiveSceneImages images(resources);
   ArchiveApproachResources approachAssets(resources);
   ArchiveBattleResources battleAssets(resources);
-  ClockedMissionVoice missionVoice(root);
+  ClockedOrdinaryVoice voices(root);
+  ClockedMissionVoice missionVoice(root,voices);
 #ifdef SAEKANO_SCENE_CUBISM2
   SdkLive2dDriver models(resources, Live2dEnvironment::Decode(Read(root / "env/env_live2d.dat")));
 #endif
@@ -130,7 +131,6 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
     if (*untilMessage >= script.Records().size() || script.Records()[*untilMessage].Opcode != 0x64)
       throw FormatError("continuation target is not an entry-script message");
   }
-  ClockedOrdinaryVoice voices(root);
   std::map<uint16_t, ProfileMouthPlayback> mouths;
   SpriteMessageMouth spriteMouth(vm->State(), mouths
 #ifdef SAEKANO_SCENE_CUBISM2

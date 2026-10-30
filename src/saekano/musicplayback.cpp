@@ -181,9 +181,12 @@ struct MusicPlayback::Impl {
   std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> SecondaryVoice;
   std::array<std::unique_ptr<Audio::OpenAL::OpenALAudioChannel>,2> AlternateVoices;
   auto& OrdinaryOutput(size_t slot) {
+    if(slot==4)return MissionVoice;
+    if(slot==5)return PreviewVoice;
     return slot==0?ProfileVoice:slot==1?SecondaryVoice:AlternateVoices.at(slot-2);
   }
   std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> MissionVoice;
+  std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> PreviewVoice;
   bool HasMissionVoice=false;
   std::unique_ptr<HcaPlaybackStream> PreparedMissionVoice;
   std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> UiSound;
@@ -209,8 +212,8 @@ struct MusicPlayback::Impl {
     if (!BgmFade.Active()) RetireOutgoingBgm();
   }
   std::unique_ptr<HcaPlaybackStream> PreparedProfileVoice;
-  std::array<std::unique_ptr<HcaPlaybackStream>, 4> PreparedOrdinaryVoices;
-  std::array<bool, 4> HasOrdinaryVoice{};
+  std::array<std::unique_ptr<HcaPlaybackStream>, 6> PreparedOrdinaryVoices;
+  std::array<bool, 6> HasOrdinaryVoice{};
   bool HasProfileVoice = false;
   float OldMaster = Audio::MasterVolume;
   float OldGroup = Audio::GroupVolumes[Audio::ACG_BGM];
@@ -263,6 +266,8 @@ struct MusicPlayback::Impl {
           i?Audio::AC_VOICE1:Audio::AC_VOICE0,Audio::ACG_Voice); // Independent owned AL sources for native9/10.
       MissionVoice = std::make_unique<Audio::OpenAL::OpenALAudioChannel>(
           Audio::AC_VOICE2, Audio::ACG_Voice);
+      PreviewVoice = std::make_unique<Audio::OpenAL::OpenALAudioChannel>(
+          Audio::AC_VOICE2, Audio::ACG_Voice); // Separate owned native12 source.
       UiSound = std::make_unique<Audio::OpenAL::OpenALAudioChannel>(
           Audio::AC_SE0, Audio::ACG_SE);
       if (Sounds) for (size_t i=0; i<SeChannels.size(); ++i)
@@ -281,6 +286,7 @@ struct MusicPlayback::Impl {
     SecondaryVoice.reset();
     for(auto& channel:AlternateVoices)channel.reset();
     MissionVoice.reset();
+    PreviewVoice.reset();
     PreparedMissionVoice.reset();
     UiSound.reset();
     PreparedProfileVoice.reset();
@@ -419,6 +425,7 @@ void MusicPlayback::Update(float seconds) {
   impl_->SecondaryVoice->Update(seconds);
   for(auto& channel:impl_->AlternateVoices)channel->Update(seconds);
   impl_->MissionVoice->Update(seconds);
+  impl_->PreviewVoice->Update(seconds);
   impl_->UiSound->Update(seconds);
   AlCheck("BGM frame");
 }
@@ -429,6 +436,7 @@ bool MusicPlayback::Playing() const {
   if (impl_->SecondaryVoice->GetState() != Audio::ACS_Stopped) return true;
   for(const auto& channel:impl_->AlternateVoices)if(channel->GetState()!=Audio::ACS_Stopped)return true;
   if (MissionVoicePlaying()) return true;
+  if(impl_->PreviewVoice->GetState()!=Audio::ACS_Stopped)return true;
   if (UiSoundPlaying()) return true;
   for (auto& channel : impl_->SeChannels)
     if (channel && channel->GetState() != Audio::ACS_Stopped) return true;
@@ -497,8 +505,8 @@ std::optional<float> MusicPlayback::ProfileVoicePosition() const {
 }
 namespace {
 size_t OrdinaryVoiceSlot(uint32_t channel) {
-  if (channel<7 || channel>10)
-    throw UnsupportedCommand("ordinary voice channel outside7..10");
+  if (channel<7 || channel>12)
+    throw UnsupportedCommand("ordinary voice channel outside7..12");
   return size_t(channel - 7);
 }
 }  // namespace
@@ -509,6 +517,7 @@ void MusicPlayback::PrepareOrdinaryVoice(
   if (!reader || !std::isfinite(gain) || gain < 0 || gain > 1)
     throw FormatError("invalid ordinary voice preparation");
   if (voiceId > uint32_t(INT16_MAX)) throw FormatError("ordinary voice ID exceeds slot catalog");
+  if(channel==11){PrepareMissionVoice(voiceId,std::move(reader),gain);return;}
   auto stream = std::make_unique<HcaPlaybackStream>(std::move(reader), int32_t(voiceId), "voice.awb");
   auto& output = impl_->OrdinaryOutput(slot);
   output->Stop(0);
@@ -523,6 +532,7 @@ void MusicPlayback::PrepareOrdinaryVoice(
 }
 void MusicPlayback::StartOrdinaryVoice(uint32_t channel) {
   const auto slot = OrdinaryVoiceSlot(channel);
+  if(channel==11){StartMissionVoice();return;}
   auto& output = impl_->OrdinaryOutput(slot);
   if (impl_->PreparedOrdinaryVoices[slot])
     output->Play(std::move(impl_->PreparedOrdinaryVoices[slot]), false, 0);
@@ -531,6 +541,7 @@ void MusicPlayback::StartOrdinaryVoice(uint32_t channel) {
 }
 void MusicPlayback::StopOrdinaryVoice(uint32_t channel) {
   const auto slot = OrdinaryVoiceSlot(channel);
+  if(channel==11){ResetMissionVoice();return;}
   (impl_->OrdinaryOutput(slot))->Stop(0);
   impl_->PreparedOrdinaryVoices[slot].reset();
   impl_->HasOrdinaryVoice[slot] = false;
@@ -538,15 +549,18 @@ void MusicPlayback::StopOrdinaryVoice(uint32_t channel) {
   AlCheck("ordinary voice stop");
 }
 bool MusicPlayback::OrdinaryVoiceReady(uint32_t channel) const {
+  if(channel==11)return MissionVoiceReady();
   return bool(impl_->PreparedOrdinaryVoices[OrdinaryVoiceSlot(channel)]);
 }
 bool MusicPlayback::OrdinaryVoicePlaying(uint32_t channel) const {
   const auto slot = OrdinaryVoiceSlot(channel);
+  if(channel==11)return MissionVoicePlaying();
   return impl_->HasOrdinaryVoice[slot] &&
          (impl_->OrdinaryOutput(slot))->GetState() == Audio::ACS_Playing;
 }
 int32_t MusicPlayback::OrdinaryVoicePosition(uint32_t channel) const {
   const auto slot = OrdinaryVoiceSlot(channel);
+  if(channel==11)return MissionVoicePosition();
   if (!OrdinaryVoicePlaying(channel)) return -1;
   const auto seconds =
       (impl_->OrdinaryOutput(slot))->PositionInSeconds();
@@ -681,6 +695,49 @@ void MusicPlayback::Render(std::span<int16_t> output) {
   }
 }
 
+int RunBattlePreviewVoiceSession(const std::filesystem::path& usrdir,const std::filesystem::path& captureDirectory){
+  bool created=false;
+  try{
+    CreateCaptureDirectory(usrdir,captureDirectory);created=true;ArchiveBgmResources resources(usrdir);
+    if(!SDL_Init(SDL_INIT_EVENTS))throw FormatError(SDL_GetError());
+    struct Cleanup{~Cleanup(){SDL_Quit();}}cleanup;
+    MusicPlayback playback(resources,true);PlaybackOrdinaryVoice preview(playback,usrdir,10,1);
+    PlaybackMissionVoice mission(playback,usrdir,10,1);const std::array<int32_t,1> ids{10579};mission.Register(ids);
+    preview.Start(11);preview.Start(12);
+    if(preview.Ready(11)||preview.Playing(11)||preview.Playing(12))throw FormatError("empty preview start created playback");
+    mission.Prepare(10579);preview.Prepare(11,12150);
+    if(!playback.MissionVoiceReady()||!preview.Ready(11)||preview.Playing(11))throw FormatError("preview11 did not replace prepared mission source");
+    mission.Start(0); // Either owner starts the same current physical descriptor.
+    std::vector<int16_t> first(19200*2);playback.Render(first);const auto firstPosition=preview.Position(11);
+    if(!preview.Playing(11)||!playback.MissionVoicePlaying()||firstPosition<390)throw FormatError("shared preview11 failed to play");
+    preview.Prepare(12,12149);preview.Start(12);std::vector<int16_t> overlap(9600*2);playback.Render(overlap);
+    const auto position11=preview.Position(11),position12=preview.Position(12);
+    if(position11<590||position12<190||position11-position12<390)throw FormatError("preview12 did not advance independently");
+    mission.Prepare(10579);bool rejected=false;
+    try{preview.Prepare(12,INT16_MAX);}catch(const FormatError&){rejected=true;}
+    if(!rejected||!preview.Ready(11)||preview.Playing(11)||!preview.Playing(12))throw FormatError("mission replacement/invalid prepare disturbed preview12");
+    preview.Start(11);std::vector<int16_t> replacement(9600*2);playback.Render(replacement);
+    if(preview.Position(11)<190||preview.Position(11)>230||preview.Position(12)<=position12)
+      throw FormatError("mission replacement did not reset only shared11");
+    preview.Stop(11);mission.Start(0);preview.Start(11);const auto before12=preview.Position(12);preview.Start(12);
+    std::vector<int16_t> independent(9600*2);playback.Render(independent);const auto after12=preview.Position(12);
+    if(preview.Ready(11)||preview.Playing(11)||playback.MissionVoicePlaying()||preview.Position(11)!=-1||after12<=before12)
+      throw FormatError("retired11 restarted or stopped independent12");
+    preview.Stop(12);std::vector<int16_t> tail(9600*2);playback.Render(tail);
+    const auto peak=[](std::span<const int16_t> pcm){int32_t p=0;for(const auto v:pcm)p=std::max(p,std::abs(int32_t(v)));return p;};
+    if(peak(first)<=32||peak(overlap)<=32||peak(std::span(tail).last(9600))>1)throw FormatError("preview audio energy/stop-tail mismatch");
+    std::vector<int16_t> samples;for(const auto* part:{&first,&overlap,&replacement,&independent,&tail})samples.insert(samples.end(),part->begin(),part->end());
+    SaveWav(captureDirectory/"preview-alias.wav",samples);std::ofstream out(captureDirectory/"preview.json");
+    out << "{\"passed\":true,\"shared11\":true,\"independent12\":true,\"retired_start_noop\":true,\"invalid_preserves_ready\":true,"
+      << "\"preview_ids\":[12150,12149],\"mission_id\":10579,\"first_position_ms\":" << firstPosition
+      << ",\"overlap_positions_ms\":[" << position11 << ',' << position12 << "],\"independent12_positions_ms\":[" << before12 << ',' << after12
+      << "],\"first_peak\":" << peak(first) << ",\"overlap_peak\":" << peak(overlap) << ",\"settled_tail_peak\":" << peak(std::span(tail).last(9600))
+      << ",\"output_frames\":" << samples.size()/2 << "}\n";return 0;
+  }catch(const std::exception& error){
+    if(created){std::ofstream out(captureDirectory/"error.txt");out << std::string(error.what()).substr(0,2048);}
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano battle preview: %s",error.what());return 1;
+  }
+}
 int RunMissionVoicePrepareSession(const std::filesystem::path& usrdir,
                                   const std::filesystem::path& captureDirectory) {
   bool created=false;

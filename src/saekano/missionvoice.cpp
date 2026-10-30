@@ -3,7 +3,9 @@
 
 namespace Impacto::Saekano {
 ClockedMissionVoice::ClockedMissionVoice(const std::filesystem::path& usrdir)
-    : bank_(std::make_shared<AwbBank>(usrdir/"voice.awb")) {}
+    : bank_(std::make_shared<AwbBank>(usrdir/"voice.awb")),owned_(std::make_unique<ClockedOrdinaryVoice>(usrdir)),output_(owned_.get()) {}
+ClockedMissionVoice::ClockedMissionVoice(const std::filesystem::path& usrdir,ClockedOrdinaryVoice& shared)
+    : bank_(std::make_shared<AwbBank>(usrdir/"voice.awb")),output_(&shared) {}
 void ClockedMissionVoice::Register(std::span<const int32_t> ids) {
   std::set<int32_t> prepared;
   for(const auto id:ids) {
@@ -18,11 +20,10 @@ void ClockedMissionVoice::Begin(int32_t id,uint64_t now) {
 }
 void ClockedMissionVoice::Prepare(int32_t id) {
   if(!catalog_.contains(id))throw UnsupportedCommand("mission voice was not registered at script load");
-  auto reader=std::make_unique<HcaWaveReader>(bank_,uint32_t(id));
-  voice_.Prepare(std::move(reader));id_=id;prepared_=true;
+  output_->Prepare(11,int16_t(id));
 }
 void ClockedMissionVoice::Start(uint64_t now) {
-  if(!prepared_)return; // Native Start on an absent/disabled channel is a no-op.
-  voice_.Start(now);prepared_=false;
+  if(!Ready())return; // Native Start on an absent/disabled channel is a no-op.
+  output_->Update(now);output_->Start(11);
 }
 }

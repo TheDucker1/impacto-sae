@@ -4,8 +4,8 @@
 namespace Impacto::Saekano {
 namespace {
 size_t Slot(uint32_t channel) {
-  if (channel<7 || channel>10)
-    throw UnsupportedCommand("clocked ordinary voice channel outside7..10");
+  if (channel<7 || channel>12)
+    throw UnsupportedCommand("clocked ordinary voice channel outside7..12");
   return size_t(channel - 7);
 }
 }  // namespace
@@ -19,6 +19,7 @@ void ClockedOrdinaryVoice::Prepare(uint32_t channel, int16_t voiceId) {
   voices_[slot].Prepare(std::move(reader));
   rates_[slot] = rate;
   ready_[slot] = true;
+  ids_[slot]=voiceId;
 }
 void ClockedOrdinaryVoice::Start(uint32_t channel) {
   const auto slot = Slot(channel);
@@ -32,6 +33,7 @@ void ClockedOrdinaryVoice::Stop(uint32_t channel) {
   voices_[slot].Reset();
   ready_[slot] = false;
   rates_[slot] = 0;
+  ids_[slot].reset();
 }
 void ClockedOrdinaryVoice::Update(uint64_t now) {
   if (sampled_ && now < now_) throw FormatError("ordinary voice clock moved backwards");
@@ -54,4 +56,5 @@ int32_t ClockedOrdinaryVoice::Position(uint32_t channel) const {
 std::optional<uint64_t> ClockedOrdinaryVoice::FramesConsumed(uint32_t channel) const {
   return voices_[Slot(channel)].FramesConsumed();
 }
+std::optional<int16_t> ClockedOrdinaryVoice::VoiceId(uint32_t channel) const {return ids_[Slot(channel)];}
 }  // namespace Impacto::Saekano

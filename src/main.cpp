@@ -256,6 +256,8 @@ int main(int argc, char* argv[]) {
            "Usage: --saekano-se USRDIR TRACK CHANNEL [--capture DIRECTORY]\n");
     return 1;
   }
+  if(argc==4 && std::string_view(argv[1])=="--saekano-battle-preview")
+    return Saekano::RunBattlePreviewVoiceSession(argv[2],argv[3]);
   if (argc == 4 && std::string_view(argv[1]) == "--saekano-mission-voice")
     return Saekano::RunMissionVoiceSession(argv[2],argv[3]);
   if (argc == 5 && std::string_view(argv[1]) == "--saekano-mission-voice" && std::string_view(argv[4])=="--prepare")
