@@ -243,6 +243,9 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
     String(out, reason);
     out << ",\"now\":" << now << ",\"script\":" << vm->State().ScriptFileId
         << ",\"command\":" << vm->State().CurrentCommandIndex << ",\"opcode\":" << vm->Opcode()
+        << ",\"pending_file\":" << vm->State().PendingFileId << ",\"exit_requested\":" << vm->State().ExitRequested;
+    if(reason=="script_ended")out << ",\"completion_scope\":\"script_manager_only\",\"outer_handoff_bound\":false";
+    out
         << ",\"messages_started\":" << messages << ",\"messages_completed\":" << completedMessages
         << ",\"command_boundaries\":" << boundaries << ",\"audio_events\":" << audioEvents
         << ",\"sprite_submissions\":" << spriteSubmissions
@@ -256,6 +259,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
            "\"fresh_unread_controls\":true,\"history_bound\":false,\"gpu_pixels\":false}\n";
   };
   bool confirmationDue=false,confirmationSent=false;
+  size_t missionInstance=0;
   bool versusDue=false,versusSent=false;
   bool battleResultDue=false,battleResultSent=false,battleResultDispatched=false;
   std::optional<std::array<int32_t,2>> battleResultDestination;
@@ -335,13 +339,15 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
             ++choiceStep;
             out << "{\"kind\":\"approach_selection_input\",\"step\":" << choiceStep << ",\"now\":" << now
                 << ",\"plan_index\":" << choiceIndex << ",\"original_parent\":" << target[0] << ",\"child\":" << target[1]
+                << ",\"next\":" << commandInput.Approach.Next << ",\"accept\":" << commandInput.Approach.Accept
                 << ",\"source\":\"explicit_probe_controller_input\"}\n";
           }
         }
       }
       if(confirmationDue) {
         commandInput.Advance=true;confirmationDue=false;confirmationSent=true;
-        out << "{\"kind\":\"mission_confirmation\",\"now\":" << now
+        report << "{\"kind\":\"mission_confirmation\",\"now\":" << now
+            << ",\"instance\":" << missionInstance
             << ",\"source\":\"explicit_probe_Advance\",\"script\":" << vm->State().ScriptFileId
             << ",\"command\":" << vm->State().CurrentCommandIndex << "}\n";
       }
@@ -368,6 +374,26 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
           battleHost->BeginFrame(now,{},faces);battleFrame=now;
         }
         const auto event = vm->Step(now,commandInput);commandInput.Advance=false;commandInput.Approach={};
+        if(event.Boundary==VmBoundary::CommandStarted && event.Opcode==0x3f7){
+          confirmationDue=false;confirmationSent=false;++missionInstance;
+          report << "{\"kind\":\"mission_instance_started\",\"instance\":" << missionInstance
+              << ",\"now\":" << now << ",\"script\":" << event.Script << ",\"command\":" << event.Command << "}\n";
+        }
+        if(event.Boundary==VmBoundary::CommandCompletedBeforeDispatch && event.Opcode==0x3f7){
+          report << "{\"kind\":\"mission_instance_completed\",\"instance\":" << missionInstance
+              << ",\"now\":" << now << ",\"script\":" << event.Script << ",\"command\":" << event.Command
+              << ",\"confirmation_sent\":" << confirmationSent << "}\n";
+        }
+        if(event.Boundary==VmBoundary::CommandStarted && event.Opcode==0x3f8){
+          resultConfirmationDue=false;resultConfirmationSent=false;
+        }
+        if(event.Boundary==VmBoundary::CommandStarted && event.Opcode==0x3f9){
+          versusDue=false;versusSent=false;previousVersus.reset();
+        }
+        if(event.Boundary==VmBoundary::CommandStarted && event.Opcode==0x3fa){
+          battleResultDue=false;battleResultSent=false;battleResultDispatched=false;
+          battleResultDestination.reset();previousBattleResult.reset();
+        }
         if(event.Opcode==0x3fa && vm->State().BattleResult.Started){
           const auto& result=vm->State().BattleResult;const auto sample=std::tuple(result.Phase,result.PendingPhase.value_or(-1),result.Item);
           if(previousBattleResult!=sample || result.Completed){
@@ -643,13 +669,15 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
       }
       if(waitingMission) {
         if((confirmFirstMission || chooseFirstApproach) && !confirmationSent) {
-          output.Enabled=!chooseFirstApproach;confirmationDue=true;
-          out << "{\"kind\":\"mission_confirmation_wait\",\"now\":" << now
+          output.Enabled=!chooseFirstApproach || (followBattleResult && missionInstance>1);confirmationDue=true;
+          report << "{\"kind\":\"mission_confirmation_wait\",\"now\":" << now
+              << ",\"instance\":" << missionInstance
               << ",\"script\":" << vm->State().ScriptFileId << ",\"command\":"
               << vm->State().CurrentCommandIndex << "}\n";
         } else {finish("approach_mission_confirmation_required",false);return 1;}
       }
       if(waitingSelection) {
+        if(choiceIndex>=approachPlan.size())output.Enabled=true;
         if(vm->Opcode()==0x3f6) {
           const auto& selection=vm->State().ApproachSelection;
           out << "{\"kind\":\"approach_selection_ready\",\"now\":" << now
@@ -663,6 +691,8 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
           for(size_t i=0;i<selection.ChildCounts.size();++i){if(i)out << ',';out << selection.ChildCounts[i];}
           out << "],\"topic_bank0\":[";
           for(size_t i=50;i<56;++i){if(i!=50)out << ',';out << vm->State().Bank0[i];}
+          out << "],\"enable_bank0\":[";
+          for(size_t i=49;i<60;++i){if(i!=49)out << ',';out << vm->State().Bank0[i];}
           out << "],\"used\":[";
           for(size_t i=0;i<18;++i){if(i)out << ',';out << +vm->State().ApproachFlags[i];}
           out << "]}\n";
