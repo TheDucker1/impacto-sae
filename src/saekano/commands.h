@@ -20,6 +20,7 @@
 #include "battleentry.h"
 #include "battleversus.h"
 #include "battleselection.h"
+#include "battleresult.h"
 
 #include <array>
 #include <map>
@@ -83,6 +84,7 @@ struct SemanticState {
   BattleEntryState BattleEntry;
   BattleVersusState BattleVersus;
   BattleSelectionState BattleSelection;
+  BattleResultState BattleResult;
   MusicHistoryState BattleHistory; // S602dc vector: same native played-status predicate as music history.
   GameRandom Random;
   ApproachGaugeState Approach;

@@ -6,6 +6,7 @@
 #include "approachselection.h"
 #include "battledialogue.h"
 #include "battleselection.h"
+#include "battleresult.h"
 
 #include <algorithm>
 #include <bit>
@@ -123,10 +124,42 @@ void ScriptLinearTween::Tick(uint64_t now) {
 bool ScriptLinearTween::Finished() const {
   return Current == To && Sample - Epoch >= uint64_t(Duration);
 }
+void ScriptReversingTween::Configure(int32_t from,int32_t to,int32_t duration,bool enabled,uint64_t now){
+  Channel.Start(from,to,duration,now);Enabled=enabled;Reversals=0;
+}
+void ScriptReversingTween::Restart(uint64_t now){
+  Channel.StartUnsigned(Channel.From,Channel.To,Channel.Duration,now);Enabled=true;
+}
+void ScriptReversingTween::Tick(uint64_t now){
+  if(Enabled)Advance(std::bit_cast<int32_t>(uint32_t(now-Channel.Sample)),now,0);
+}
+void ScriptReversingTween::Advance(int32_t delta,uint64_t clock,size_t depth){
+  if(depth>64)throw UnsupportedCommand("result reverse tween exceeds verified recursion budget");
+  auto& c=Channel;
+  if(delta<0){delta=0;c.Epoch=c.Sample=clock;}
+  const auto sample=c.Sample+uint32_t(delta),deadline=c.Epoch+c.Duration;
+  uint32_t carry=0;
+  if(sample<deadline){
+    c.Sample=sample;
+    const auto numerator=Multiply(Add(c.To,Negate(c.From)),std::bit_cast<int32_t>(uint32_t(sample-c.Epoch)));
+    const auto divisor=std::bit_cast<int32_t>(c.Duration);
+    const auto quotient=int64_t(numerator)/divisor;
+    c.Current=Add(c.From,std::bit_cast<int32_t>(uint32_t(quotient)));
+  }else{
+    carry=uint32_t(sample-deadline);
+    if(carry && c.To>0)carry%=uint32_t(c.To);
+    c.Sample=deadline;c.Current=c.To;
+  }
+  if(c.Finished() && Reversals<1){
+    c.StartUnsigned(c.To,c.From,c.Duration,clock);
+    if(c.Duration)Advance(std::bit_cast<int32_t>(carry),clock,depth+1);
+    ++Reversals;
+  }
+}
 
 static BattleGaugeEnvironment ReadBattleEnvironment(std::span<const uint8_t> bytes,
     BattleVersusEnvironment* versus=nullptr,BattleVersusVisualEnvironment* visual=nullptr,BattleDialogueEnvironment* dialogue=nullptr,
-    BattleSelectionEnvironment* selection=nullptr) {
+    BattleSelectionEnvironment* selection=nullptr,BattleResultEnvironment* battleResult=nullptr) {
   EnvironmentReader reader(bytes);
   BattleGaugeEnvironment result;
   reader.Skip(3 + 3 * 4);  // flags and colors
@@ -174,6 +207,8 @@ static BattleGaugeEnvironment ReadBattleEnvironment(std::span<const uint8_t> byt
   reader.Table(16);
   for (size_t i = 0; i < 4; ++i) reader.Table(8);
   std::array<int32_t,13> settings;for(auto& word:settings)word=reader.Word();
+  if(battleResult){battleResult->ItemAmplitude=settings[0];battleResult->ItemDuration=settings[1];
+    battleResult->RevealDuration=settings[6];battleResult->FadeDuration=settings[12];}
   if(selection)selection->RevealDuration=settings[3]; // global80261a74, distinct from card motion.
   if(versus){versus->Offscreen=settings[4];versus->SlideDuration=settings[5];
     versus->FirstDuration=settings[6];versus->SecondDuration=settings[7];
@@ -183,6 +218,7 @@ static BattleGaugeEnvironment ReadBattleEnvironment(std::span<const uint8_t> byt
   result.DisplayPerPoint = reader.Word();
   result.XPerPoint = reader.Word();
   result.ScalePerPoint = std::bit_cast<float>(reader.Word());
+  if(battleResult){reader.Word();battleResult->EqualPose=reader.Word();battleResult->AbovePose=reader.Word();battleResult->BelowPose=reader.Word();}
   if(selection) {
     // Original loader801dfc36..801e0b5c. Tables remain counted even when their
     // current authored lengths happen to be three; never seek by file offset.
@@ -217,6 +253,12 @@ static BattleGaugeEnvironment ReadBattleEnvironment(std::span<const uint8_t> byt
 }
 BattleGaugeEnvironment BattleGaugeEnvironment::Decode(std::span<const uint8_t> bytes) {
   return ReadBattleEnvironment(bytes);
+}
+BattleResultEnvironment BattleResultEnvironment::Decode(std::span<const uint8_t> bytes){
+  BattleResultEnvironment out;ReadBattleEnvironment(bytes,nullptr,nullptr,nullptr,nullptr,&out);
+  if(out.ItemDuration<0 || out.ItemDuration>INT32_MAX/2 || out.RevealDuration<0 || out.FadeDuration<0)
+    throw FormatError("invalid battle result environment timing");
+  return out;
 }
 BattleVersusEnvironment BattleVersusEnvironment::Decode(std::span<const uint8_t> bytes) {
   BattleVersusEnvironment out;ReadBattleEnvironment(bytes,&out);return out;

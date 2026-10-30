@@ -204,6 +204,7 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     state_.BattleEntry={};state_.BattleEntry.Known=true;
     state_.BattleVersus={};state_.BattleVersus.Known=true;
     state_.BattleSelection={};
+    state_.BattleResult={};state_.BattleResult.Known=true;
     if(auto* resources=backend_.BattleAssets())resources->Reset();
     state_.BgmTrack.reset();
     state_.BgmCommandVolume.reset();

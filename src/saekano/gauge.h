@@ -21,6 +21,20 @@ struct ScriptLinearTween {
   void Tick(uint64_t now);
   bool Finished() const;
 };
+// Native9fb60/9fc30 reverse-once channel used by result items. The reverse
+// restarts at the real clock, carries the native endpoint-based remainder,
+// and increments its counter after the recursive advance has returned.
+struct ScriptReversingTween {
+  ScriptLinearTween Channel;
+  bool Enabled=false;
+  uint32_t Reversals=0;
+  void Configure(int32_t from,int32_t to,int32_t duration,bool enabled,uint64_t now);
+  void Restart(uint64_t now);
+  void Tick(uint64_t now);
+  bool Finished()const{return Channel.Finished();}
+ private:
+  void Advance(int32_t delta,uint64_t clock,size_t depth);
+};
 
 struct BattleGaugeEnvironment {
   int32_t Minimum = 0, NeutralThreshold = 0, Duration = 0;
