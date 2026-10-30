@@ -127,6 +127,7 @@ void StartLipAction(SemanticState& state,const LipActionCommand& command);
 class PayloadReader {
  public:
   explicit PayloadReader(std::span<const uint8_t> bytes) : bytes_(bytes) {}
+  uint8_t U8();
   uint16_t U16();
   uint32_t U32();
   int32_t I32();

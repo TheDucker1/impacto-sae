@@ -34,6 +34,10 @@ void StartStopSe(SemanticState& state, const StopSeCommand& command) {
       {GameEventKind::StopSe, backendChannel, {}, command.Fade});
 }
 
+uint8_t PayloadReader::U8() {
+  if(!Remaining())throw FormatError("truncated payload byte");
+  return bytes_[cursor_++];
+}
 uint16_t PayloadReader::U16() {
   if (Remaining() < 2) throw FormatError("truncated payload halfword");
   const uint16_t result = uint16_t(bytes_[cursor_]) |
