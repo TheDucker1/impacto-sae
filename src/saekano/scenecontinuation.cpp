@@ -1,6 +1,7 @@
 #include "scenecontinuation.h"
 #include "endingdialog.h"
 #include "systemowner.h"
+#include "progressstore.h"
 
 #include "mouthselection.h"
 #include "ordinaryvoiceoutput.h"
@@ -25,6 +26,7 @@
 #include <ostream>
 #include <set>
 #include <tuple>
+#include <thread>
 
 namespace Impacto::Saekano {
 namespace {
@@ -65,7 +67,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
                          std::optional<size_t> untilMessage, std::ostream& report,bool confirmFirstMission,bool chooseFirstApproach,
                            std::span<const std::array<size_t,2>> approachPlan,bool confirmApproachResult,bool followPostResult,bool followPostChapter,
                            std::span<const std::array<size_t,2>> profilePlan,bool confirmBattleVersus,
-                           std::span<const std::array<size_t,3>> battlePlan,bool continueBattle,bool confirmBattleResult,bool followBattleResult,std::optional<int32_t> endingDecision,std::optional<size_t> untilApproachChoices,const std::filesystem::path& systemSave,const std::filesystem::path& systemOutput) {
+                           std::span<const std::array<size_t,3>> battlePlan,bool continueBattle,bool confirmBattleResult,bool followBattleResult,std::optional<int32_t> endingDecision,std::optional<size_t> untilApproachChoices,const std::filesystem::path& systemSave,const std::filesystem::path& systemOutput,const std::filesystem::path& progressRoot) {
   if(endingDecision && *endingDecision!=0 && *endingDecision!=1)throw FormatError("invalid ending decision");
   const std::array<std::array<size_t,2>,1> firstChoice{{{0,0}}};
   if(chooseFirstApproach && approachPlan.empty())approachPlan=firstChoice;
@@ -91,7 +93,21 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   InitializeFreshProfileEntry(owner, ProfileInitialStats::Decode(profileRaw),
                               LoadProfileItemCatalog(Read(root / "first.dat")));
   const auto historySettings=HistoryEnvironment::DecodeDebug(Read(root/"env/env_debug.dat"));
-  const auto progress=systemSave.empty()?MakeFreshSystemProgress(Read(root/"first.dat"),historySettings.InitiallyRead!=0):ReadSystemSaveFile(systemSave);
+  auto progress=systemSave.empty()?MakeFreshSystemProgress(Read(root/"first.dat"),historySettings.InitiallyRead!=0):ReadSystemSaveFile(systemSave);
+  bool progressFresh=systemSave.empty();std::optional<NativeSlotData> slotProgress;
+  if(!progressRoot.empty()) {
+    auto pair=ReadProgressStore(progressRoot);
+    if(pair) {
+      if(!systemSave.empty())throw FormatError("cannot combine a committed progress store with an explicit system import");
+      progress=std::move(pair->System);slotProgress=std::move(pair->Slots);progressFresh=false;
+    } else {
+      if(!systemSave.empty()) {
+        auto imported=ReadProgressPairFiles(systemSave,systemSave.parent_path()/"data.bin");
+        progress=std::move(imported.System);slotProgress=std::move(imported.Slots);
+      } else slotProgress=NativeSlotData::Fresh();
+      ProgressTransaction initial(progressRoot,progress);initial.CommitSlots(*slotProgress);
+    }
+  }
   LoadSystemOwner(owner,progress,owner.CgHistory.Required);
   ProfileMode mode(owner, services, profile, shared);
   ProfileSelectionInput selection;
@@ -230,6 +246,21 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
     void Begin(int32_t,uint64_t)override{throw UnsupportedCommand("ending save mode2 persistence service is not bound");}
     EndingSaveStatus Update(uint64_t)override{throw UnsupportedCommand("ending save mode2 persistence service is not bound");}
   }endingSave;
+  std::unique_ptr<SessionSaveWrites> endingFiles;
+  std::unique_ptr<SaveManagerDialogHost> boundEndingSave;
+  if(!progressRoot.empty()) {
+    if(!slotProgress)throw FormatError("complete slot owner is unavailable");
+    if(dialogEnvironment.ButtonGroups.empty() || dialogEnvironment.ButtonGroups[0].size()!=1)
+      throw FormatError("missing native save acknowledgement button");
+    endingFiles=std::make_unique<SessionSaveWrites>(progressRoot,*slotProgress,[&]{return SnapshotSystemOwner(vm->State(),registeredHistory);});
+    const auto saveLayout=[&](const std::u16string& text,size_t buttons) {
+      VoiceTextReveal reveal;reveal.PrepareUtf16(text,format,0);
+      const auto measured=LayoutPlainText(reveal.Text,format,resultFont,metrics,dialogEnvironment.Settings[6],
+          dialogEnvironment.TextScales[1],uint32_t(utility.Size),36);
+      return BuildDialogContentLayout(dialogEnvironment,{480,272},measured.Height,buttons,utility.Size);
+    };
+    boundEndingSave=std::make_unique<SaveManagerDialogHost>(SaveManagerEnvironment::Decode(Read(root/"env/env_save_manager.dat")),saveLayout,*endingFiles);
+  }
   ScenarioEndingState ending;
   bool endingPulseSent=false;
   std::unique_ptr<ScenarioEndingDialogHost> endingHost;
@@ -241,7 +272,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
     const auto content=BuildDialogContentLayout(dialogEnvironment,{480,272},layout.Height,
         dialogEnvironment.ButtonGroups[1].size(),utility.Size);
     endingHost=std::make_unique<ScenarioEndingDialogHost>(endingEnvironment.SystemSavePrompt,content,
-        dialogEnvironment.ButtonGroups[1].size(),endingSave,[&]{
+        dialogEnvironment.ButtonGroups[1].size(),boundEndingSave?static_cast<EndingSaveServices&>(*boundEndingSave):static_cast<EndingSaveServices&>(endingSave),[&]{
           report << "{\"kind\":\"ending_title_request\",\"now\":" << now << ",\"scene\":1,\"title_constructed\":false}\n";
         });
   }
@@ -279,13 +310,14 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         << ",\"pending_file\":" << vm->State().PendingFileId << ",\"exit_requested\":" << vm->State().ExitRequested;
     if(reason=="script_ended")out << ",\"completion_scope\":\"script_manager_only\",\"outer_handoff_bound\":false";
     if(reason=="ending_title_requested")out << ",\"completion_scope\":\"title_request_only\",\"outer_handoff_bound\":false,\"title_constructed\":false";
-    if(ending.Started)out << ",\"ending_controller_bound\":true,\"ending_phase\":" << ending.Phase << ",\"ending_save_backend_bound\":false";
+    if(ending.Started)out << ",\"ending_controller_bound\":true,\"ending_phase\":" << ending.Phase << ",\"ending_save_backend_bound\":" << (boundEndingSave?"true":"false");
 
     size_t readSegments=0;
     for(const auto& file:registeredHistory.Files)
       for(const auto segment:file.Segments)if(segment&0x8000)++readSegments;
     out << ",\"read_segment_updates_bound\":true,\"read_segments_marked\":" << readSegments;
-    out << ",\"system_progress_loaded\":" << (!systemSave.empty()) << ",\"system_progress_fresh\":" << systemSave.empty() << ",\"system_snapshot_written\":" << snapshotWritten;
+    out << ",\"system_progress_loaded\":" << !progressFresh << ",\"system_progress_fresh\":" << progressFresh << ",\"system_snapshot_written\":" << snapshotWritten
+        << ",\"progress_store_bound\":" << !progressRoot.empty() << ",\"slot_owner_bound\":" << bool(slotProgress);
     out
         << ",\"messages_started\":" << messages << ",\"messages_completed\":" << completedMessages
         << ",\"command_boundaries\":" << boundaries << ",\"audio_events\":" << audioEvents
@@ -297,7 +329,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         << ",\"approach_gauge\":" << vm->State().ApproachGauge
         << ",\"battle_gauge\":" << vm->State().BattleGauge << ",\"battle_choices_committed\":" << battleIndex
         << ",\"clock_step_ms\":16,\"seed\":0,\"voice_pcm_decoded\":true,\"bgm_se_playback\":false,"
-           "\"fresh_unread_controls\":" << systemSave.empty() << ",\"history_bound\":" << bool(vm->State().SystemProgress) << ",\"gpu_pixels\":false}\n";
+           "\"fresh_unread_controls\":" << progressFresh << ",\"history_bound\":" << bool(vm->State().SystemProgress) << ",\"gpu_pixels\":false}\n";
   };
   bool confirmationDue=false,confirmationSent=false;
   size_t missionInstance=0;
@@ -309,6 +341,8 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   bool resultConfirmationDue=false,resultConfirmationSent=false,resultCompleted=false,chapterCompleted=false;
   uint32_t choiceStep=0;
   std::optional<std::tuple<int32_t,int32_t,int32_t,int32_t,bool,int32_t>> previousEnding;
+  std::optional<std::tuple<int32_t,int32_t,bool,bool,int32_t,bool>> previousSave;
+  bool saveAcknowledged=false,savePublicationReported=false;
   const auto updateEnding=[&]{
     if(ending.Phase==22)endingPulseSent=false;
     auto& modal=endingHost->Modal;
@@ -318,7 +352,31 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
       report << "{\"kind\":\"ending_prompt_input\",\"now\":" << now << ",\"decision\":" << *endingDecision
           << ",\"right\":" << endingHost->Input.Right << ",\"accept\":" << endingHost->Input.Accept << "}\n";
     }
+    if(boundEndingSave && boundEndingSave->State().Active && boundEndingSave->Modal.Visible && boundEndingSave->Modal.Phase==3) {
+      if(boundEndingSave->State().Phase==7)
+        throw UnsupportedCommand("ending save access error requires retry: "+endingFiles->LastError());
+      if(boundEndingSave->State().Phase==19 && !saveAcknowledged) {
+        boundEndingSave->Input.Accept=true;saveAcknowledged=true;
+        report << "{\"kind\":\"ending_save_success_input\",\"now\":" << now << ",\"ordinal\":0,\"separate_acknowledgement\":true}\n";
+      }
+    }
     UpdateScenarioEnding(ending,*endingHost,now);
+    if(boundEndingSave && boundEndingSave->State().Started) {
+      const auto& s=boundEndingSave->State();const auto& m=boundEndingSave->Modal;
+      const auto sample=std::tuple(s.Phase,s.PendingPhase.value_or(-1),s.Active,s.Accepted,m.Phase,m.Visible);
+      if(previousSave!=sample) {
+        report << "{\"kind\":\"ending_save_state\",\"now\":" << now << ",\"phase\":" << s.Phase << ",\"pending\":" << s.PendingPhase.value_or(-1)
+            << ",\"active\":" << s.Active << ",\"accepted\":" << s.Accepted << ",\"modal_phase\":" << m.Phase << ",\"visible\":" << m.Visible << ",\"buttons\":" << m.ButtonCount << ",\"real_background_io\":true}\n";
+        previousSave=sample;
+      }
+      if(!s.Active && s.Accepted && !savePublicationReported) {
+        const auto committed=ReadProgressStore(progressRoot);
+        if(!committed || committed->Slots.Encode()!=slotProgress->Encode())throw FormatError("ending save lost slot records");
+        report << "{\"kind\":\"ending_save_published\",\"now\":" << now << ",\"generation\":\"" << committed->Generation
+            << "\",\"system_bytes\":" << NativeSystemSave::FileBytes << ",\"slot_bytes\":" << NativeSlotData::FileBytes << ",\"slots_preserved\":true}\n";
+        savePublicationReported=true;
+      }
+    }
     const auto sample=std::tuple(ending.Phase,ending.PendingPhase.value_or(-1),modal.Phase,
         modal.PendingPhase.value_or(-1),modal.Visible,modal.Selected);
     if(previousEnding!=sample || ending.TitleRequested){
@@ -338,6 +396,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
       if(ending.Started){
         voices.Update(now);updateEnding();
         if(ending.TitleRequested){finish("ending_title_requested",true);return 0;}
+        if(boundEndingSave && boundEndingSave->State().Active)std::this_thread::sleep_for(std::chrono::milliseconds(1));
         continue;
       }
 
