@@ -48,6 +48,7 @@ class VmBackend {
   virtual void CompleteMessage(size_t, uint64_t) {}
   // Native74210: completed foreground commands mark their exact segment before dispatch.
   virtual void RecordReadHistory(int32_t, uint32_t) {}
+  virtual void RecordChoiceHistory(int32_t, uint32_t, std::span<const size_t>) {}
   // Normal message update tail, after reveal/input/auto decisions. Render-only
   // sampling and the next-update completion dispatch do not publish this flag.
   virtual void EndMessageUpdate(size_t, uint64_t) {}

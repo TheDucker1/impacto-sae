@@ -63,6 +63,38 @@ HistoryEnvironment HistoryEnvironment::DecodeDebug(std::span<const uint8_t> byte
   if (bytes.size() <= At) throw FormatError("truncated history debug settings");
   return {bytes[At], At + 1, bytes[3 + 11]};
 }
+const ReadHistoryBranch* FindChoiceHistory(const RegisteredReadHistory& history,
+    int32_t script,uint32_t command) {
+  if(script<0 || size_t(script)>=history.Files.size())
+    throw FormatError("choice outside registered history scripts");
+  for(const auto& row:history.Files[size_t(script)].Branches)
+    if(row.Endpoint==command)return &row;
+  return nullptr;
+}
+void MarkChoiceHistory(const HistoryEnvironment& environment,RegisteredReadHistory& history,
+    int32_t script,uint32_t command,std::span<const size_t> flags) {
+  if(environment.SuppressReadHistory)return;
+  const auto* found=FindChoiceHistory(history,script,command);
+  if(!found)return;
+  for(const auto flag:flags)if(flag>=found->Flags.size())
+    throw FormatError("choice history flag outside registered row");
+  // The lookup borrows this mutable owner; keep the same first matching row.
+  auto& row=history.Files[size_t(script)].Branches[size_t(found-history.Files[size_t(script)].Branches.data())];
+  for(const auto flag:flags)row.Flags[flag]=1;
+}
+std::vector<std::array<uint8_t,4>> ApproachChoiceHistory(
+    const HistoryEnvironment& environment,const RegisteredReadHistory& history,
+    int32_t script,uint32_t command,size_t parents,bool readColor) {
+  if(parents>6)throw FormatError("approach history parent budget exceeded");
+  std::vector<std::array<uint8_t,4>> result(parents);
+  if(!readColor || environment.SuppressReadHistory)return result;
+  const auto* row=FindChoiceHistory(history,script,command);
+  if(!row)return result;
+  if(row->Flags.size()<parents*4)throw FormatError("truncated approach choice history");
+  for(size_t i=0;i<parents;++i)
+    for(size_t j=0;j<4;++j)result[i][j]=row->Flags[i*4+j];
+  return result;
+}
 bool SkipHistoryEligible(const HistoryEnvironment& environment,
                           std::span<const ScriptRecord> records,
                           uint32_t current, const ScriptReadHistory* history) {

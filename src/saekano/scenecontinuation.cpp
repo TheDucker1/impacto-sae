@@ -64,11 +64,12 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
                          std::optional<size_t> untilMessage, std::ostream& report,bool confirmFirstMission,bool chooseFirstApproach,
                            std::span<const std::array<size_t,2>> approachPlan,bool confirmApproachResult,bool followPostResult,bool followPostChapter,
                            std::span<const std::array<size_t,2>> profilePlan,bool confirmBattleVersus,
-                           std::span<const std::array<size_t,3>> battlePlan,bool continueBattle,bool confirmBattleResult,bool followBattleResult,std::optional<int32_t> endingDecision) {
+                           std::span<const std::array<size_t,3>> battlePlan,bool continueBattle,bool confirmBattleResult,bool followBattleResult,std::optional<int32_t> endingDecision,std::optional<size_t> untilApproachChoices) {
   if(endingDecision && *endingDecision!=0 && *endingDecision!=1)throw FormatError("invalid ending decision");
   const std::array<std::array<size_t,2>,1> firstChoice{{{0,0}}};
   if(chooseFirstApproach && approachPlan.empty())approachPlan=firstChoice;
   chooseFirstApproach=!approachPlan.empty();
+  if(untilApproachChoices && (!*untilApproachChoices || *untilApproachChoices>approachPlan.size()))throw FormatError("choice target outside explicit plan");
   DiscoveryBuffer output(report.rdbuf(),!confirmFirstMission && !chooseFirstApproach);std::ostream out(&output);
   output.Suppressed=followPostResult;
   if (!frameBudget || frameBudget > 1000000)
@@ -590,6 +591,12 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
               << ",\"destination\":" << vm->State().PendingCommandIndex
               << ",\"used\":[";
           for(size_t i=0;i<18;++i){if(i)out << ',';out << +vm->State().ApproachFlags[i];}out << "]}\n";
+          const auto* history=FindChoiceHistory(registeredHistory,event.Script,uint32_t(event.Command));
+          out << "{\"kind\":\"approach_choice_history\",\"script\":" << event.Script
+              << ",\"command\":" << event.Command << ",\"flags\":[";
+          if(history)for(size_t i=0;i<history->Flags.size();++i){if(i)out << ',';out << unsigned(history->Flags[i]);}
+          out << "]}\n";
+          if(untilApproachChoices && choiceIndex==*untilApproachChoices){finish("target_approach_choice_completed",true);return 0;}
           choiceStep=0;
         }
         sync();

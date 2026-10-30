@@ -20,6 +20,9 @@ class HeadlessBackend : public VmBackend {
       throw FormatError("completed command outside registered history scripts");
     MarkHistoryRead(HistorySettings,RegisteredHistory->Files[size_t(script)],command);
   }
+  void RecordChoiceHistory(int32_t script,uint32_t command,std::span<const size_t> flags) override {
+    if(RegisteredHistory)MarkChoiceHistory(HistorySettings,*RegisteredHistory,script,command,flags);
+  }
   bool AutoReveal = true;
   bool AutoAdvance = true;
   std::function<void(bool)> ParticleReset;

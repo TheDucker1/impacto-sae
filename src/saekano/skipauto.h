@@ -30,6 +30,13 @@ struct RegisteredReadHistory {
                                       bool initiallyRead);
   static RegisteredReadHistory LoadFirst(Bytes firstDat, bool initiallyRead);
 };
+const ReadHistoryBranch* FindChoiceHistory(const RegisteredReadHistory& history,
+    int32_t script,uint32_t command);
+void MarkChoiceHistory(const HistoryEnvironment& environment,RegisteredReadHistory& history,
+    int32_t script,uint32_t command,std::span<const size_t> flags);
+std::vector<std::array<uint8_t,4>> ApproachChoiceHistory(
+    const HistoryEnvironment& environment,const RegisteredReadHistory& history,
+    int32_t script,uint32_t command,size_t parents,bool readColor);
 bool SkipHistoryEligible(const HistoryEnvironment& environment,
                           std::span<const ScriptRecord> records,
                           uint32_t current, const ScriptReadHistory* history);

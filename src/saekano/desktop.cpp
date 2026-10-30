@@ -1955,8 +1955,11 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       } else if(pass.Kind==SceneDrawKind::ApproachSelection) {
         particleFragment.SetBlendMode(1);
         renderer.SetFilter(0,0);glUniform1i(renderer.AlphaMode,1);
+        if(!state.ReadColorEnabled)throw UnsupportedCommand("approach read-color setting is unknown");
+        const auto readHistory=ApproachChoiceHistory(historySettings,registeredHistory,
+            state.ScriptFileId,uint32_t(state.CurrentCommandIndex),vm->CurrentApproachEntries().size(),*state.ReadColorEnabled);
         const auto draws=BuildApproachSelectionDraws(selectionLayout,selectionShared,*backend.SelectionSettings,
-            state.ApproachSelection,vm->CurrentApproachEntries(),state.ApproachFlags,{},utility.Size,
+            state.ApproachSelection,vm->CurrentApproachEntries(),state.ApproachFlags,readHistory,utility.Size,
             [&](const auto& text,int32_t size){return int32_t(MeasurePvfText(font.Cached(),text,uint32_t(size),font.NominalSize()));});
         for(const auto& draw:draws) {
           if(draw.Kind==ApproachSelectionDrawKind::Sprite) {

@@ -623,6 +623,8 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
       if(!choice)throw FormatError("approach controller completed without a valid choice");
       auto commit=input;commit.Choice=(*choice)[0];commit.Child=(*choice)[1];
       CompleteCommand(state_,opcode,script_->Payload(index),commit);
+      const std::array<size_t,2> flags{(*choice)[0]*4,(*choice)[0]*4+(*choice)[1]+1};
+      backend_.RecordChoiceHistory(state_.ScriptFileId,uint32_t(index),flags);
     }
     return done;
   }
@@ -803,7 +805,11 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
     commitInput.BattleTimeout = timeout;
   }
   CompleteCommand(state_, opcode, script_->Payload(index), commitInput);
-  if (opcode == 0x65) state_.DayEnabled = int32_t(command.SavedDay);
+  if (opcode == 0x65) {
+    const std::array<size_t,1> flags{*commitInput.Choice};
+    backend_.RecordChoiceHistory(state_.ScriptFileId,uint32_t(index),flags);
+    state_.DayEnabled = int32_t(command.SavedDay);
+  }
   return true;
 }
 
