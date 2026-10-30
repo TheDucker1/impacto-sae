@@ -7,6 +7,8 @@
 namespace Impacto::Saekano {
 struct ChoiceMenu;
 struct SemanticState;
+// Static native initializer8008b454..490 ->802626b8, independent of env tables.
+std::array<float,4> BattleSelectionMotionCurve();
 // Original float channel9eb28/9ec48. One shot, including overshoot; callers
 // decide when to restart. This must not use the oscillating profile arrows.
 struct BattleCardMotion {

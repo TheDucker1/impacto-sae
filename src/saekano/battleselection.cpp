@@ -6,6 +6,7 @@
 #include <cmath>
 
 namespace Impacto::Saekano {
+std::array<float,4> BattleSelectionMotionCurve(){return {0.175f,0.885f,0.32f,1.275f};}
 namespace {
 float EaseCard(float input,const std::array<float,4>& curve) {
   // Shared native9ebbc: float bisection, tolerance0.01. Preserve the VFP

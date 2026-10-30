@@ -18,6 +18,13 @@ struct SharedVoicePreparation final:OrdinaryVoicePreparation {
   void Start(uint32_t channel)override{Owner.Output.Start(channel);}
 };
 }
+void StopSceneDialogueNextVoiceSlots(SceneMessageVoiceOwner& owner) {
+  if(!owner.SecondaryQueue || owner.Queue.NextSlot>1 || owner.SecondaryQueue->NextSlot>1)
+    throw UnsupportedCommand("battle dialogue next-slot owners are unavailable");
+  SharedVoicePreparation preparation(owner);
+  preparation.Stop(owner.Queue.BaseChannel+owner.Queue.NextSlot);
+  preparation.Stop(owner.SecondaryQueue->BaseChannel+owner.SecondaryQueue->NextSlot);
+}
 OrdinaryVoiceQueue& SceneMessageBackend::VoiceQueue(size_t side) {
   if(!voices_)throw UnsupportedCommand("ordinary voice owner is not bound");
   if(side==0)return voices_->Queue;

@@ -26,6 +26,9 @@ struct SceneMessageVoiceOwner {
   OrdinaryVoiceSettings Settings;
   std::optional<OrdinaryVoiceQueue> SecondaryQueue;
 };
+// Native battle-select Start stops base+NextSlot on both retained contexts.
+// Keep the external-stop cache invalidation used by normal message cleanup.
+void StopSceneDialogueNextVoiceSlots(SceneMessageVoiceOwner& owner);
 struct SceneMessageTextState {
   size_t Command = 0;
   size_t Side = 0;
