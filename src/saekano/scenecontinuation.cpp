@@ -1,4 +1,5 @@
 #include "scenecontinuation.h"
+#include "endingdialog.h"
 
 #include "mouthselection.h"
 #include "ordinaryvoiceoutput.h"
@@ -63,7 +64,8 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
                          std::optional<size_t> untilMessage, std::ostream& report,bool confirmFirstMission,bool chooseFirstApproach,
                            std::span<const std::array<size_t,2>> approachPlan,bool confirmApproachResult,bool followPostResult,bool followPostChapter,
                            std::span<const std::array<size_t,2>> profilePlan,bool confirmBattleVersus,
-                           std::span<const std::array<size_t,3>> battlePlan,bool continueBattle,bool confirmBattleResult,bool followBattleResult) {
+                           std::span<const std::array<size_t,3>> battlePlan,bool continueBattle,bool confirmBattleResult,bool followBattleResult,std::optional<int32_t> endingDecision) {
+  if(endingDecision && *endingDecision!=0 && *endingDecision!=1)throw FormatError("invalid ending decision");
   const std::array<std::array<size_t,2>,1> firstChoice{{{0,0}}};
   if(chooseFirstApproach && approachPlan.empty())approachPlan=firstChoice;
   chooseFirstApproach=!approachPlan.empty();
@@ -218,6 +220,26 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   std::set<uint16_t> opcodes;
   size_t messages = 0, completedMessages = 0, boundaries = 0, audioEvents = 0, spriteSubmissions = 0;
   uint64_t now = 0;
+  struct UnboundEndingSave final:EndingSaveServices{
+    void Begin(int32_t,uint64_t)override{throw UnsupportedCommand("ending save mode2 persistence service is not bound");}
+    EndingSaveStatus Update(uint64_t)override{throw UnsupportedCommand("ending save mode2 persistence service is not bound");}
+  }endingSave;
+  ScenarioEndingState ending;
+  bool endingPulseSent=false;
+  std::unique_ptr<ScenarioEndingDialogHost> endingHost;
+  if(endingDecision){
+    const auto endingEnvironment=EndingEnvironment::Decode(Read(root/"env/env_script.dat"));
+    VoiceTextReveal endingPrompt;endingPrompt.PrepareUtf16(endingEnvironment.SystemSavePrompt,format,0);
+    const auto layout=LayoutPlainText(endingPrompt.Text,format,resultFont,metrics,dialogEnvironment.Settings[6],
+        dialogEnvironment.TextScales[1],uint32_t(utility.Size),36);
+    const auto content=BuildDialogContentLayout(dialogEnvironment,{480,272},layout.Height,
+        dialogEnvironment.ButtonGroups[1].size(),utility.Size);
+    endingHost=std::make_unique<ScenarioEndingDialogHost>(endingEnvironment.SystemSavePrompt,content,
+        dialogEnvironment.ButtonGroups[1].size(),endingSave,[&]{
+          report << "{\"kind\":\"ending_title_request\",\"now\":" << now << ",\"scene\":1,\"title_constructed\":false}\n";
+        });
+  }
+
   std::map<uint32_t, int32_t> inlineLanes;
   backend.ActivateLane = [&](uint32_t lane, uint64_t time, int32_t position) {
     const auto before = vm->State().LaneCommandIndex.at(lane);
@@ -245,6 +267,9 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         << ",\"command\":" << vm->State().CurrentCommandIndex << ",\"opcode\":" << vm->Opcode()
         << ",\"pending_file\":" << vm->State().PendingFileId << ",\"exit_requested\":" << vm->State().ExitRequested;
     if(reason=="script_ended")out << ",\"completion_scope\":\"script_manager_only\",\"outer_handoff_bound\":false";
+    if(reason=="ending_title_requested")out << ",\"completion_scope\":\"title_request_only\",\"outer_handoff_bound\":false,\"title_constructed\":false";
+    if(ending.Started)out << ",\"ending_controller_bound\":true,\"ending_phase\":" << ending.Phase << ",\"ending_save_backend_bound\":false";
+
     out
         << ",\"messages_started\":" << messages << ",\"messages_completed\":" << completedMessages
         << ",\"command_boundaries\":" << boundaries << ",\"audio_events\":" << audioEvents
@@ -267,9 +292,39 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   std::optional<std::pair<int32_t,int32_t>> previousVersus;
   bool resultConfirmationDue=false,resultConfirmationSent=false,resultCompleted=false,chapterCompleted=false;
   uint32_t choiceStep=0;
+  std::optional<std::tuple<int32_t,int32_t,int32_t,int32_t,bool,int32_t>> previousEnding;
+  const auto updateEnding=[&]{
+    if(ending.Phase==22)endingPulseSent=false;
+    auto& modal=endingHost->Modal;
+    if(modal.Visible && modal.Phase==3 && !endingPulseSent){
+      if(modal.Selected!=*endingDecision)endingHost->Input.Right=true;
+      else{endingHost->Input.Accept=true;endingPulseSent=true;}
+      report << "{\"kind\":\"ending_prompt_input\",\"now\":" << now << ",\"decision\":" << *endingDecision
+          << ",\"right\":" << endingHost->Input.Right << ",\"accept\":" << endingHost->Input.Accept << "}\n";
+    }
+    UpdateScenarioEnding(ending,*endingHost,now);
+    const auto sample=std::tuple(ending.Phase,ending.PendingPhase.value_or(-1),modal.Phase,
+        modal.PendingPhase.value_or(-1),modal.Visible,modal.Selected);
+    if(previousEnding!=sample || ending.TitleRequested){
+      report << "{\"kind\":\"ending_state\",\"now\":" << now << ",\"phase\":" << ending.Phase
+          << ",\"pending\":" << ending.PendingPhase.value_or(-1) << ",\"modal_phase\":" << modal.Phase
+          << ",\"modal_pending\":" << modal.PendingPhase.value_or(-1) << ",\"modal_visible\":" << modal.Visible
+          << ",\"selected\":" << modal.Selected << ",\"title_requested\":" << ending.TitleRequested << ",\"fade\":["
+          << ending.Fade.From << ',' << ending.Fade.To << ',' << ending.Fade.Current << ',' << ending.Fade.Duration << ',' << ending.Fade.Epoch << ',' << ending.Fade.Sample << "]}\n";
+      previousEnding=sample;
+    }
+    for(auto sound:modal.UiSounds)report << "{\"kind\":\"ending_ui_sound\",\"now\":" << now << ",\"sound\":" << sound << ",\"physical_playback\":false}\n";
+  };
+
   try {
     for (size_t frame = 0; frame < frameBudget; ++frame) {
       now = uint64_t(frame) * 16;
+      if(ending.Started){
+        voices.Update(now);updateEnding();
+        if(ending.TitleRequested){finish("ending_title_requested",true);return 0;}
+        continue;
+      }
+
       SkipAutoInput policyInput;
       if (firstMessage) {
         const auto elapsed = now - *firstMessage;
@@ -743,7 +798,13 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
               vm->SpriteBlink(id)->Phase, mouths.at(id).Frame, *vm->State().Quake[1]).size();
       }
       if (reached) { finish("target_message_completed", true); return 0; }
-      if (ended) { finish("script_ended", !untilMessage); return untilMessage ? 2 : 0; }
+      if(ended && endingHost){
+        output.Enabled=true;output.Suppressed=false;
+        report << "{\"kind\":\"script_manager_ended\",\"now\":" << now << ",\"script\":" << vm->State().ScriptFileId
+            << ",\"command\":" << vm->State().CurrentCommandIndex << ",\"manager_retained\":true}\n";
+        StartScenarioEnding(ending);updateEnding();
+        if(ending.TitleRequested){finish("ending_title_requested",true);return 0;}
+      }else if(ended){finish("script_ended",!untilMessage);return untilMessage?2:0;}
     }
     finish("frame_budget_exhausted", false); return 2;
   } catch (const std::exception& error) {
