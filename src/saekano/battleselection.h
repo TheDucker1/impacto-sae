@@ -1,11 +1,37 @@
 #pragma once
 #include "gauge.h"
+#include "uisprite.h"
 #include <vector>
 
 namespace Impacto::Saekano {
 struct ChoiceMenu;
 struct SemanticState;
-struct BattleSelectionEnvironment { int32_t RevealDuration=0; };
+// Original float channel9eb28/9ec48. One shot, including overshoot; callers
+// decide when to restart. This must not use the oscillating profile arrows.
+struct BattleCardMotion {
+  float Current=0,From=0,To=0;
+  std::array<float,4> Curve{};
+  uint64_t Epoch=0;
+  int32_t Duration=0,Elapsed=0;
+  bool Enabled=false;
+  void Configure(float from,float to,int32_t duration,std::array<float,4> curve,bool enabled,uint64_t now);
+  void Restart(uint64_t now);
+  void EnableIfDormant(uint64_t now);
+  void Tick(uint64_t now);
+};
+struct BattleSelectionEnvironment {
+  int32_t RevealDuration=0;
+  std::vector<std::array<int32_t,2>> Positions,LabelPositions;
+  std::vector<UiSpriteDefinition> CardSprites;
+  float CardScale=0,LabelScale=0;
+  std::array<std::array<int32_t,2>,2> LineOffsets{};
+  struct Pulse { float From=0,To=0;int32_t Duration=0; };
+  std::array<Pulse,3> Pulses{};
+  std::vector<std::u16string> Labels;
+  std::vector<std::array<uint8_t,4>> FillColors,FrameColors;
+  int32_t MotionDuration=0,Travel=0,FadeDuration=0;
+  static BattleSelectionEnvironment Decode(std::span<const uint8_t> bytes);
+};
 // Command-owned countdown/reveal state; distinct from the UI's phases0..10.
 struct BattleSelectionState {
   bool Started=false,Active=false,Completed=false,CountdownEnabled=false,Paused=false;

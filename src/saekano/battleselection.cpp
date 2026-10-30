@@ -1,8 +1,44 @@
 #include "battleselection.h"
 #include "commands.h"
 #include <bit>
+#include <cmath>
 
 namespace Impacto::Saekano {
+namespace {
+float EaseCard(float input,const std::array<float,4>& curve) {
+  // Shared native9ebbc: float bisection, tolerance0.01. Preserve the VFP
+  // operation order and allow Y outside0..1 for the authored card overshoot.
+  const float lower=input-0.01f,upper=input+0.01f;
+  float lo=0,hi=1;
+  for(size_t i=0;i<64;++i) {
+    const float midpoint=(lo+hi)*0.5f,inverse=1.0f-midpoint;
+    const float three=inverse*3.0f,square=midpoint*midpoint;
+    const float a=(three*midpoint)*midpoint,b=(three*inverse)*midpoint,cube=square*midpoint;
+    float x=a*curve[2];x=x+b*curve[0];x=x+cube;
+    if(x<lower){lo=midpoint;continue;}
+    if(x>upper){hi=midpoint;continue;}
+    float y=a*curve[3];y=y+b*curve[1];return y+cube;
+  }
+  throw FormatError("battle card ease cannot converge");
+}
+}
+void BattleCardMotion::Configure(float from,float to,int32_t duration,std::array<float,4> curve,bool enabled,uint64_t now) {
+  if(!std::isfinite(from) || !std::isfinite(to) || duration<0)
+    throw FormatError("invalid battle card motion");
+  for(float value:curve)if(!std::isfinite(value))throw FormatError("invalid battle card curve");
+  Current=From=from;To=to;Curve=curve;Duration=duration;Epoch=now;Elapsed=0;Enabled=enabled;
+}
+void BattleCardMotion::Restart(uint64_t now) { Epoch=now;Elapsed=0;Enabled=true;Current=From; }
+void BattleCardMotion::EnableIfDormant(uint64_t now) { if(!Enabled)Restart(now); }
+void BattleCardMotion::Tick(uint64_t now) {
+  if(!Enabled)return;
+  Elapsed=std::bit_cast<int32_t>(uint32_t(now)-uint32_t(Epoch));
+  if(Elapsed>=Duration){Current=To;return;}
+  if(Elapsed<0)throw FormatError("battle card clock moved backward");
+  const float ratio=float(Elapsed)/float(Duration),curve=EaseCard(ratio,Curve);
+  const float delta=To-From,product=delta*curve;
+  Current=From+product;
+}
 void StartBattleSelection(SemanticState& owner,const ChoiceMenu& menu,
     const BattleSelectionEnvironment& environment,BattleSelectionHost& host,uint64_t now) {
   if(menu.DurationMs>INT32_MAX || environment.RevealDuration<0)

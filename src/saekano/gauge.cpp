@@ -5,6 +5,7 @@
 #include "approachmission.h"
 #include "approachselection.h"
 #include "battledialogue.h"
+#include "battleselection.h"
 
 #include <algorithm>
 #include <bit>
@@ -124,7 +125,8 @@ bool ScriptLinearTween::Finished() const {
 }
 
 static BattleGaugeEnvironment ReadBattleEnvironment(std::span<const uint8_t> bytes,
-    BattleVersusEnvironment* versus=nullptr,BattleVersusVisualEnvironment* visual=nullptr,BattleDialogueEnvironment* dialogue=nullptr) {
+    BattleVersusEnvironment* versus=nullptr,BattleVersusVisualEnvironment* visual=nullptr,BattleDialogueEnvironment* dialogue=nullptr,
+    BattleSelectionEnvironment* selection=nullptr) {
   EnvironmentReader reader(bytes);
   BattleGaugeEnvironment result;
   reader.Skip(3 + 3 * 4);  // flags and colors
@@ -171,6 +173,7 @@ static BattleGaugeEnvironment ReadBattleEnvironment(std::span<const uint8_t> byt
   reader.Table(16);
   for (size_t i = 0; i < 4; ++i) reader.Table(8);
   std::array<int32_t,13> settings;for(auto& word:settings)word=reader.Word();
+  if(selection)selection->RevealDuration=settings[3]; // global80261a74, distinct from card motion.
   if(versus){versus->Offscreen=settings[4];versus->SlideDuration=settings[5];
     versus->FirstDuration=settings[6];versus->SecondDuration=settings[7];
     versus->TextDuration=settings[8];versus->TextTravel=settings[9];
@@ -179,7 +182,33 @@ static BattleGaugeEnvironment ReadBattleEnvironment(std::span<const uint8_t> byt
   result.DisplayPerPoint = reader.Word();
   result.XPerPoint = reader.Word();
   result.ScalePerPoint = std::bit_cast<float>(reader.Word());
-  // The rest of env_tukkomi belongs to other UI/effects; not decoded here.
+  if(selection) {
+    // Original loader801dfc36..801e0b5c. Tables remain counted even when their
+    // current authored lengths happen to be three; never seek by file offset.
+    reader.Skip(4*4); // Other gauge/effect fields80261aac..80261ab8.
+    points(&selection->Positions);
+    const auto sprites=reader.Count(34);
+    for(size_t i=0;i<sprites;++i)selection->CardSprites.push_back(reader.VisualSprite());
+    selection->CardScale=std::bit_cast<float>(reader.Word());
+    for(auto& p:selection->LineOffsets)p={reader.Word(),reader.Word()};
+    for(auto& p:selection->Pulses) {
+      p.From=std::bit_cast<float>(reader.Word());p.To=std::bit_cast<float>(reader.Word());p.Duration=reader.Word();
+    }
+    const auto labels=reader.Count(4);
+    for(size_t i=0;i<labels;++i)selection->Labels.push_back(reader.String());
+    points(&selection->LabelPositions);
+    selection->LabelScale=std::bit_cast<float>(reader.Word());
+    const auto colors=[&](auto& out) {
+      const auto count=reader.Count(4);
+      for(size_t i=0;i<count;++i){const auto c=uint32_t(reader.Word());
+        out.push_back({uint8_t(c>>16),uint8_t(c>>8),uint8_t(c),uint8_t(c>>24)});}
+    };
+    colors(selection->FillColors);colors(selection->FrameColors);
+    // Following three sprites, point, clip rectangle and two words belong to
+    // the separate HUD. Consume structurally to reach the selection timings.
+    reader.Skip(3*34+8+16+2*4);
+    selection->MotionDuration=reader.Word();selection->Travel=reader.Word();selection->FadeDuration=reader.Word();
+  }
   if (result.Minimum < 0 || result.Minimum > 50 || result.Duration < 0 ||
       !std::isfinite(result.ScalePerPoint))
     throw FormatError("invalid battle gauge environment");
@@ -200,6 +229,16 @@ BattleVersusVisualEnvironment BattleVersusVisualEnvironment::Decode(std::span<co
 BattleDialogueEnvironment BattleDialogueEnvironment::Decode(std::span<const uint8_t> bytes) {
   BattleDialogueEnvironment out;ReadBattleEnvironment(bytes,nullptr,nullptr,&out);
   if(!std::isfinite(out.Scale) || out.TextWidth<=0)throw FormatError("invalid battle dialogue environment");
+  return out;
+}
+BattleSelectionEnvironment BattleSelectionEnvironment::Decode(std::span<const uint8_t> bytes) {
+  BattleSelectionEnvironment out;ReadBattleEnvironment(bytes,nullptr,nullptr,nullptr,&out);
+  if(out.RevealDuration<0 || out.MotionDuration<0 || out.FadeDuration<0 ||
+      !std::isfinite(out.CardScale) || !std::isfinite(out.LabelScale))
+    throw FormatError("invalid battle selection environment");
+  for(const auto& p:out.Pulses)
+    if(!std::isfinite(p.From) || !std::isfinite(p.To) || p.Duration<0)
+      throw FormatError("invalid battle selection pulse");
   return out;
 }
 BattleGaugeCommand BattleGaugeCommand::Decode(
