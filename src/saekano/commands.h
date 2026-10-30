@@ -29,7 +29,7 @@
 
 namespace Impacto::Saekano {
 
-enum class GameEventKind { Sound, Effect, Trophy, StopBgm, StopChannel, PlayBgm, StopSe, PlaySe, PauseChannel, PumpAudio, SetBgmFadeDuration };
+enum class GameEventKind { Sound, Effect, Trophy, StopBgm, StopChannel, PlayBgm, StopSe, PlaySe, PauseChannel, PumpAudio, SetBgmFadeDuration, PlayBgmRetainingGain, StopBgmWithCurrentFade };
 struct GameEvent {
   GameEventKind Kind;
   int32_t Id;
@@ -170,6 +170,7 @@ struct CommandInput {
   std::optional<size_t> Child;
   bool BattleTimeout = false;
   bool Advance = false;
+  bool BattleResultAuxiliary = false;
   ProfileSelectionInput Profile;
   ApproachSelectionInput Approach;
 };

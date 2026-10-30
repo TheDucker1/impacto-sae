@@ -315,6 +315,16 @@ MusicPlayback::MusicPlayback(ArchiveBgmResources& resources, bool loopback, Arch
     : impl_(std::make_unique<Impl>(resources, loopback, sounds)) {}
 MusicPlayback::~MusicPlayback() = default;
 void MusicPlayback::Submit(const GameEvent& event) {
+  if(event.Kind==GameEventKind::PlayBgmRetainingGain) {
+    if(event.Parameter || event.Bgm || event.Se)throw FormatError("invalid direct BGM play request");
+    GameEvent play{GameEventKind::PlayBgm,event.Id};
+    play.Bgm=BgmPlayRequest{event.Id,0,BgmVolume{0,0,impl_->BgmGain}};
+    Submit(play);return;
+  }
+  if(event.Kind==GameEventKind::StopBgmWithCurrentFade) {
+    if(event.Id || event.Parameter || event.Bgm || event.Se)throw FormatError("invalid direct BGM stop request");
+    Submit({GameEventKind::StopBgm,0,{},int32_t(impl_->BgmFadeOutDuration)});return;
+  }
   if (event.Kind == GameEventKind::PlayBgm) {
     if (!event.Bgm || event.Bgm->Track != event.Id)
       throw FormatError("invalid typed BGM request");
@@ -719,6 +729,36 @@ void MusicPlayback::Render(std::span<int16_t> output) {
   }
 }
 
+int RunBattleResultMusicSession(const std::filesystem::path& usrdir,const std::filesystem::path& captureDirectory){
+  bool created=false;
+  try{
+    CreateCaptureDirectory(usrdir,captureDirectory);created=true;
+    if(!SDL_Init(SDL_INIT_EVENTS))throw FormatError(SDL_GetError());
+    struct Cleanup{~Cleanup(){SDL_Quit();}}cleanup;
+    ArchiveBgmResources music(usrdir);music.Prepare(0);music.Prepare(7);MusicPlayback playback(music,true);
+    constexpr float gain=.37f;constexpr int32_t fade=213;
+    GameEvent begin{GameEventKind::PlayBgm,0};begin.Bgm=BgmPlayRequest{0,0,BgmVolume{0,0,gain}};
+    playback.Submit(begin);playback.Submit({GameEventKind::SetBgmFadeDuration,0,{},fade});
+    std::vector<int16_t> block(9600*2);playback.Render(block);
+    playback.Submit({GameEventKind::StopBgmWithCurrentFade,0});
+    if(playback.BgmVoices().FadeOutDuration!=fade || playback.BgmFadeState().Duration!=uint32_t(fade))throw FormatError("direct BGM stop changed attached fade");
+    playback.Submit({GameEventKind::PlayBgmRetainingGain,7});playback.Render(block);
+    int32_t peak=0;for(const auto v:block)peak=std::max(peak,std::abs(int32_t(v)));
+    if(!playback.Playing()||playback.BgmOutputGain()!=gain||playback.BgmVoices().CurrentGain!=gain||playback.BgmVoices().FadeOutDuration!=fade||peak<=32)
+      throw FormatError("direct result BGM did not retain current service gain/fade or produce audio");
+    SaveWav(captureDirectory/"result-music.wav",block);
+    playback.Submit({GameEventKind::StopBgmWithCurrentFade,0});
+    if(playback.BgmFadeState().Duration!=uint32_t(fade))throw FormatError("result exit changed current BGM fade");
+    std::vector<int16_t> tail(48000*2);playback.Render(tail);
+    int32_t tailPeak=0;for(const auto v:std::span(tail).last(4800))tailPeak=std::max(tailPeak,std::abs(int32_t(v)));
+    if(playback.Playing()||tailPeak>1)throw FormatError("direct result BGM failed to stop");
+    std::ofstream out(captureDirectory/"music.json");out << "{\"passed\":true,\"track\":7,\"gain_bits\":" << std::bit_cast<uint32_t>(gain)
+      << ",\"retained_fade_ms\":" << fade << ",\"peak\":" << peak << ",\"tail_peak\":" << tailPeak << "}\n";return 0;
+  }catch(const std::exception& error){
+    if(created){std::ofstream out(captureDirectory/"error.txt");out << std::string(error.what()).substr(0,2048);}
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano result music: %s",error.what());return 1;
+  }
+}
 int RunBattleResultVoiceSession(const std::filesystem::path& usrdir,const std::filesystem::path& captureDirectory){
   bool created=false;
   try{

@@ -19,6 +19,7 @@
 #include "messagedraw.h"
 #include "battledialogue.h"
 #include "battleselectionhost.h"
+#include "battleresulthost.h"
 #include "scenequeue.h"
 #include "widgetinput.h"
 #include "skipauto.h"
@@ -877,7 +878,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   const bool captureBattle=captureMenuInput==10;
   const bool captureVersus=captureMenuInput==11;
   const bool captureDialogue=captureMenuInput==12;
-  const bool captureSelection=captureMenuInput==13;
+  const bool captureBattleResult=captureMenuInput==14;
+  const bool captureSelection=captureMenuInput==13 || captureBattleResult;
   const bool captureProfile=captureMenuInput==8 || captureLip || captureBattle || captureVersus || captureDialogue || captureSelection;
   const bool captureResult=captureMenuInput==5 || captureMenuInput==6 || captureChapter || captureProfile;
   const bool captureResultPointer=captureMenuInput==6;
@@ -998,6 +1000,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   backend.BattleConfig=BattleGaugeEnvironment::Decode(SceneRead(root/"env/env_tukkomi.dat"));
   backend.BattleVersusSettings=BattleVersusEnvironment::Decode(SceneRead(root/"env/env_tukkomi.dat"));
   backend.BattleSelectionSettings=BattleSelectionEnvironment::Decode(SceneRead(root/"env/env_tukkomi.dat"));
+  backend.BattleResultSettings=BattleResultEnvironment::Decode(SceneRead(root/"env/env_tukkomi.dat"));
+  backend.ScenePolicy=&skipAuto;
   const auto versusVisual=BattleVersusVisualEnvironment::Decode(SceneRead(root/"env/env_tukkomi.dat"));
   const auto battleResultVisual=BattleResultVisualEnvironment::Decode(SceneRead(root/"env/env_tukkomi.dat"));
   const auto dialogueVisual=BattleDialogueEnvironment::Decode(SceneRead(root/"env/env_tukkomi.dat"));
@@ -1043,12 +1047,14 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   auto registeredHistory=RegisteredReadHistory::LoadFirst(SceneRead(root/"first.dat"),historySettings.InitiallyRead!=0);
   AwbBank selectionVoiceBank(root/"voice.awb");
   std::unique_ptr<ArchiveBattleSelectionHost> battleHost;
+  std::unique_ptr<ArchiveBattleResultHost> battleResultHost;
   std::optional<uint64_t> battleFrame;
   std::unique_ptr<SceneMessageVoiceOwner> voiceOwner;
   int32_t voiceScript = -1;
   const auto bindScriptVoices = [&] {
     if (voiceScript == vm->State().ScriptFileId) return;
     backend.BattleSelectionConsumerHost=nullptr;battleHost.reset();battleFrame.reset();
+    backend.BattleResultConsumerHost=nullptr;battleResultHost.reset();
     // File load creates a fresh manager RNG. The headless route supplies this
     // same host seed at that boundary; PC must also seed before sprite updates.
     if(!vm->State().Random.Known())vm->SeedRandom(capture?0u:uint32_t(SDL_GetTicks()));
@@ -1069,6 +1075,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
         inputEnvironment.HoldFrames,selectionShared,visual,format,font.Cached(),metrics,uint32_t(utility.Size),font.NominalSize(),
         selectionVoiceBank.Index(),*voiceOwner,vm->State(),registeredHistory,historySettings);
     backend.BattleSelectionConsumerHost=battleHost.get();
+    battleResultHost=std::make_unique<ArchiveBattleResultHost>(resources,*voiceOwner,models,music,skipAuto);
+    backend.BattleResultConsumerHost=battleResultHost.get();
   };
   bindScriptVoices();
   const auto syncMouths = [&] {
@@ -1153,6 +1161,10 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   size_t saved = 0;
   bool versusConfirmSent=false;
   bool selectionFaceSent=false;
+  bool battleResultConfirmSent=false;
+  size_t battleChoicesCompleted=0;
+  std::optional<int32_t> battleResultDestination;
+  std::optional<std::tuple<int32_t,int32_t,size_t>> previousBattleResult;
   std::optional<int32_t> selectionDestination;
   std::optional<std::pair<int32_t,size_t>> previousBattleUi;
   std::map<uint16_t, bool> actorEligibility;
@@ -1192,9 +1204,19 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       }
     }
     if(captureSelection && battleHost->State().Enabled && battleHost->Phase()==4 && !selectionFaceSent) {
+      if(captureBattleResult){
+        const std::array<int32_t,3> commands{56,154,261};
+        if(battleChoicesCompleted>=commands.size() || vm->State().ScriptFileId!=343 || vm->State().CurrentCommandIndex!=commands[battleChoicesCompleted])
+          throw FormatError("result capture encountered an unplanned battle control");
+      }
       SDL_Event e{};e.type=SDL_EVENT_KEY_DOWN;e.key.windowID=SDL_GetWindowID(window.Window);e.key.key=SDLK_1;e.key.down=true;
       SdlCheck(SDL_PushEvent(&e),"battle selection capture face key");selectionFaceSent=true;
       events << "{\"kind\":\"battle_selection_face_input\",\"now\":" << now << ",\"control\":0,\"source\":\"SDL_key_1\"}\n";
+    }
+    if(captureBattleResult && vm->Opcode()==0x3fa && vm->State().BattleResult.Phase==8 && !vm->State().BattleResult.PendingPhase && !battleResultConfirmSent){
+      for(const auto type:{SDL_EVENT_KEY_DOWN,SDL_EVENT_KEY_UP}){SDL_Event e{};e.type=type;e.key.windowID=SDL_GetWindowID(window.Window);e.key.key=SDLK_RETURN;
+        e.key.down=type==SDL_EVENT_KEY_DOWN;SdlCheck(SDL_PushEvent(&e),"result capture explicit confirmation");}
+      battleResultConfirmSent=true;events << "{\"kind\":\"battle_result_confirmation\",\"now\":" << now << ",\"source\":\"explicit_capture_SDL_key\"}\n";
     }
     if(captureProfile && vm->CurrentProfile()) {
       const auto key=profilePresenter.CaptureKey(*vm->CurrentProfile(),profileChoice,now);
@@ -1508,8 +1530,8 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       if(!battleFrame || *battleFrame!=now){battleHost->BeginFrame(now,pointerSnapshot,battleFaces);battleFrame=now;}
       const bool acceptedInput=input.Advance;
       const auto step = vm->Step(now, input);
-      if(captureSelection && step.Script==343 && step.Command==56 && step.Opcode==0x3f2) {
-        captureActive=true;const auto& selection=battleHost->State();const auto sample=std::pair(selection.Phase,selection.Ordinal);
+      if(captureSelection && step.Script==343 && (captureBattleResult || step.Command==56) && step.Opcode==0x3f2) {
+        if(!captureBattleResult)captureActive=true;const auto& selection=battleHost->State();const auto sample=std::pair(selection.Phase,selection.Ordinal);
         if(previousBattleUi!=sample || vm->State().BattleSelection.Completed) {
           events << "{\"kind\":\"battle_selection_state\",\"now\":" << now << ",\"phase\":" << selection.Phase
               << ",\"ordinal\":" << selection.Ordinal << ",\"enabled\":" << selection.Enabled << ",\"done\":" << vm->State().BattleSelection.Completed
@@ -1524,6 +1546,31 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       }
       if(captureSelection && selectionDestination && step.Script==343 && step.Command==*selectionDestination && step.Boundary==VmBoundary::BeforeStart) {
         events << "{\"kind\":\"battle_selection_dispatched\",\"now\":" << now << ",\"script\":343,\"command\":" << step.Command << "}\n";
+        if(!captureBattleResult){targetCompleted=true;quit=true;break;}
+        ++battleChoicesCompleted;selectionDestination.reset();selectionFaceSent=false;previousBattleUi.reset();
+      }
+      if(captureBattleResult && step.Opcode==0x3fa && vm->State().BattleResult.Started){
+        captureActive=true;const auto& result=vm->State().BattleResult;const auto sample=std::tuple(result.Phase,result.PendingPhase.value_or(-1),result.Item);
+        if(previousBattleResult!=sample || result.Completed){
+          events << "{\"kind\":\"battle_result_state\",\"now\":" << now << ",\"script\":" << step.Script << ",\"command\":" << step.Command
+              << ",\"phase\":" << result.Phase << ",\"pending_phase\":" << result.PendingPhase.value_or(-1) << ",\"outcome\":" << result.Outcome
+              << ",\"item\":" << result.Item << ",\"visible\":" << result.Visible << ",\"done\":" << result.Completed
+              << ",\"pending\":" << vm->State().PendingCommandIndex << ",\"fade\":" << vm->State().ScreenFade.value_or(-1)
+              << ",\"message_mode\":" << unsigned(vm->State().BattleEntry.MessageModeByte) << ",\"skip\":[" << vm->State().SkipMode << ',' << vm->State().SkipPhase
+              << "],\"saved_policy\":[" << unsigned(vm->State().BattleEntry.SavedPolicy->MessageModeByte) << ',' << vm->State().BattleEntry.SavedPolicy->Mode << ',' << vm->State().BattleEntry.SavedPolicy->Phase
+              << "],\"continue_auto\":" << *vm->State().ContinueAutoAfterSelection << ",\"continue_skip\":" << *vm->State().ContinueSkipAfterSelection
+              << ",\"script_music\":[" << vm->State().BgmTrack.value_or(-1) << ',' << vm->State().BgmCommandVolume.value_or(-1) << "]}\n";
+          previousBattleResult=sample;
+        }
+        if(step.Boundary==VmBoundary::CommandCompletedBeforeDispatch)battleResultDestination=vm->State().PendingCommandIndex;
+      }
+      if(captureBattleResult && battleResultDestination && step.Script==343 && step.Command==*battleResultDestination && step.Boundary==VmBoundary::BeforeStart){
+        events << "{\"kind\":\"battle_result_dispatched\",\"now\":" << now << ",\"script\":343,\"command\":" << step.Command << "}\n";
+        const auto& state=vm->State();std::ofstream out(captureDirectory/"battle-result.json");
+        out << "{\"passed\":true,\"script\":343,\"result_command\":323,\"destination\":" << step.Command << ",\"choices\":" << battleChoicesCompleted
+            << ",\"gauge\":" << state.BattleGauge << ",\"outcome\":" << state.BattleResult.Outcome << ",\"confirmation_sent\":" << battleResultConfirmSent
+            << ",\"message_mode\":" << unsigned(state.BattleEntry.MessageModeByte) << ",\"skip\":[" << state.SkipMode << ',' << state.SkipPhase
+            << "],\"visible\":" << state.BattleResult.Visible << ",\"fade\":" << state.ScreenFade.value_or(-1) << ",\"voice_playing\":" << voices.Playing(7) << "}\n";
         targetCompleted=true;quit=true;break;
       }
       if(!choicePlan.empty() && step.Opcode==0x3f6 && step.Boundary==VmBoundary::CommandCompletedBeforeDispatch) {
@@ -2094,6 +2141,10 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       for(const auto& fade:selection.Fades)signature+=':'+std::to_string(fade.Current/32);
       for(const auto y:selection.Offsets)signature+=':'+std::to_string(y/8);
     }
+    if(captureBattleResult){const auto& result=state.BattleResult;
+      signature=std::to_string(result.Phase)+':'+std::to_string(result.Item)+':'+std::to_string(state.ScreenFade.value_or(-1)/64)+':'+std::to_string(quit);
+      for(size_t i=0;i<4;++i)signature+=':'+std::to_string(result.Items[i].Channel.Current/10)+':'+std::to_string(result.Alpha[i].Current/64);
+    }
     if(captureDialogue) {
       size_t visible=0;for(const auto& glyph:message->Reveal.Glyphs)visible+=glyph.Alpha.Current>0;
       signature=std::to_string(message->Command)+':'+std::to_string(message->Reveal.Revealed)+':'+
@@ -2111,6 +2162,11 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
       const auto file = "scene-" + std::to_string(saved++) + ".bmp";
       Capture(captureDirectory / file, width, height);
       report << "{\"file\":\"" << file << "\",\"now\":" << now
+             << ",\"battle_result\":{\"phase\":" << state.BattleResult.Phase << ",\"item\":" << state.BattleResult.Item
+             << ",\"outcome\":" << state.BattleResult.Outcome << ",\"visible\":" << state.BattleResult.Visible << ",\"channels\":[";
+      for(size_t i=0;i<4;++i){if(i)report << ',';report << '[' << state.BattleResult.Items[i].Channel.Current << ',' << state.BattleResult.Travel[i].Current << ',' << state.BattleResult.Alpha[i].Current << ']';}
+      report << "],\"voice_position_ms\":" << voices.Position(7) << ",\"voice_playing\":" << voices.Playing(7)
+             << ",\"bgm_gain\":" << playback.BgmOutputGain() << ",\"bgm_fade_duration\":" << playback.BgmVoices().FadeOutDuration << '}'
              << ",\"battle_versus\":[" << state.BattleVersus.Visible << ',' << state.BattleVersus.Phase << ',' << state.BattleVersus.PendingPhase.value_or(-1) << ']'
              << ",\"script\":" << state.ScriptFileId
              << ",\"command\":" << state.CurrentCommandIndex << ",\"revealed\":"

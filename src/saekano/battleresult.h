@@ -51,4 +51,11 @@ void StartBattleResult(SemanticState& owner,const BattleResultCommand& command,
 // a complete result backend; the production VM guard remains until it is bound.
 bool UpdateBattleResult(SemanticState& owner,const BattleResultEnvironment& environment,
     bool accept,bool auxiliaryPressed,uint64_t now);
+class BattleResultHost {
+ public:
+  virtual ~BattleResultHost()=default;
+  virtual void Validate(const SemanticState& owner)=0;
+  virtual void Tick(uint64_t now)=0;
+  virtual void Act(const BattleResultRequest& request,SemanticState& owner,uint64_t now)=0;
+};
 }

@@ -20,6 +20,7 @@ void VirtualMachine::UpdateSkipAuto(SkipAutoState& policy,
                                    int32_t autoKeyDuration, uint64_t now) {
   if (profile_) throw UnsupportedCommand("profile owns the active input loop");
   UpdateSkipAutoPolicy(state_, policy, input, autoKeyDuration, now);
+  if(state_.BattleEntry.Known)state_.BattleEntry.MessageModeByte=uint8_t(policy.Auto);
 }
 
 CompletedCommand VmBackend::Route(uint16_t, std::span<const uint8_t>) const { return {}; }
@@ -390,7 +391,9 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
   } else if(opcode==0x3ef) {
     if(!lane) {
       auto* resources=backend_.BattleAssets();if(!resources)throw UnsupportedCommand("battle entry resources are unavailable");
+      if(const auto* policy=backend_.AutoPolicy())state_.BattleEntry.MessageModeByte=uint8_t(policy->Auto);
       StartBattleEntry(state_,*command.BattleEntry,*resources);
+      if(auto* policy=backend_.AutoPolicy())policy->Auto=state_.BattleEntry.MessageModeByte!=0;
       messageContext_.SplitDialogue=true;messageContext_.Side0Character=state_.Battle.SideCharacters[0];
     }
   } else if(opcode==0x3f9) {
@@ -406,7 +409,12 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
       StartBattleSelection(state_,DecodeChoice(script_->Payload(index),true),*environment,*host,now);
     }
   } else if(opcode==0x3fa && state_.BattleEntry.Enabled && !lane) {
-    throw UnsupportedCommand("battle result animation/audio/exit restoration lifecycle is not bound");
+    auto* host=backend_.BattleResultConsumer();const auto* environment=backend_.BattleResultConfig();
+    if(!host || !environment)throw UnsupportedCommand("battle result animation/audio/exit restoration lifecycle is not bound");
+    host->Validate(state_);host->Tick(now);
+    StartBattleResult(state_,BattleResultCommand::Decode(script_->Payload(index)),*environment,now);
+    for(const auto& request:state_.BattleResult.Requests)host->Act(request,state_,now);
+    state_.BattleResult.Requests.clear();
   } else if (opcode == 0x3ee && !lane) {
     auto* resources = backend_.ApproachAssets();
     if (!resources) throw UnsupportedCommand("approach entry resource backend is unavailable");
@@ -736,6 +744,15 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
   }
   if(opcode==0x2c6)return true; // Shared main/skip/lane updates only mark completion.
   if(opcode==0x3f9)return lane || UpdateBattleVersus(state_,backend_.Models(),input.Advance,now);
+  if(opcode==0x3fa && state_.BattleEntry.Enabled) {
+    if(lane)return true;
+    auto* host=backend_.BattleResultConsumer();const auto* environment=backend_.BattleResultConfig();
+    if(!host || !environment)throw UnsupportedCommand("battle result host disappeared during update");
+    host->Tick(now);
+    const bool done=UpdateBattleResult(state_,*environment,input.Advance,input.BattleResultAuxiliary,now);
+    for(const auto& request:state_.BattleResult.Requests)host->Act(request,state_,now);
+    state_.BattleResult.Requests.clear();return done;
+  }
   if(opcode==0x3f2 && state_.BattleEntry.Enabled) {
     if(lane)return true;
     auto* host=backend_.BattleSelectionConsumer();
@@ -870,7 +887,8 @@ VmEvent VirtualMachine::Step(uint64_t now, const CommandInput& input) {
                    (Opcode()==0x3f6 && !selection.PendingPhase && (selection.Phase==4 || selection.Phase==7)) ||
                    (Opcode()==0x3f7 && state_.ApproachMission.Stage==2) ||
                    (Opcode()==0x3f8 && state_.ApproachResult.Phase==5 && !state_.ApproachResult.PendingPhase) ||
-                   (Opcode()==0x3f9 && state_.BattleVersus.Phase==12 && !state_.BattleVersus.PendingPhase))
+                   (Opcode()==0x3f9 && state_.BattleVersus.Phase==12 && !state_.BattleVersus.PendingPhase) ||
+                   (Opcode()==0x3fa && state_.BattleResult.Phase==8 && !state_.BattleResult.PendingPhase))
           ? VmBoundary::WaitingInput : VmBoundary::WaitingBackend;
       UpdateLanes(now);
     }

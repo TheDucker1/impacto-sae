@@ -31,6 +31,12 @@ class HeadlessBackend : public VmBackend {
   std::optional<BattleVersusEnvironment> BattleVersusSettings;
   std::optional<BattleSelectionEnvironment> BattleSelectionSettings;
   BattleSelectionHost* BattleSelectionConsumerHost=nullptr;
+  std::optional<BattleResultEnvironment> BattleResultSettings;
+  BattleResultHost* BattleResultConsumerHost=nullptr;
+  const BattleResultEnvironment* BattleResultConfig()const override{return BattleResultSettings?&*BattleResultSettings:nullptr;}
+  BattleResultHost* BattleResultConsumer()override{return BattleResultConsumerHost;}
+  SkipAutoState* ScenePolicy=nullptr;
+  SkipAutoState* AutoPolicy()override{return ScenePolicy;}
   const BattleSelectionEnvironment* BattleSelectionConfig()const override {
     return BattleSelectionSettings?&*BattleSelectionSettings:nullptr;
   }

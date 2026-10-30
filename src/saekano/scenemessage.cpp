@@ -37,6 +37,10 @@ void PrepareSceneMemoryVoice(SceneMessageVoiceOwner& owner, uint32_t channel, By
   owner.Output.PrepareMemory(channel,std::move(encoded));
   InvalidateVoiceCache(owner,channel);
 }
+void StopSceneDialogueVoice(SceneMessageVoiceOwner& owner,uint32_t channel) {
+  if(channel<7 || channel>10)throw UnsupportedCommand("dialogue stop channel outside7..10");
+  SharedVoicePreparation(owner).Stop(channel);
+}
 void StopSceneDialogueNextVoiceSlots(SceneMessageVoiceOwner& owner) {
   if(!owner.SecondaryQueue || owner.Queue.NextSlot>1 || owner.SecondaryQueue->NextSlot>1)
     throw UnsupportedCommand("battle dialogue next-slot owners are unavailable");

@@ -32,6 +32,7 @@ void StopSceneDialogueNextVoiceSlots(SceneMessageVoiceOwner& owner);
 // Native result Start: immediate stop (AAStop flag1), both slots of both owners.
 void StopSceneDialogueVoicesImmediately(SceneMessageVoiceOwner& owner);
 void PrepareSceneMemoryVoice(SceneMessageVoiceOwner& owner, uint32_t channel, Bytes encoded);
+void StopSceneDialogueVoice(SceneMessageVoiceOwner& owner,uint32_t channel);
 struct SceneMessageTextState {
   size_t Command = 0;
   size_t Side = 0;

@@ -57,6 +57,9 @@ class VmBackend {
   virtual const BattleVersusEnvironment* BattleVersusConfig() const { return nullptr; }
   virtual const BattleSelectionEnvironment* BattleSelectionConfig() const { return nullptr; }
   virtual BattleSelectionHost* BattleSelectionConsumer() { return nullptr; }
+  virtual const BattleResultEnvironment* BattleResultConfig() const { return nullptr; }
+  virtual BattleResultHost* BattleResultConsumer() { return nullptr; }
+  virtual SkipAutoState* AutoPolicy() { return nullptr; }
   virtual ApproachMissionAudio* MissionVoices() { return nullptr; }
   virtual const ApproachMissionEnvironment* MissionConfig() const { return nullptr; }
   virtual const ApproachSelectionEnvironment* SelectionConfig() const { return nullptr; }

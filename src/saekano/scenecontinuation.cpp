@@ -10,6 +10,7 @@
 #include "approachresulttext.h"
 #include "dialog.h"
 #include "battleselectionhost.h"
+#include "battleresulthost.h"
 #include "battledialogue.h"
 #ifdef SAEKANO_SCENE_CUBISM2
 #include "live2ddriver.h"
@@ -62,7 +63,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
                          std::optional<size_t> untilMessage, std::ostream& report,bool confirmFirstMission,bool chooseFirstApproach,
                            std::span<const std::array<size_t,2>> approachPlan,bool confirmApproachResult,bool followPostResult,bool followPostChapter,
                            std::span<const std::array<size_t,2>> profilePlan,bool confirmBattleVersus,
-                           std::span<const std::array<size_t,3>> battlePlan,bool continueBattle) {
+                           std::span<const std::array<size_t,3>> battlePlan,bool continueBattle,bool confirmBattleResult) {
   const std::array<std::array<size_t,2>,1> firstChoice{{{0,0}}};
   if(chooseFirstApproach && approachPlan.empty())approachPlan=firstChoice;
   chooseFirstApproach=!approachPlan.empty();
@@ -115,6 +116,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   backend.BattleConfig=BattleGaugeEnvironment::Decode(Read(root/"env/env_tukkomi.dat"));
   backend.BattleVersusSettings=BattleVersusEnvironment::Decode(Read(root/"env/env_tukkomi.dat"));
   backend.BattleSelectionSettings=BattleSelectionEnvironment::Decode(Read(root/"env/env_tukkomi.dat"));
+  backend.BattleResultSettings=BattleResultEnvironment::Decode(Read(root/"env/env_tukkomi.dat"));
   backend.MissionVoiceBank=&missionVoice;
   backend.MissionSettings=ApproachMissionEnvironment::Decode(Read(root/"env/env_approach.dat"));
   backend.SelectionSettings=ApproachSelectionEnvironment::Decode(Read(root/"env/env_approach.dat"));
@@ -152,12 +154,16 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   auto registeredHistory=RegisteredReadHistory::LoadFirst(Read(root/"first.dat"),historySettings.InitiallyRead!=0);
   AwbBank voiceBank(root/"voice.awb");
   std::unique_ptr<ArchiveBattleSelectionHost> battleHost;
+  std::unique_ptr<ArchiveBattleResultHost> battleResultHost;
+  SkipAutoState policy;
+  backend.ScenePolicy=&policy;
   std::optional<uint64_t> battleFrame;
   std::unique_ptr<SceneMessageVoiceOwner> voiceOwner;
   int32_t voiceScript = -1;
   const auto sync = [&] {
     if (voiceScript != vm->State().ScriptFileId) {
       backend.BattleSelectionConsumerHost=nullptr;battleHost.reset();battleFrame.reset();
+      backend.BattleResultConsumerHost=nullptr;battleResultHost.reset();
       if (!vm->State().Random.Known()) vm->SeedRandom(0);
       backend.ResetMessages(); mouths.clear();
       voiceOwner = std::make_unique<SceneMessageVoiceOwner>(SceneMessageVoiceOwner{
@@ -182,6 +188,10 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
           widgetInput.HoldFrames,selectionColors,battleText,format,resultFont,metrics,uint32_t(utility.Size),36,
           voiceBank.Index(),*voiceOwner,vm->State(),registeredHistory,historySettings);
       backend.BattleSelectionConsumerHost=battleHost.get();
+#ifdef SAEKANO_SCENE_CUBISM2
+      battleResultHost=std::make_unique<ArchiveBattleResultHost>(resources,*voiceOwner,models,music,policy);
+      backend.BattleResultConsumerHost=battleResultHost.get();
+#endif
     }
     for (const auto& [id, actor] : vm->State().Characters) {
       if (!actor.RuntimeKnown) throw UnsupportedCommand("continuation actor runtime is unknown");
@@ -190,7 +200,6 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
     std::erase_if(mouths, [&](const auto& item) { return !vm->State().Characters.contains(item.first); });
   };
   const auto policyConfig = SkipAutoEnvironment::Decode(Read(root / "env/env_global.dat"));
-  SkipAutoState policy;
   const auto dialogEnvironment=DialogEnvironment::Decode(Read(root/"env/env_dialog.dat"));
   VoiceTextReveal prompt;prompt.PrepareUtf16(DecodeProfileConfirmationPrompt(profileRaw),format,0);
   const auto promptLayout=LayoutPlainText(prompt.Text,format,resultFont,metrics,dialogEnvironment.Settings[6],
@@ -248,6 +257,9 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
   };
   bool confirmationDue=false,confirmationSent=false;
   bool versusDue=false,versusSent=false;
+  bool battleResultDue=false,battleResultSent=false,battleResultDispatched=false;
+  std::optional<std::array<int32_t,2>> battleResultDestination;
+  std::optional<std::tuple<int32_t,int32_t,size_t>> previousBattleResult;
   std::optional<std::pair<int32_t,int32_t>> previousVersus;
   bool resultConfirmationDue=false,resultConfirmationSent=false,resultCompleted=false,chapterCompleted=false;
   uint32_t choiceStep=0;
@@ -265,7 +277,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
         backend.AutoAdvance = policy.Auto;
         voices.Update(now);
       }
-      bool ended = false, reached = false, waitingMission=false,waitingSelection=false,waitingResult=false,waitingVersus=false;
+      bool ended = false, reached = false, waitingMission=false,waitingSelection=false,waitingResult=false,waitingVersus=false,waitingBattleResult=false;
       CommandInput commandInput;
       if(const auto* active=vm->CurrentProfile();active && profileIndex<profilePlan.size()) {
         bool responseVoiceStopped=false;
@@ -336,6 +348,8 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
       battleAssets.Pump();
       if(versusDue){commandInput.Advance=true;versusDue=false;versusSent=true;
         out << "{\"kind\":\"battle_versus_confirmation\",\"now\":" << now << ",\"source\":\"explicit_probe_Advance\"}\n";}
+      if(battleResultDue){commandInput.Advance=true;battleResultDue=false;battleResultSent=true;
+        out << "{\"kind\":\"battle_result_confirmation\",\"now\":" << now << ",\"source\":\"explicit_probe_Advance\"}\n";}
       for (size_t work = 0; work < 256; ++work) {
         sync();
         if(!battleFrame || *battleFrame!=now) {
@@ -354,6 +368,33 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
           battleHost->BeginFrame(now,{},faces);battleFrame=now;
         }
         const auto event = vm->Step(now,commandInput);commandInput.Advance=false;commandInput.Approach={};
+        if(event.Opcode==0x3fa && vm->State().BattleResult.Started){
+          const auto& result=vm->State().BattleResult;const auto sample=std::tuple(result.Phase,result.PendingPhase.value_or(-1),result.Item);
+          if(previousBattleResult!=sample || result.Completed){
+            out << "{\"kind\":\"battle_result_state\",\"now\":" << now << ",\"script\":" << event.Script << ",\"command\":" << event.Command
+                << ",\"phase\":" << result.Phase << ",\"pending_phase\":" << result.PendingPhase.value_or(-1) << ",\"item\":" << result.Item
+                << ",\"outcome\":" << result.Outcome << ",\"visible\":" << result.Visible << ",\"done\":" << result.Completed
+                << ",\"pending\":" << vm->State().PendingCommandIndex << ",\"fade\":" << vm->State().ScreenFade.value_or(-1)
+                << ",\"message_mode\":" << unsigned(vm->State().BattleEntry.MessageModeByte) << ",\"skip\":[" << vm->State().SkipMode << ',' << vm->State().SkipPhase
+                << "],\"saved_policy\":[" << unsigned(vm->State().BattleEntry.SavedPolicy->MessageModeByte) << ',' << vm->State().BattleEntry.SavedPolicy->Mode << ',' << vm->State().BattleEntry.SavedPolicy->Phase
+                << "],\"continue_auto\":" << *vm->State().ContinueAutoAfterSelection << ",\"continue_skip\":" << *vm->State().ContinueSkipAfterSelection
+                << ",\"script_music\":[" << vm->State().BgmTrack.value_or(-1) << ',' << vm->State().BgmCommandVolume.value_or(-1)
+                << "],\"voice_frames\":" << voices.FramesConsumed(7).value_or(0) << ",\"voice_playing\":" << voices.Playing(7) << ",\"actors\":[";
+            for(size_t i=0;i<vm->State().Live2d.Records.size();++i){if(i)out << ',';const auto& actor=vm->State().Live2d.Records[i];
+              out << "{\"logical\":" << actor.LogicalId << ",\"record_pose\":" << actor.Pose.value_or(-1);
+#ifdef SAEKANO_SCENE_CUBISM2
+              if(actor.ResourceId)out << ",\"expression\":" << models.Observe(*actor.ResourceId).Expression.value_or(SIZE_MAX);
+#endif
+              out << '}';}
+            out << "]}\n";previousBattleResult=sample;
+          }
+          waitingBattleResult=event.Boundary==VmBoundary::WaitingInput;
+          if(event.Boundary==VmBoundary::CommandCompletedBeforeDispatch)battleResultDestination=std::array{event.Script,vm->State().PendingCommandIndex};
+        }
+        if(battleResultDestination && event.Script==(*battleResultDestination)[0] && event.Command==(*battleResultDestination)[1] && event.Boundary==VmBoundary::BeforeStart){
+          out << "{\"kind\":\"battle_result_dispatched\",\"now\":" << now << ",\"script\":" << event.Script << ",\"command\":" << event.Command << "}\n";
+          battleResultDispatched=true;if(confirmBattleResult)break;
+        }
         if(event.Opcode==0x3f2 && vm->State().BattleSelection.Started) {
           const auto& state=battleHost->State();const auto sample=std::tuple(state.Script,state.Phase,state.Ordinal);
           if(previousBattleSelection!=sample || vm->State().BattleSelection.Completed) {
@@ -549,6 +590,7 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
       }
       for (const auto& event : vm->TakeEvents()) {
         ++audioEvents;
+        if(vm->State().BattleResult.Started)out << "{\"kind\":\"battle_result_event\",\"now\":" << now << ",\"event\":" << int(event.Kind) << ",\"id\":" << event.Id << "}\n";
         if(vm->Opcode()==0x3f8) {
           const bool carryover=now==vm->State().ApproachResult.Tweens[0].Epoch;
           out << "{\"kind\":\"" << (carryover?"approach_result_entry_carryover_event":"approach_result_event")
@@ -586,6 +628,11 @@ int RunSceneContinuation(const std::filesystem::path& root, size_t frameBudget,
       if(waitingVersus) {
         if(confirmBattleVersus && !versusSent)versusDue=true;
         else {finish("battle_versus_confirmation_required",false);return 1;}
+      }
+      if(battleResultDispatched && confirmBattleResult){finish("battle_result_dispatched",true);return 0;}
+      if(waitingBattleResult){
+        if(confirmBattleResult && !battleResultSent)battleResultDue=true;
+        else{finish("battle_result_confirmation_required",false);return 1;}
       }
       if(waitingResult) {
         if(confirmApproachResult && !resultConfirmationSent)resultConfirmationDue=true;

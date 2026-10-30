@@ -260,6 +260,8 @@ int main(int argc, char* argv[]) {
     return Saekano::RunBattlePreviewVoiceSession(argv[2],argv[3]);
   if(argc==4 && std::string_view(argv[1])=="--saekano-battle-result-voice")
     return Saekano::RunBattleResultVoiceSession(argv[2],argv[3]);
+  if(argc==4 && std::string_view(argv[1])=="--saekano-battle-result-music")
+    return Saekano::RunBattleResultMusicSession(argv[2],argv[3]);
   if (argc == 4 && std::string_view(argv[1]) == "--saekano-mission-voice")
     return Saekano::RunMissionVoiceSession(argv[2],argv[3]);
   if (argc == 5 && std::string_view(argv[1]) == "--saekano-mission-voice" && std::string_view(argv[4])=="--prepare")
@@ -320,6 +322,8 @@ int main(int argc, char* argv[]) {
       return Saekano::RunFirstSceneViewer(argv[2],argv[5],true,false,true,{}, {},1,false,false,12,argv[4]);
     if(argc==6 && std::string_view(argv[3])=="--capture-battle-selection")
       return Saekano::RunFirstSceneViewer(argv[2],argv[5],true,false,true,{}, {},1,false,false,13,argv[4]);
+    if(argc==6 && std::string_view(argv[3])=="--capture-battle-result")
+      return Saekano::RunFirstSceneViewer(argv[2],argv[5],true,false,true,{}, {},1,false,false,14,argv[4]);
     if(argc==6 && std::string_view(argv[3])=="--capture-battle-versus")
       return Saekano::RunFirstSceneViewer(argv[2],argv[5],true,false,true,{}, {},1,false,false,11,argv[4]);
     if ((argc==8 || (argc==9 && (std::string_view(argv[8])=="--wait" || std::string_view(argv[8])=="--confirm" || std::string_view(argv[8])=="--menu" || std::string_view(argv[8])=="--menu-pointer" || std::string_view(argv[8])=="--branch"))) &&

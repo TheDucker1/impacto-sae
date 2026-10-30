@@ -142,6 +142,8 @@ int RunBattlePreviewVoiceSession(const std::filesystem::path& usrdir,
                                  const std::filesystem::path& captureDirectory);
 int RunBattleResultVoiceSession(const std::filesystem::path& usrdir,
                                 const std::filesystem::path& captureDirectory);
+int RunBattleResultMusicSession(const std::filesystem::path& usrdir,
+                                const std::filesystem::path& captureDirectory);
 int RunMissionVoiceSession(const std::filesystem::path& usrdir,
                            const std::filesystem::path& captureDirectory,bool lifecycleOnly=false);
 int RunMissionVoicePrepareSession(const std::filesystem::path& usrdir,
