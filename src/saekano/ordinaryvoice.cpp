@@ -6,6 +6,9 @@
 #include <string>
 
 namespace Impacto::Saekano {
+void OrdinaryVoiceOutput::PrepareMemory(uint32_t, std::vector<uint8_t>) {
+  throw UnsupportedCommand("memory voice output is not bound");
+}
 namespace {
 // Native narrow tokenizer1815d8, also used by profile.cpp. CRLF ends a row;
 // bare CR/LF delimit fields. Quotes/doubled quotes match the existing parser.

@@ -10,6 +10,7 @@ class ClockedOrdinaryVoice final : public OrdinaryVoiceOutput {
  public:
   explicit ClockedOrdinaryVoice(const std::filesystem::path& usrdir);
   void Prepare(uint32_t channel, int16_t voiceId) override;
+  void PrepareMemory(uint32_t channel, Bytes encoded) override;
   void Start(uint32_t channel) override;
   void Stop(uint32_t channel) override;
   void Update(uint64_t now) override;

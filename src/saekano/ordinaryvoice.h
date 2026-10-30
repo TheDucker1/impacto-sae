@@ -77,6 +77,9 @@ void StopOrdinaryVoiceChannel(OrdinaryVoiceQueue& queue,
                                OrdinaryVoicePreparation& output, uint32_t channel);
 class OrdinaryVoiceOutput : public OrdinaryVoicePreparation {
  public:
+  // Memory descriptors share physical dialogue slots with voice.awb sources.
+  // Validate the encoded source before replacing an existing handle.
+  virtual void PrepareMemory(uint32_t channel, std::vector<uint8_t> encoded);
   virtual void Update(uint64_t now) = 0;
   virtual bool Ready(uint32_t channel) const = 0;
   virtual bool Playing(uint32_t channel) const = 0;

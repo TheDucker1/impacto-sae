@@ -258,6 +258,8 @@ int main(int argc, char* argv[]) {
   }
   if(argc==4 && std::string_view(argv[1])=="--saekano-battle-preview")
     return Saekano::RunBattlePreviewVoiceSession(argv[2],argv[3]);
+  if(argc==4 && std::string_view(argv[1])=="--saekano-battle-result-voice")
+    return Saekano::RunBattleResultVoiceSession(argv[2],argv[3]);
   if (argc == 4 && std::string_view(argv[1]) == "--saekano-mission-voice")
     return Saekano::RunMissionVoiceSession(argv[2],argv[3]);
   if (argc == 5 && std::string_view(argv[1]) == "--saekano-mission-voice" && std::string_view(argv[4])=="--prepare")

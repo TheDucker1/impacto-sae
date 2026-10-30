@@ -106,6 +106,7 @@ class GameResources final : public ScriptSource {
   size_t EffectCount() const;
   EffectResourceAssets LoadEffect(size_t id) const;
   ProfileVoiceAssets LoadProfileVoice(size_t characterId, size_t entry) const;
+  ResourceAsset LoadBattleResultVoice(size_t entry) const;
   std::vector<ScriptVoiceEnvelope> LoadScriptVoiceEnvelopes(int32_t scriptId) const;
   ResourceAsset LoadImage(ImageSection section, size_t imageId) const;
   size_t ImageCount(ImageSection section) const;
@@ -120,6 +121,7 @@ class GameResources final : public ScriptSource {
   std::optional<GpdaArchive> characterPoses_;
   std::optional<GpdaArchive> profileScenes_;
   std::optional<GpdaArchive> profileVoices_;
+  std::optional<GpdaArchive> battleResultVoices_;
   std::optional<GpdaArchive> profilePortraits_, profileCharacterUi_, profileUi_;
   std::optional<GpdaArchive> mainUi_;
   std::optional<GpdaArchive> battleUi_;

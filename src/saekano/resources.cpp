@@ -88,6 +88,11 @@ GameResources::GameResources(const GpdaArchive& root)
     : scripts_(ResourceSection(root, 4)), live2d_(ResourceSection(root, 0)) {
   if (root.Entries().size() > 1) mainUi_.emplace(ResourceSection(root, 1));
   if(root.Entries().size()>16)battleUi_.emplace(ResourceSection(root,16));
+  if (root.Entries().size() > 14) {
+    const auto voices = ResourceSection(root, 14);
+    if (voices.Entries().size() > 5)
+      battleResultVoices_.emplace(RawEntry(voices, 5));
+  }
   if (root.Entries().size() > 6)
     characterPoses_.emplace(ResourceSection(root, 6));
   if(root.Entries().size()>7)battleFaces_.emplace(ResourceSection(root,7));
@@ -114,6 +119,12 @@ GameResources::GameResources(const GpdaArchive& root)
 
 SharedUiAssets::SharedUiAssets(Bytes firstDat)
     : archive_(ResourceSection(GpdaArchive(std::move(firstDat)), 1)) {}
+ResourceAsset GameResources::LoadBattleResultVoice(size_t entry) const {
+  // Startup_LoadResourcePreloads8002a41a: eight memory descriptors, native order.
+  if (!battleResultVoices_ || entry >= 8 || entry >= battleResultVoices_->Entries().size())
+    throw FormatError("battle result voice outside original descriptor array");
+  return {battleResultVoices_->Entries()[entry].Name, RawEntry(*battleResultVoices_, entry)};
+}
 size_t GameResources::EffectCount() const {
   return effects_ ? effects_->Entries().size() : 0;
 }

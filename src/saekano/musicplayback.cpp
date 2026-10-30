@@ -539,13 +539,34 @@ void MusicPlayback::StartOrdinaryVoice(uint32_t channel) {
   else if (impl_->HasOrdinaryVoice[slot]) output->Resume();
   AlCheck("ordinary voice start");
 }
+void MusicPlayback::PrepareMemoryVoice(uint32_t channel, Bytes encoded, float gain) {
+  const auto slot = OrdinaryVoiceSlot(channel);
+  if (channel > 10) throw UnsupportedCommand("memory voice channel outside dialogue7..10");
+  if (!std::isfinite(gain) || gain < 0 || gain > 1)
+    throw FormatError("memory voice gain outside supported range");
+  auto stream = std::make_unique<HcaPlaybackStream>(
+      std::make_unique<HcaWaveReader>(std::move(encoded)), 0, "memory.hca");
+  auto& output = impl_->OrdinaryOutput(slot);
+  output->Stop(0);
+  output->SetVolume(gain);
+  if (!slot) {
+    impl_->PreparedProfileVoice.reset();
+    impl_->HasProfileVoice = false;
+  }
+  impl_->PreparedOrdinaryVoices[slot] = std::move(stream);
+  impl_->HasOrdinaryVoice[slot] = true;
+  AlCheck("memory voice preparation");
+}
 void MusicPlayback::StopOrdinaryVoice(uint32_t channel) {
   const auto slot = OrdinaryVoiceSlot(channel);
   if(channel==11){ResetMissionVoice();return;}
   (impl_->OrdinaryOutput(slot))->Stop(0);
   impl_->PreparedOrdinaryVoices[slot].reset();
   impl_->HasOrdinaryVoice[slot] = false;
-  if (!slot) impl_->PreparedProfileVoice.reset();
+  if (!slot) {
+    impl_->PreparedProfileVoice.reset();
+    impl_->HasProfileVoice = false;
+  }
   AlCheck("ordinary voice stop");
 }
 bool MusicPlayback::OrdinaryVoiceReady(uint32_t channel) const {
@@ -582,6 +603,9 @@ void PlaybackOrdinaryVoice::Prepare(uint32_t channel, int16_t voiceId) {
 }
 void PlaybackOrdinaryVoice::Start(uint32_t channel) {
   playback_.StartOrdinaryVoice(channel);
+}
+void PlaybackOrdinaryVoice::PrepareMemory(uint32_t channel, Bytes encoded) {
+  playback_.PrepareMemoryVoice(channel, std::move(encoded), gain_);
 }
 void PlaybackOrdinaryVoice::Stop(uint32_t channel) {
   playback_.StopOrdinaryVoice(channel);
@@ -695,6 +719,68 @@ void MusicPlayback::Render(std::span<int16_t> output) {
   }
 }
 
+int RunBattleResultVoiceSession(const std::filesystem::path& usrdir,const std::filesystem::path& captureDirectory){
+  bool created=false;
+  try{
+    CreateCaptureDirectory(usrdir,captureDirectory);created=true;
+    std::ifstream file(usrdir/"resource.dat",std::ios::binary);
+    if(!file)throw FormatError("cannot open result voice resources");
+    GameResources resources(Bytes{std::istreambuf_iterator<char>(file),{}});
+    if(!SDL_Init(SDL_INIT_EVENTS))throw FormatError(SDL_GetError());
+    struct Cleanup{~Cleanup(){SDL_Quit();}}cleanup;
+    ArchiveBgmResources music(usrdir);MusicPlayback playback(music,true);
+    PlaybackOrdinaryVoice voices(playback,usrdir,10,1);
+    const auto peak=[](std::span<const int16_t> pcm){int32_t p=0;for(const auto v:pcm)p=std::max(p,std::abs(int32_t(v)));return p;};
+    std::vector<int16_t> block(9600*2);
+    voices.Prepare(7,7490);voices.Start(7);voices.Prepare(8,7491);voices.Start(8);playback.Render(block);
+    voices.PrepareMemory(7,resources.LoadBattleResultVoice(0).Data);
+    if(!voices.Ready(7)||voices.Playing(7)||!voices.Playing(8))throw FormatError("memory replacement disturbed physical8");
+    voices.Start(7);playback.Render(block);
+    const auto position8=voices.Position(8);
+    // Reverse replacement uses the existing profile service on the same source.
+    playback.PrepareProfileVoice(resources.LoadBattleResultVoice(1).Data,1);
+    if(voices.Ready(7)||voices.Playing(7))throw FormatError("profile failed to replace memory7");
+    playback.StartProfileVoice();playback.Render(block);
+    voices.PrepareMemory(7,resources.LoadBattleResultVoice(0).Data);
+    if(playback.ProfileVoicePosition() || !voices.Ready(7) || !voices.Playing(8) || voices.Position(8)<=position8)
+      throw FormatError("memory failed to retire profile7 or interrupted8");
+    bool rejected=false;try{voices.PrepareMemory(7,Bytes{});}catch(const FormatError&){rejected=true;}
+    if(!rejected || !voices.Ready(7))throw FormatError("invalid source retired prepared memory7");
+    voices.Start(7);playback.Render(block);const auto position7=voices.Position(7);
+    rejected=false;try{voices.PrepareMemory(7,Bytes{0,1,2});}catch(const FormatError&){rejected=true;}
+    if(!rejected || !voices.Playing(7) || voices.Position(7)!=position7)throw FormatError("invalid memory changed playing source");
+    voices.Stop(7);voices.Start(7);playback.Render(block);
+    if(voices.Ready(7)||voices.Playing(7)||playback.ProfileVoicePosition()||!voices.Playing(8))throw FormatError("retired memory restarted or stopped8");
+    voices.Stop(8);playback.Render(block);
+    if(peak(std::span(block).last(9600))>1)throw FormatError("memory stop retained audible source");
+    std::ofstream out(captureDirectory/"result.json");
+    out << "{\"passed\":true,\"shared_profile_ordinary7\":true,\"independent8\":true,\"invalid_preserves_ready_and_playing\":true,\"retired_start_noop\":true,\"clips\":[";
+    for(size_t i=0;i<8;++i){
+      const auto asset=resources.LoadBattleResultVoice(i);const auto info=HcaWaveReader(asset.Data).Info();
+      voices.PrepareMemory(7,asset.Data);voices.Start(7);playback.Render(block);
+      const auto position=voices.Position(7);
+      if(!voices.Playing(7)||position<190||position>230||peak(block)<=32)throw FormatError("memory source did not produce positioned audio");
+      std::vector<int16_t> samples;
+      if(i==0)samples=block;
+      voices.Start(7);playback.Render(block);
+      if(i==0)samples.insert(samples.end(),block.begin(),block.end());
+      if(voices.Position(7)<=position)throw FormatError("repeated memory Start reset playback");
+      const auto frames=(info.Frames*48000+info.SampleRate-1)/info.SampleRate;
+      std::vector<int16_t> tail(size_t(frames+4800-19200)*2);playback.Render(tail);
+      if(voices.Playing(7)||voices.Ready(7)||voices.Position(7)!=-1||peak(std::span(tail).last(4800))>1)
+        throw FormatError("memory source EOF/settled tail mismatch");
+      if(i)out << ',';
+      out << "{\"entry\":" << i << ",\"bytes\":" << asset.Data.size() << ",\"rate\":" << info.SampleRate << ",\"frames\":" << info.Frames
+          << ",\"position_ms\":" << position << ",\"peak\":" << peak(block) << ",\"settled_tail_peak\":" << peak(std::span(tail).last(4800)) << '}';
+      if(i==0){samples.insert(samples.end(),tail.begin(),tail.end());SaveWav(captureDirectory/"result-voice.wav",samples);}
+      voices.Stop(7);
+    }
+    out << "]}\n";if(!out)throw FormatError("cannot write result voice report");return 0;
+  }catch(const std::exception& error){
+    if(created){std::ofstream out(captureDirectory/"error.txt");out << std::string(error.what()).substr(0,2048);}
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano battle result voice: %s",error.what());return 1;
+  }
+}
 int RunBattlePreviewVoiceSession(const std::filesystem::path& usrdir,const std::filesystem::path& captureDirectory){
   bool created=false;
   try{

@@ -28,6 +28,16 @@ void ClockedOrdinaryVoice::Start(uint32_t channel) {
   voices_[slot].Start(now_);
   ready_[slot] = false;
 }
+void ClockedOrdinaryVoice::PrepareMemory(uint32_t channel, Bytes encoded) {
+  const auto slot = Slot(channel);
+  if (channel > 10) throw UnsupportedCommand("memory voice channel outside dialogue7..10");
+  auto reader = std::make_unique<HcaWaveReader>(std::move(encoded));
+  const auto rate = reader->Info().SampleRate;
+  voices_[slot].Prepare(std::move(reader));
+  rates_[slot] = rate;
+  ready_[slot] = true;
+  ids_[slot].reset();
+}
 void ClockedOrdinaryVoice::Stop(uint32_t channel) {
   const auto slot = Slot(channel);
   voices_[slot].Reset();

@@ -29,6 +29,9 @@ struct SceneMessageVoiceOwner {
 // Native battle-select Start stops base+NextSlot on both retained contexts.
 // Keep the external-stop cache invalidation used by normal message cleanup.
 void StopSceneDialogueNextVoiceSlots(SceneMessageVoiceOwner& owner);
+// Native result Start: immediate stop (AAStop flag1), both slots of both owners.
+void StopSceneDialogueVoicesImmediately(SceneMessageVoiceOwner& owner);
+void PrepareSceneMemoryVoice(SceneMessageVoiceOwner& owner, uint32_t channel, Bytes encoded);
 struct SceneMessageTextState {
   size_t Command = 0;
   size_t Side = 0;

@@ -36,6 +36,7 @@ class MusicPlayback {
   // Caller supplies known effective gain. Preparation parses/owns HCA bytes;
   // no playback or successful missing-channel stop is fabricated.
   void PrepareProfileVoice(Bytes encoded, float gain);
+  void PrepareMemoryVoice(uint32_t channel, Bytes encoded, float gain);
   void StartProfileVoice();
   void StopProfileVoice();
   void ResetProfileVoice();
@@ -69,6 +70,7 @@ class PlaybackOrdinaryVoice final : public OrdinaryVoiceOutput {
                         const std::filesystem::path& usrdir,
                         uint8_t volume, float coefficient);
   void Prepare(uint32_t channel, int16_t voiceId) override;
+  void PrepareMemory(uint32_t channel, Bytes encoded) override;
   void Start(uint32_t channel) override;
   void Stop(uint32_t channel) override;
   void Update(uint64_t) override {}  // Frontend pumps the shared physical host.
@@ -138,6 +140,8 @@ int RunOrdinaryVoiceSession(const std::filesystem::path& usrdir,
                             const std::filesystem::path& captureDirectory);
 int RunBattlePreviewVoiceSession(const std::filesystem::path& usrdir,
                                  const std::filesystem::path& captureDirectory);
+int RunBattleResultVoiceSession(const std::filesystem::path& usrdir,
+                                const std::filesystem::path& captureDirectory);
 int RunMissionVoiceSession(const std::filesystem::path& usrdir,
                            const std::filesystem::path& captureDirectory,bool lifecycleOnly=false);
 int RunMissionVoicePrepareSession(const std::filesystem::path& usrdir,

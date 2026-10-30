@@ -4,19 +4,38 @@
 
 namespace Impacto::Saekano {
 namespace {
+void InvalidateVoiceCache(SceneMessageVoiceOwner& owner, uint32_t channel) {
+  const auto invalidate=[&](OrdinaryVoiceQueue& q){std::erase_if(q.Prepared,[&](const auto& p){return q.BaseChannel+p.Slot==channel;});};
+  invalidate(owner.Queue);
+  if(owner.SecondaryQueue)invalidate(*owner.SecondaryQueue);
+}
 // Invalidate any cache naming a retired physical handle. Bound native owners
 // use7/8 and9/10; overlapping explicit restored owners are also handled safely.
 struct SharedVoicePreparation final:OrdinaryVoicePreparation {
   SceneMessageVoiceOwner& Owner;
   explicit SharedVoicePreparation(SceneMessageVoiceOwner& owner):Owner(owner){}
   void Stop(uint32_t channel) override {
-    const auto invalidate=[&](OrdinaryVoiceQueue& q){std::erase_if(q.Prepared,[&](const auto& p){return q.BaseChannel+p.Slot==channel;});};
-    invalidate(Owner.Queue);if(Owner.SecondaryQueue)invalidate(*Owner.SecondaryQueue);
+    InvalidateVoiceCache(Owner, channel);
     Owner.Output.Stop(channel);
   }
   void Prepare(uint32_t channel,int16_t voice)override{Owner.Output.Prepare(channel,voice);}
   void Start(uint32_t channel)override{Owner.Output.Start(channel);}
 };
+}
+void StopSceneDialogueVoicesImmediately(SceneMessageVoiceOwner& owner) {
+  const auto valid=[](const OrdinaryVoiceQueue& q){return q.BaseChannel>=7 && q.BaseChannel<=9;};
+  if (!owner.SecondaryQueue || !valid(owner.Queue) || !valid(*owner.SecondaryQueue))
+    throw UnsupportedCommand("battle result dialogue owners are unavailable");
+  SharedVoicePreparation preparation(owner);
+  preparation.Stop(owner.Queue.BaseChannel);
+  preparation.Stop(owner.Queue.BaseChannel+1);
+  preparation.Stop(owner.SecondaryQueue->BaseChannel);
+  preparation.Stop(owner.SecondaryQueue->BaseChannel+1);
+}
+void PrepareSceneMemoryVoice(SceneMessageVoiceOwner& owner, uint32_t channel, Bytes encoded) {
+  if (channel<7 || channel>10) throw UnsupportedCommand("memory voice channel outside dialogue7..10");
+  owner.Output.PrepareMemory(channel,std::move(encoded));
+  InvalidateVoiceCache(owner,channel);
 }
 void StopSceneDialogueNextVoiceSlots(SceneMessageVoiceOwner& owner) {
   if(!owner.SecondaryQueue || owner.Queue.NextSlot>1 || owner.SecondaryQueue->NextSlot>1)
