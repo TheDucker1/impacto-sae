@@ -103,4 +103,71 @@ void ApplyNativeSlotContextValues(SemanticState& state,
   state = std::move(*next);
   message = context;
 }
+void BeginNativeRuleWipeRestore(SemanticState& state,
+                                const NativeContextSave& saved,
+                                SceneImageDriver& images,
+                                NativeRuleWipeRestore& restore) {
+  if (restore.Started) throw FormatError("native rule restore already started");
+  if (!state.RuleWipe.Known || state.RuleWipe.Active || state.RuleWipe.Auxiliary ||
+      state.RuleWipe.BackgroundResource)
+    throw UnsupportedCommand("native rule restore needs a fresh rule owner");
+  const auto field = [&](uint32_t offset, uint8_t width = 4) {
+    const auto found = std::find_if(saved.Fields.begin(), saved.Fields.end(),
+        [&](const auto& f) { return f.ManagerOffset == offset && f.Width == width; });
+    if (found == saved.Fields.end()) throw FormatError("missing native saved rule field");
+    return found->Value;
+  };
+  auto next = state.RuleWipe;
+  next.Active = field(0x1bf1, 1) != 0;
+  next.Parameter = std::bit_cast<int32_t>(field(0x1bfc));
+  next.BackgroundKind = std::bit_cast<int32_t>(field(0x1c00));
+  next.CachedRule = std::bit_cast<int32_t>(field(0x1c04));
+  next.CachedBackground = std::bit_cast<int32_t>(field(0x1c10));
+  for (size_t i = 0; i < next.Color.size(); ++i)
+    next.Color[i] = uint8_t(field(0x1c18 + uint32_t(i), 1));
+  if (!next.Active) {
+    images.Release(ImageSlot::Rule);
+    images.Release(ImageSlot::Background);
+    next.CachedRule = next.CachedBackground = -1;
+    next.Auxiliary = false;
+    next.BackgroundResource.reset();
+  } else {
+    // Validate the complete request set before any resource side effect.
+    if (next.CachedRule < 0 ||
+        size_t(next.CachedRule) >= images.AssetCount(ImageSection::Rule))
+      throw FormatError("saved active rule ID is outside the archive");
+    if (next.BackgroundKind < 0 || next.BackgroundKind > 4)
+      throw FormatError("saved rule background kind is invalid");
+    if (next.BackgroundKind == 1 && next.CachedBackground >= 0)
+      throw UnsupportedCommand(
+          "saved retained rule background has no serialized resource category");
+    if (next.BackgroundKind >= 2 && next.CachedBackground >= 0) {
+      const auto section = next.BackgroundKind == 2 ? ImageSection::Background
+          : next.BackgroundKind == 3 ? ImageSection::Event : ImageSection::Free;
+      if (size_t(next.CachedBackground) >= images.AssetCount(section))
+        throw FormatError("saved rule background ID is outside the archive");
+      next.BackgroundResource = ImageKey{section, uint32_t(next.CachedBackground)};
+    }
+    next.Progress = 100;
+    try {
+      images.Prepare(ImageSlot::Rule, {ImageSection::Rule, uint32_t(next.CachedRule)});
+      if (next.BackgroundResource)
+        images.Prepare(ImageSlot::Background, *next.BackgroundResource);
+    } catch (...) {
+      images.Release(ImageSlot::Rule);
+      images.Release(ImageSlot::Background);
+      throw;
+    }
+  }
+  state.RuleWipe = std::move(next);
+  restore.Started = true;
+}
+bool PollNativeRuleWipeRestore(const SceneImageDriver& images,
+                               NativeRuleWipeRestore& restore) {
+  if (!restore.Started) throw FormatError("native rule restore has not started");
+  if (restore.Ready) return true;
+  if (!images.Ready()) return false;
+  restore.Ready = true;
+  return true;
+}
 }

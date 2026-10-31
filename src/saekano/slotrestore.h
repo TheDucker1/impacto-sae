@@ -7,6 +7,7 @@
 namespace Impacto::Saekano {
 struct SemanticState;
 struct MessageRuntimeContext;
+class SceneImageDriver;
 // Native selected record -> pending S5e814, protected flag cleared, load request.
 // Kept separate from the current scene until the outer Load transition consumes
 // it. Native pointers, thumbnails and strings have ordinary PC ownership here.
@@ -28,4 +29,15 @@ void ApplyNativeSlotWorkingOwner(SemanticState& owner,
 void ApplyNativeSlotContextValues(SemanticState& state,
                                   MessageRuntimeContext& message,
                                   const NativePendingSlotLoad& pending);
+struct NativeRuleWipeRestore {
+  bool Started = false, Ready = false;
+};
+// Native71f78 rule branch. Requires the fresh manager's rule owner. Active
+// resources are loaded by their original archive IDs, then await the real gate.
+void BeginNativeRuleWipeRestore(SemanticState& state,
+                                const NativeContextSave& saved,
+                                SceneImageDriver& images,
+                                NativeRuleWipeRestore& restore);
+bool PollNativeRuleWipeRestore(const SceneImageDriver& images,
+                               NativeRuleWipeRestore& restore);
 }
