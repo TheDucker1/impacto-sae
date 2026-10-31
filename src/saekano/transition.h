@@ -2,12 +2,19 @@
 
 #include "image.h"
 #include "gauge.h"
+#include "uisprite.h"
 
 #include <map>
 #include <variant>
 
 namespace Impacto::Saekano {
 struct SemanticState;
+struct SceneLetterboxState {
+  bool Known = false, Foreground = false;
+  int32_t Top = 0, Bottom = 0;
+  std::array<uint8_t, 4> Color{};
+};
+std::vector<UiRenderCommand> BuildLetterboxBars(const SceneLetterboxState& state);
 struct ScreenFilterState {
   std::optional<int32_t> Mode;  // C1cf4; unknown on portable restores.
   std::optional<float> Intensity;  // C1cf8; StartSepia does not initialize it.

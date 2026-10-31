@@ -2164,6 +2164,7 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
       layout=splitLayouts[message->Side];layoutCommand=message->Command;laidOut=true;
     }
     SceneQueueInputs gates;
+    gates.ForegroundLetterbox=state.Letterbox.Foreground;
     gates.SplitMessage=state.BattleEntry.Enabled;
     gates.ApproachSelectionVisible=state.ApproachSelection.Visible;
     gates.EffectPlacement = state.RuleWipe.Parameter;
@@ -2218,6 +2219,8 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
         }
       } else if (pass.Kind == SceneDrawKind::Live2d) {
         DrawSceneModels(models,state.Live2d,modelTextures,capture);
+      } else if (pass.Kind == SceneDrawKind::Letterbox) {
+        renderer.Execute(BuildLetterboxBars(state.Letterbox));
       } else if (pass.Kind == SceneDrawKind::Effect) {
         const auto effect = BuildRuleWipeDraw(state.RuleWipe);
         if (effect.Kind == RuleWipeDrawKind::MaskedImage || effect.Kind == RuleWipeDrawKind::Image)

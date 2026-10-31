@@ -6,6 +6,7 @@
 
 namespace Impacto::Saekano {
 struct SemanticState;
+struct MessageRuntimeContext;
 // Native selected record -> pending S5e814, protected flag cleared, load request.
 // Kept separate from the current scene until the outer Load transition consumes
 // it. Native pointers, thumbnails and strings have ordinary PC ownership here.
@@ -21,4 +22,10 @@ std::unique_ptr<NativePendingSlotLoad> StageNativeSlotLoad(
 // step. Resource/context restoration must finish separately before VM Start.
 void ApplyNativeSlotWorkingOwner(SemanticState& owner,
                                  const NativePendingSlotLoad& pending);
+// Verified saved manager values only. Call on a newly constructed manager;
+// unsaved defaults/load side effects must already be supplied by that manager.
+// This does not perform resource requests or grant FILE_READY.
+void ApplyNativeSlotContextValues(SemanticState& state,
+                                  MessageRuntimeContext& message,
+                                  const NativePendingSlotLoad& pending);
 }

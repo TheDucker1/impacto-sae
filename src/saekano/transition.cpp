@@ -7,6 +7,21 @@
 #include <cmath>
 
 namespace Impacto::Saekano {
+std::vector<UiRenderCommand> BuildLetterboxBars(const SceneLetterboxState& state) {
+  if (!state.Known) throw UnsupportedCommand("letterbox state is unavailable");
+  std::vector<UiRenderCommand> result;
+  const auto rectangle = [&](int32_t y, int32_t height) {
+    UiRenderCommand command;
+    command.Kind = UiRenderKind::Rectangle;
+    command.Rectangle = {0, y, 960, height};
+    command.Color = state.Color;
+    result.push_back(command);
+  };
+  if (state.Top > 0) rectangle(0, state.Top);
+  if (state.Bottom > 0)
+    rectangle(std::bit_cast<int32_t>(544u - uint32_t(state.Bottom)), state.Bottom);
+  return result;
+}
 namespace {
 int32_t Signed(uint32_t value) { return std::bit_cast<int32_t>(value); }
 bool Unlocked(int32_t value) { return value == 1 || value == 2 || value == 3; }

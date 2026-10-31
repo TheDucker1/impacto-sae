@@ -245,6 +245,7 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     state_.RuleWipe.Known = true;
     state_.ScreenFade = 255;
     state_.ScreenFilter = FreshScreenFilter();
+    state_.Letterbox = {true, false, 0, 0, {}};
     state_.TitleDisplay = false;
     state_.Approach = {};
     state_.Random = {};  // Native creates a freshly seeded manager. Host supplies its clock seed.

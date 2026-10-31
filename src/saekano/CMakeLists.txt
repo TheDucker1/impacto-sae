@@ -102,6 +102,8 @@ add_executable(saekano_slot_character_restore_probe ../../tools/saekano/slot_cha
 target_link_libraries(saekano_slot_character_restore_probe PRIVATE saekano_core)
 add_executable(saekano_slot_working_owner_probe ../../tools/saekano/slot_working_owner_probe.cpp)
 target_link_libraries(saekano_slot_working_owner_probe PRIVATE saekano_core)
+add_executable(saekano_slot_context_values_probe ../../tools/saekano/slot_context_values_probe.cpp)
+target_link_libraries(saekano_slot_context_values_probe PRIVATE saekano_core)
 target_link_libraries(saekano_slot_widgets_probe PRIVATE saekano_core)
 add_executable(saekano_slot_cards_probe ../../tools/saekano/slot_cards_probe.cpp)
 target_link_libraries(saekano_slot_cards_probe PRIVATE saekano_core)

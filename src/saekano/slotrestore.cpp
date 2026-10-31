@@ -1,6 +1,9 @@
 #include "slotrestore.h"
 #include "commands.h"
+#include "vm.h"
 #include <bit>
+#include <cmath>
+#include <algorithm>
 
 namespace Impacto::Saekano {
 std::unique_ptr<NativePendingSlotLoad> StageNativeSlotLoad(
@@ -51,5 +54,53 @@ void ApplyNativeSlotWorkingOwner(SemanticState& owner,
   next->TimeComponents = {std::bit_cast<int32_t>(saved.Words1b94[0]),
                            std::bit_cast<int32_t>(saved.Words1b94[1])};
   owner = std::move(*next);
+}
+void ApplyNativeSlotContextValues(SemanticState& state,
+                                  MessageRuntimeContext& message,
+                                  const NativePendingSlotLoad& pending) {
+  if (!state.MouthControl || !message.Known)
+    throw UnsupportedCommand("saved context needs fresh message/mouth defaults");
+  const auto& saved = pending.Context;
+  const auto field = [&](uint32_t offset, uint8_t width = 4) {
+    const auto found = std::find_if(saved.Fields.begin(), saved.Fields.end(),
+        [&](const auto& f) { return f.ManagerOffset == offset && f.Width == width; });
+    if (found == saved.Fields.end()) throw FormatError("missing native saved context field");
+    return found->Value;
+  };
+  const auto word = [&](uint32_t offset) { return std::bit_cast<int32_t>(field(offset)); };
+  auto next = std::make_unique<SemanticState>(state);
+  auto context = message;
+  next->ScriptFileId = saved.File;
+  next->CurrentCommandIndex = saved.ResumeCommand;
+  next->PendingCommandIndex = -1;
+  next->BgmTrack = word(0x15ac); next->BgmCommandVolume = word(0x15b0);
+  next->SeTrack = word(0x15b4); next->SeCommandVolume = word(0x15b8);
+  next->SeChannel = word(0x15bc);
+  next->MouthControl->OverrideEnabled = field(0x1c54, 1) != 0;
+  for (size_t i = 0; i < saved.Shorts.size(); ++i)
+    next->MouthControl->OverrideIds[i] = std::bit_cast<int16_t>(saved.Shorts[i]);
+  context.SplitDialogue = field(0x20b4) != 0;
+  context.Side0Character = word(0x20bc);
+  next->BattleEntry.Enabled = context.SplitDialogue;
+  next->Battle.SideCharacters = {context.Side0Character, word(0x20c4)};
+  // Only the first window's openness is serialized. The second window and
+  // window-type selections retain their fresh/load-callback values.
+  next->WindowOpenness[0] = field(0x20d8);
+  next->DivergenceStack.clear();
+  for (const auto& row : saved.List)
+    next->DivergenceStack.push_back({std::bit_cast<int32_t>(row[0]),
+        std::bit_cast<int32_t>(row[1]), std::bit_cast<int32_t>(row[2])});
+  next->ScreenFade = word(0x150c);
+  next->CharacterRuntimeState.MaximumPriority = field(0x14518);
+  next->ScreenFilter.Mode = std::bit_cast<int32_t>(saved.Models.FinalWords[0]);
+  next->ScreenFilter.Intensity = std::bit_cast<float>(saved.Models.FinalWords[1]);
+  if (!std::isfinite(*next->ScreenFilter.Intensity))
+    throw FormatError("non-finite native saved screen filter");
+  next->Letterbox = {true, field(0x1c60, 1) != 0,
+                     word(0x1c64), word(0x1c68), {}};
+  for (size_t i = 0; i < 4; ++i)
+    next->Letterbox.Color[i] = uint8_t(field(0x1c6c + uint32_t(i), 1));
+  state = std::move(*next);
+  message = context;
 }
 }
