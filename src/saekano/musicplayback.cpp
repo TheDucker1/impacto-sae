@@ -440,6 +440,37 @@ void MusicPlayback::Update(float seconds) {
   impl_->UiSound->Update(seconds);
   AlCheck("BGM frame");
 }
+namespace {
+void ValidateLiveGain(float gain){
+  if(!std::isfinite(gain) || gain<0 || gain>1)throw FormatError("live output gain outside supported range");
+}
+}
+void MusicPlayback::SetBgmOutputGain(float gain){
+  ValidateLiveGain(gain);impl_->BgmGain=gain;
+  impl_->Channel->SetVolume(gain);
+  impl_->OutgoingBgm->SetVolume(gain*impl_->BgmFade.Weight);
+  AlCheck("live BGM gain");
+}
+void MusicPlayback::SetChannelOutputGain(uint32_t channel,float gain){
+  ValidateLiveGain(gain);
+  if(channel<2 || channel>12)throw FormatError("live channel gain outside native2..12");
+  if(channel<6){
+    if(!impl_->SeChannels.at(channel-2))throw UnsupportedCommand("live SE gain has no bound channel");
+    impl_->SeChannels.at(channel-2)->SetVolume(gain);
+  }
+  else if(channel==6){impl_->UiSoundGain=gain;impl_->UiSound->SetVolume(gain);}
+  else impl_->OrdinaryOutput(channel-7)->SetVolume(gain);
+  AlCheck("live channel gain");
+}
+float MusicPlayback::ChannelOutputGain(uint32_t channel)const{
+  if(channel<2 || channel>12)throw FormatError("live channel gain query outside native2..12");
+  if(channel<6){
+    if(!impl_->SeChannels.at(channel-2))throw UnsupportedCommand("live SE gain query has no bound channel");
+    return impl_->SeChannels.at(channel-2)->GetVolume();
+  }
+  if(channel==6)return impl_->UiSound->GetVolume();
+  return impl_->OrdinaryOutput(channel-7)->GetVolume();
+}
 bool MusicPlayback::Playing() const {
   if (impl_->Channel->GetState() != Audio::ACS_Stopped) return true;
   if (impl_->OutgoingBgm->GetState() != Audio::ACS_Stopped) return true;
@@ -483,6 +514,10 @@ PlaybackTitleAudio::PlaybackTitleAudio(MusicPlayback& playback,SystemSoundAssets
     :playback_(playback),gain_(voiceGain){
   if(!std::isfinite(gain_) || gain_<0 || gain_>1)throw FormatError("title voice gain outside supported range");
   playback_.BindUiSounds(ui,uiGain);
+}
+void PlaybackTitleAudio::SetGains(float voiceGain,float uiGain){
+  ValidateLiveGain(voiceGain);ValidateLiveGain(uiGain);
+  playback_.SetChannelOutputGain(7,voiceGain);playback_.SetChannelOutputGain(6,uiGain);gain_=voiceGain;
 }
 void PlaybackTitleAudio::PlayVoice(Bytes encoded){playback_.PrepareMemoryVoice(7,std::move(encoded),gain_);playback_.StartOrdinaryVoice(7);}
 void PlaybackTitleAudio::PlayUi(int32_t id){playback_.Submit({GameEventKind::Sound,id});}
@@ -979,6 +1014,66 @@ int RunMissionVoiceSession(const std::filesystem::path& usrdir,
     if(created){std::ofstream error(captureDirectory/"error.txt");error << std::string(e.what()).substr(0,2048);}
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano mission voice: %s",e.what());return 1;
   }
+}
+int RunOptionsMixerSession(const std::filesystem::path& usrdir,const std::filesystem::path& captureDirectory){
+  bool created=false;
+  try{
+    CreateCaptureDirectory(usrdir,captureDirectory);created=true;
+    if(!SDL_Init(SDL_INIT_EVENTS))throw FormatError(SDL_GetError());
+    struct Cleanup{~Cleanup(){SDL_Quit();}} cleanup;
+    const auto read=[](const std::filesystem::path& p){std::ifstream f(p,std::ios::binary);if(!f)throw FormatError("missing mixer resource");return Bytes{std::istreambuf_iterator<char>(f),{}};};
+    auto resources=std::make_unique<GameResources>(read(usrdir/"resource.dat"));SystemSoundAssets ui(read(usrdir/"first.dat"));
+    ArchiveBgmResources music(usrdir);ArchiveSeResources sounds(usrdir);MusicPlayback playback(music,true,&sounds);
+    PlaybackTitleAudio title(playback,ui,1,1);
+    title.PlayVoice(resources->LoadSystemVoice(4,0).Data);title.PlayUi(2);
+    playback.PrepareMemoryVoice(8,resources->LoadSystemVoice(4,1).Data,0.75f);playback.StartOrdinaryVoice(8);
+    playback.PrepareMissionVoice(0,std::make_unique<HcaWaveReader>(resources->LoadSystemVoice(4,2).Data),0.625f);playback.StartMissionVoice();
+    music.Prepare(0);music.Prepare(1);
+    GameEvent bgm{GameEventKind::PlayBgm,0};bgm.Bgm=BgmPlayRequest{0,100,BgmVolume{100,60,0.6f}};playback.Submit(bgm);
+    const auto render=[&](size_t frames){std::vector<int16_t> pcm(frames*2);playback.Render(pcm);return pcm;};render(2400);
+    bgm.Id=1;bgm.Bgm->Track=1;playback.Submit(bgm);render(2400);
+    const auto voices=playback.BgmVoices();const auto fade=playback.BgmFadeState();
+    const auto p7=playback.OrdinaryVoicePosition(7),p8=playback.OrdinaryVoicePosition(8),p11=playback.MissionVoicePosition();
+    if(!voices.Current || !voices.Outgoing || !fade.Active() || p7<=0 || p8<=0 || p11<=0)throw FormatError("mixer fixture has no simultaneous sources/fade");
+    std::array<float,11> gains{};for(uint32_t ch=2;ch<=12;++ch){const auto g=float(ch)/16;playback.SetChannelOutputGain(ch,g);gains[ch-2]=g;}
+    title.SetGains(0.375f,0.25f);gains[5]=0.375f;gains[4]=0.25f;
+    playback.SetBgmOutputGain(0.25f);
+    for(uint32_t ch=2;ch<=12;++ch)if(playback.ChannelOutputGain(ch)!=gains[ch-2])throw FormatError("live gain changed another channel");
+    const auto checkOwners=[&]{
+      const auto v=playback.BgmVoices();const auto f=playback.BgmFadeState();
+      if(v.Current!=voices.Current || v.Outgoing!=voices.Outgoing || v.FadeOutDuration!=voices.FadeOutDuration ||
+          f.Phase!=fade.Phase || f.Duration!=fade.Duration || f.Elapsed!=fade.Elapsed || f.Weight!=fade.Weight || f.From!=fade.From ||
+          playback.OrdinaryVoicePosition(7)!=p7 || playback.OrdinaryVoicePosition(8)!=p8 || playback.MissionVoicePosition()!=p11 ||
+          !playback.OrdinaryVoicePlaying(7) || !playback.OrdinaryVoicePlaying(8) || !playback.MissionVoicePlaying())
+        throw FormatError("live gain restarted or retired a source/fade");
+    };
+    checkOwners();const auto liveBgm=playback.BgmVoices();
+    if(liveBgm.CurrentGain!=0.25f || liveBgm.OutgoingGain!=0.25f*fade.Weight)throw FormatError("live BGM gain lost fade weight");
+    uint32_t rejected=0;
+    for(const auto bad:{-1.f,1.125f,std::numeric_limits<float>::infinity(),std::numeric_limits<float>::quiet_NaN()}){
+      for(uint32_t which=0;which<3;++which){bool failed=false;try{
+        if(which==0)playback.SetBgmOutputGain(bad);else if(which==1)playback.SetChannelOutputGain(7,bad);else title.SetGains(0.5f,bad);
+      }catch(const FormatError&){failed=true;}if(!failed)throw FormatError("invalid live gain accepted");++rejected;}
+    }
+    for(const auto channel:{0u,1u,13u}){bool failed=false;try{playback.SetChannelOutputGain(channel,0.5f);}catch(const FormatError&){failed=true;}
+      if(!failed)throw FormatError("invalid live channel accepted");++rejected;}
+    for(uint32_t ch=2;ch<=12;++ch)if(playback.ChannelOutputGain(ch)!=gains[ch-2])throw FormatError("invalid live gain changed channel state");
+    if(playback.BgmOutputGain()!=0.25f)throw FormatError("invalid live gain changed BGM base");checkOwners();
+    // Check subsequent title preparations use the new gains, not just current AL values.
+    title.PlayVoice(resources->LoadSystemVoice(4,1).Data);title.PlayUi(2);
+    if(playback.ChannelOutputGain(7)!=0.375f || playback.ChannelOutputGain(6)!=0.25f)throw FormatError("title preparation restored stale gain");
+    for(uint32_t ch=2;ch<=12;++ch)playback.SetChannelOutputGain(ch,0);playback.SetBgmOutputGain(0);
+    const auto silent=render(4800);int32_t silentPeak=0;for(const auto sample:std::span(silent).last(2048))silentPeak=std::max(silentPeak,std::abs(int32_t(sample)));
+    if(silentPeak>1)throw FormatError("live zero gains left audible output");
+    const auto mutedPosition=playback.OrdinaryVoicePosition(7);playback.SetChannelOutputGain(7,0.5f);auto pcm=render(4800);
+    int32_t peak=0;for(const auto sample:pcm)peak=std::max(peak,std::abs(int32_t(sample)));
+    if(peak<=8 || playback.OrdinaryVoicePosition(7)<=mutedPosition)throw FormatError("live gain did not resume audible advancing output");
+    SaveWav(captureDirectory/"live-gain-prefix.wav",pcm);
+    std::ofstream report(captureDirectory/"summary.json");report<<"{\"passed\":true,\"physical_channels\":11,\"simultaneous_voices\":[7,8,11],\"gain_changes_preserve_positions\":true,\"bgm_preserves_serials_and_fade\":true,\"future_title_gains\":true,\"invalid_rejections\":"<<rejected
+      <<",\"silent_tail_peak\":"<<silentPeak<<",\"unmuted_peak\":"<<peak<<",\"software_openal_output\":true,\"native_option_arithmetic_tested\":false,\"ducking_bound\":false,\"pc_options_bound\":false,\"manual_acceptance\":false}\n";
+    report.close();if(!report)throw FormatError("cannot save mixer report");return 0;
+  }catch(const std::exception& e){if(created){std::ofstream error(captureDirectory/"error.txt");error<<std::string(e.what()).substr(0,2048);}
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Options mixer: %s",e.what());return 1;}
 }
 int RunOptionsPreviewSession(const std::filesystem::path& usrdir,const std::filesystem::path& captureDirectory){
   bool created=false;

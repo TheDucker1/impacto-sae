@@ -29,6 +29,11 @@ class MusicPlayback {
   BgmStopFade BgmFadeState() const;
   float BgmOutputGain() const;
   BgmPlaybackSnapshot BgmVoices() const;
+  // Effective gains, after native option/command/coefficient arithmetic. These
+  // setters preserve decoder ownership, playback position and attached fades.
+  void SetBgmOutputGain(float gain);
+  void SetChannelOutputGain(uint32_t channel,float gain); // Native2..12.
+  float ChannelOutputGain(uint32_t channel) const;
   // Native UI channel6 is independent of SE2..5 and profile voice7.
   // Caller supplies a known effective gain and preserves the asset lifetime.
   void BindUiSounds(SystemSoundAssets& resources, float gain);
@@ -88,6 +93,7 @@ class PlaybackOrdinaryVoice final : public OrdinaryVoiceOutput {
 class PlaybackTitleAudio final : public TitleAudioOutput {
  public:
   PlaybackTitleAudio(MusicPlayback& playback,SystemSoundAssets& ui,float voiceGain,float uiGain);
+  void SetGains(float voiceGain,float uiGain);
   void PlayVoice(Bytes encoded)override;
   void PlayUi(int32_t id)override;
   void Stop(uint32_t channel)override;
@@ -167,6 +173,8 @@ int RunUiSoundSession(const std::filesystem::path& usrdir,
                       const std::filesystem::path& captureDirectory);
 int RunTitleAudioSession(const std::filesystem::path& usrdir,
                          const std::filesystem::path& captureDirectory);
+int RunOptionsMixerSession(const std::filesystem::path& usrdir,
+                           const std::filesystem::path& captureDirectory);
 int RunOptionsPreviewSession(const std::filesystem::path& usrdir,
                              const std::filesystem::path& captureDirectory);
 int RunProfileServiceSession(
