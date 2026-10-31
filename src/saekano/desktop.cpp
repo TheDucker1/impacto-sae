@@ -25,6 +25,7 @@
 #include "scenequeue.h"
 #include "widgetinput.h"
 #include "titledraw.h"
+#include "titleeffect.h"
 #include "skipauto.h"
 #include "mouthselection.h"
 #include "particle.h"
@@ -3163,14 +3164,21 @@ int RunTitleDrawProbe(const std::filesystem::path& usrdir,const std::filesystem:
     in.Reveal=r.I32();in.LogoMove=r.I32();in.LogoDetail=r.I32();in.MenuMove=r.I32();in.MenuDetail=r.I32();
     for(auto& value:in.Buttons)value=r.I32();in.BlinkAlpha=r.I32();for(auto& value:in.AmbientDegrees)value=r.I32();in.FontSize=r.U32();
     TitleOverlayInputs overlays;overlays.Phase=in.Phase;overlays.ResourceDrawBlocked=in.ResourceDrawBlocked;
-    overlays.FadeAlpha=r.I32();overlays.MovieFadeAlpha=r.I32();if(r.Remaining())throw FormatError("unexpected title capture input tail");
+    overlays.FadeAlpha=r.I32();overlays.MovieFadeAlpha=r.I32();
+    const auto env=TitleEnvironment::Decode(SceneRead(usrdir/"env/env_scene_title.dat"));
+    std::optional<TitleEffectState> effect;
+    if(r.Remaining()){
+      const auto start=r.U32();const auto variant=r.I32();const auto frames=r.U32();r.CheckCount(frames,4);
+      effect.emplace();StartTitleEffects(*effect,env,start);ResetTitleEffects(*effect,env,variant,start);
+      for(uint32_t i=0;i<frames;++i)UpdateTitleEffects(*effect,env,r.U32());
+    }
+    if(r.Remaining())throw FormatError("unexpected title capture input tail");
     const auto utilityBytes=SceneRead(usrdir/"env/env_game_utility.dat");PayloadReader utility(std::span<const uint8_t>(utilityBytes).subspan(3));
     const auto size=utility.U32(),count=utility.U32();utility.CheckCount(count,4);for(uint32_t i=0;i<count;++i)utility.U32();
     if(utility.U8())throw UnsupportedCommand("title input debug overlay is not bound");
     if(size!=in.FontSize)throw FormatError("title capture font differs from authored utility size");
-    const auto env=TitleEnvironment::Decode(SceneRead(usrdir/"env/env_scene_title.dat"));
     const auto main=BuildTitleDraw(env,in);const auto overlay=BuildTitleOverlay(env,overlays);
-    if(std::any_of(main.begin(),main.end(),[](const auto& c){return c.Kind==TitleDrawKind::Effect;}))
+    if(!effect && std::any_of(main.begin(),main.end(),[](const auto& c){return c.Kind==TitleDrawKind::Effect;}))
       throw UnsupportedCommand("title particle drawing is not bound; capture an earlier retained phase");
     if(std::any_of(overlay.begin(),overlay.end(),[](const auto& c){return c.Kind!=TitleOverlayKind::Rectangle && c.Kind!=TitleOverlayKind::SharedDialog;}))
       throw UnsupportedCommand("title capture requires closed submenus, resources and movie owners");
@@ -3181,16 +3189,22 @@ int RunTitleDrawProbe(const std::filesystem::path& usrdir,const std::filesystem:
     SdlCheck(SDL_SetWindowSize(window.Window,960,544),"title capture size");UiBlitRenderer renderer;FontTextures textures;
     for(const auto& c:main)if(c.Kind==TitleDrawKind::Sprite && !renderer.Textures.contains(c.Sprite.Texture))
       renderer.Upload(c.Sprite.Texture,DecodeSceneImage(resources->LoadProfileTexture(c.Sprite.Texture).Data));
+    if(effect){const ProfileTextureKey key{ProfileTextureSection::TitleUi,-1,68};renderer.Upload(key,DecodeSceneImage(resources->LoadProfileTexture(key).Data));}
     std::ofstream sprites(output/"sprites.jsonl"),glyphs(output/"glyphs.jsonl");
     if(!sprites || !glyphs)throw FormatError("cannot create title draw reports");
-    const auto unavailable=[](uint32_t){throw UnsupportedCommand("title effect owner is not bound");};
+    const auto drawEffect=[&](uint32_t index){
+      if(index!=68 || !effect)throw UnsupportedCommand("title effect owner is not bound");
+      for(const auto& sprite:BuildTitleEffects(*effect,env)){
+        renderer.DrawQuad(sprite,renderer.Textures.at(sprite.Texture),false);WriteUiBlit(sprites,sprite);sprites<<'\n';
+      }
+    };
     const auto closed=[](const TitleOverlayCommand& c){if(c.Kind!=TitleOverlayKind::SharedDialog)throw UnsupportedCommand("title overlay owner is not bound");};
     int width=0,height=0;SdlCheck(SDL_GetWindowSizeInPixels(window.Window,&width,&height),"title capture extent");
-    DrawTitleFrame(renderer,textures,font,env,main,overlay,width,height,unavailable,closed,&sprites,&glyphs);
+    DrawTitleFrame(renderer,textures,font,env,main,overlay,width,height,drawEffect,closed,&sprites,&glyphs);
     Capture(output/"frame.bmp",width,height);SdlCheck(SDL_GL_SwapWindow(window.Window),"title capture swap");
     sprites.close();glyphs.close();if(!sprites || !glyphs)throw FormatError("cannot save title draw reports");
     std::ofstream report(output/"capture.json");report<<"{\"passed\":true,\"phase\":"<<in.Phase<<",\"main_requests\":"<<main.size()<<",\"overlay_requests\":"<<overlay.size()
-      <<",\"textures\":"<<renderer.Textures.size()<<",\"width\":"<<width<<",\"height\":"<<height<<",\"closed_modal_fixture\":true,\"pc_title_constructed\":false,\"manual_acceptance\":false}\n";
+      <<",\"textures\":"<<renderer.Textures.size()<<",\"width\":"<<width<<",\"height\":"<<height<<",\"effect_fixture\":"<<(effect?"true":"false")<<",\"closed_modal_fixture\":true,\"pc_title_constructed\":false,\"manual_acceptance\":false}\n";
     report.close();if(!report)throw FormatError("cannot save title capture report");return 0;
   }catch(const std::exception& e){SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano title capture: %s",e.what());return 1;}
 }
