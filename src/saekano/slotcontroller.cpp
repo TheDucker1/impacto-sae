@@ -80,6 +80,6 @@ int32_t UpdateSlotController(SlotControllerState& s,SlotControllerServices& h,ui
   if(s.Phase==12){s.Fade.Tick(now);if(s.Fade.Finished())request(13,true);}
   if(s.Phase==13)request(14,true);
   if(s.Phase==14)return s.Loaded?3:2;
-  h.TickHelp();return 0;
+  h.TickNewMarker();return 0;
 }
 }

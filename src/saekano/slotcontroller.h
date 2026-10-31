@@ -22,7 +22,7 @@ struct SlotControllerServices {
   virtual bool UpdateSlotSave()=0;
   virtual void BeginSystemSave()=0;
   virtual SlotWritePoll UpdateSystemSave()=0;
-  virtual void TickHelp()=0;
+  virtual void TickNewMarker()=0; // Native1ac02 on the shared3990 marker owner.
 };
 struct SlotControllerState {
   bool Started=false,Loaded=false,DialogPresent=false;

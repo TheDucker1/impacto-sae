@@ -23,7 +23,8 @@ enum class ProfileTextureSection : uint32_t {
   BattleLeft = 0x105, BattleRight = 0x106, // Current owned side bank: Character=group, Entry=texture ordinal.
   BattleUi = 0x107, // resource.dat/root16, outer wrapper+cc -> context1c2c.
   TitleUi = 0x108, // resource.dat/root15, SceneTitle+90.
-  SystemUi = 0x109 // resource.dat/root13, SceneTitle+a0 and system submenus.
+  SystemUi = 0x109, // resource.dat/root13, SceneTitle+a0 and system submenus.
+  SlotThumbnail = 0x10a // Caller-owned data.bin surface; Entry is slot ordinal.
 };
 struct ProfileTextureKey {
   ProfileTextureSection Section;
