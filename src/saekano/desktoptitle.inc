@@ -9,14 +9,16 @@ class PcTitleOwner final:public TitleServices {
   TitleEffectState Effects;
   TitleWidgetInput Contacts;
   uint64_t Now=0;
+  uint32_t MovieFlags=0;
   std::optional<int32_t> RequestedScene;
   size_t Resets=0,HistoryClears=0;
   PcTitleOwner(SemanticState& owner,GameResources& resources,UiBlitRenderer& renderer,
       MusicPlayback& playback,ArchiveBgmResources& music,TitleAudioOutput& output,
+      MoviePlayback& movie,PcMovieFrameLayer& movieFrame,const std::filesystem::path& root,
       TitleEnvironment environment,TitleSessionSeeds seeds,std::span<const int32_t> repeats,
       uint32_t holdFrames,std::function<void()> clearHistory,uint64_t now)
       :Contacts(environment,holdFrames),Now(now),owner_(owner),resources_(resources),renderer_(renderer),
-       playback_(playback),music_(music),audio_(resources,output),env_(std::move(environment)),
+       playback_(playback),music_(music),audio_(resources,output),movie_(movie),movieFrame_(movieFrame),root_(root),env_(std::move(environment)),
        seeds_(std::move(seeds)),navigation_(repeats),clearHistory_(std::move(clearHistory)) {
     if(!owner_.SystemProgress || !owner_.BgmMasterVolume)throw FormatError("title requires complete system owner");
     if(owner_.SceneImages.Known)throw UnsupportedCommand("fresh PC title cannot retire a carried scene surface");
@@ -69,14 +71,14 @@ class PcTitleOwner final:public TitleServices {
   void BeginSubmenu(TitleSubmenu)override{throw UnsupportedCommand("PC title submenu owner is not bound");}
   int32_t UpdateSubmenu(TitleSubmenu)override{throw UnsupportedCommand("PC title submenu owner is not bound");}
   void DestroySubmenu(TitleSubmenu)override{throw UnsupportedCommand("PC title submenu owner is not bound");}
-  void PrepareMovie()override{throw UnsupportedCommand("PC title OP1 movie owner is not bound");}
-  bool MovieReady()override{throw UnsupportedCommand("PC title movie owner is not bound");}
-  void StartMovie()override{throw UnsupportedCommand("PC title movie owner is not bound");}
-  bool MovieBusy()override{throw UnsupportedCommand("PC title movie owner is not bound");}
-  bool MovieFinished()override{throw UnsupportedCommand("PC title movie owner is not bound");}
-  void StopMovie()override{throw UnsupportedCommand("PC title movie owner is not bound");}
+  void PrepareMovie()override{movieFrame_.Retire();movie_.Prepare(root_/"OP1.usm");}
+  bool MovieReady()override{return movie_.Ready();}
+  void StartMovie()override{movie_.Start(Now);}
+  bool MovieBusy()override{return movie_.State().Prepared && !movie_.State().Finished;}
+  bool MovieFinished()override{return movie_.State().Finished;}
+  void StopMovie()override{movie_.Stop();movieFrame_.Retire();}
   uint8_t MovieVolumeOption()const override{return owner_.SystemProgress->Bytes6022c[7];}
-  void SetMovieVolume(int32_t)override{throw UnsupportedCommand("PC title movie owner is not bound");}
+  void SetMovieVolume(int32_t percent)override{movie_.SetVolume(percent);}
   void ResetEffects(int32_t variant)override{ResetTitleEffects(Effects,env_,variant,Now);}
   void UpdatePressStartVisual(uint64_t)override{Input.PressStartReleased=Contacts.UpdatePressStart();UpdateTitlePressStartVisual(Visual);}
   void UpdateEffects(uint64_t now)override{UpdateTitleEffects(Effects,env_,now);}
@@ -85,7 +87,10 @@ class PcTitleOwner final:public TitleServices {
     if(RequestedScene)throw FormatError("title requested a second destination");
     RequestedScene=scene;
   }
-  void Update(uint64_t now){Now=now;UpdateTitle(State,env_,*this,Input,now);}
+  void Update(uint64_t now){
+    Now=now;movie_.Update(now);MovieFlags=uint32_t(movie_.Ready())|(uint32_t(movie_.State().Prepared && !movie_.State().Finished)<<1)|
+      (uint32_t(movie_.State().Finished)<<2);UpdateTitle(State,env_,*this,Input,now);
+  }
   void Draw(FontTextures& textures,PcFontFace& font,uint32_t fontSize,int width,int height,
       std::ostream* sprites=nullptr){
     auto in=TitleDrawFromState(State,Visual.Blink[0],{Visual.Ambient[0].Current,Visual.Ambient[1].Current},fontSize);
@@ -99,13 +104,16 @@ class PcTitleOwner final:public TitleServices {
         if(sprites){WriteUiBlit(*sprites,sprite);*sprites<<'\n';}
       }
     };
-    const auto services=[](const TitleOverlayCommand& c){
-      // Fresh title owns no active shared modal. Movie/submenus reject at entry.
-      if(c.Kind!=TitleOverlayKind::SharedDialog)throw UnsupportedCommand("PC title foreground service is not bound");
+    const auto services=[&](const TitleOverlayCommand& c){
+      if(c.Kind==TitleOverlayKind::MovieChannel){
+        if(c.Index>1)throw FormatError("title movie channel outside native pair");
+        if(c.Index==0 && movie_.State().Started && !movie_.State().Finished)movieFrame_.Draw();
+      }else if(c.Kind!=TitleOverlayKind::SharedDialog)throw UnsupportedCommand("PC title foreground service is not bound");
     };
     DrawTitleFrame(renderer_,textures,font,env_,BuildTitleDraw(env_,in),BuildTitleOverlay(env_,overlay),width,height,effects,services,sprites);
   }
   void Retire(){
+    movie_.Stop();movieFrame_.Retire();
     audio_.Retire();
     for(const auto& key:keys_)if(const auto it=renderer_.Textures.find(key);it!=renderer_.Textures.end()){
       glDeleteTextures(1,&it->second.Handle);renderer_.Textures.erase(it);
@@ -114,7 +122,8 @@ class PcTitleOwner final:public TitleServices {
   }
  private:
   SemanticState& owner_;GameResources& resources_;UiBlitRenderer& renderer_;MusicPlayback& playback_;
-  ArchiveBgmResources& music_;TitleAudioOwner audio_;TitleEnvironment env_;TitleSessionSeeds seeds_;
+  ArchiveBgmResources& music_;TitleAudioOwner audio_;MoviePlayback& movie_;PcMovieFrameLayer& movieFrame_;std::filesystem::path root_;
+  TitleEnvironment env_;TitleSessionSeeds seeds_;
   TitleNavigation navigation_;GameRandom random_;std::function<void()> clearHistory_;
   std::vector<ProfileTextureKey> keys_;bool ready_=false,committed_=false,firstMusic_=true;
 };

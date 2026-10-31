@@ -42,6 +42,8 @@
 #include "../texture/texture.h"
 #include "../video/ffmpegplayer.h"
 #include "../io/physicalfilestream.h"
+#include "../renderer/opengl/yuvframe.h"
+#include "movieplayback.h"
 
 #include <SDL3/SDL.h>
 extern "C" {
@@ -905,6 +907,7 @@ void DrawTitleFrame(UiBlitRenderer& renderer,FontTextures& textures,PcFontFace& 
   }
   GlCheck("title frame drawing");
 }
+#include "desktopmovieframe.inc"
 #include "desktoptitle.inc"
 #include "desktopprofile.inc"
 
@@ -4535,7 +4538,7 @@ int RunMovieInfoProbe(const std::filesystem::path& path,const std::filesystem::p
   }
 }
 int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::path& requestedProgressRoot,
-    const std::filesystem::path& captureDirectory,bool capturePointer,bool captureOpening){
+    const std::filesystem::path& captureDirectory,bool capturePointer,bool captureOpening,uint8_t captureMovie){
   bool created=false;
   try{
     const bool capture=!captureDirectory.empty();
@@ -4572,25 +4575,32 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     ArchiveBgmResources music(usrdir);ArchiveSeResources sounds(usrdir);SystemSoundAssets systemSounds(first);
     MusicPlayback playback(music,capture,&sounds);
     PlaybackTitleAudio audio(playback,systemSounds,ProfileVoiceGain(progress.Bytes6022c[10],1.0f),ProfileVoiceGain(progress.Bytes6022c[9],1.0f));
+    PcMovieFrameLayer movieFrame;MoviePlayback movie;movie.Present=[&](const AVFrame* frame,int64_t pts){movieFrame.Present(frame,pts);};
     // This is the fresh boot owner. A future title return must carry its actual
     // backlog/surface owners rather than substituting this initially empty ring.
     std::vector<std::u16string> backlog;
-    PcTitleOwner title(*owner,resources,renderer,playback,music,audio,env,seeds,utility.OpaqueTable,
+    PcTitleOwner title(*owner,resources,renderer,playback,music,audio,movie,movieFrame,usrdir,env,seeds,utility.OpaqueTable,
       widget.HoldFrames,[&]{backlog.clear();},0);
     std::ofstream trace,pcm;
     if(capture){trace.open(captureDirectory/"title.jsonl");pcm.open(captureDirectory/"audio.pcm",std::ios::binary);
       if(!trace || !pcm)throw FormatError("cannot open title capture outputs");}
     bool quit=false,pressedStart=false,chose=false,skippedVoice=false,pointerDown=false;std::array<bool,2> held{};
+    bool sawMovie=false,movieReturned=false,movieSkipped=false,movieImage=false;
     std::array<float,2> pointer{};int pointerCapture=0;int32_t previousPhase=-1;size_t frames=0;uint64_t epoch=SDL_GetTicks(),audioFrames=0;
     for(;!quit && !title.RequestedScene;++frames){
-      if(capture && frames>=1250)throw FormatError("title capture exhausted20s without New Game entry");
+      if(capture && frames>=(captureMovie==2?10000u:captureMovie?4000u:1250u))throw FormatError("title capture exhausted its bounded frame budget");
       title.Input={};title.NavigationInput={};title.NavigationInput.Held=held;
       const uint64_t now=capture?frames*16:SDL_GetTicks()-epoch;
       const auto key=[&](SDL_Keycode code){for(auto type:{SDL_EVENT_KEY_DOWN,SDL_EVENT_KEY_UP}){
         SDL_Event event{};event.type=type;event.key.windowID=SDL_GetWindowID(window.Window);event.key.key=code;
         event.key.down=type==SDL_EVENT_KEY_DOWN;SdlCheck(SDL_PushEvent(&event),"title capture explicit keyboard input");}};
       if(capture){
-        if(title.State.Phase==5 && title.State.Fade.Finished() && !pressedStart){key(SDLK_RETURN);pressedStart=true;}
+        if(captureMovie && title.State.Phase==25){
+          sawMovie=true;
+          if(captureMovie==1 && movie.State().VideoPresented>=6 && !movieSkipped){key(SDLK_RETURN);movieSkipped=true;}
+        }
+        if(sawMovie && title.State.Phase==5)movieReturned=true;
+        if(title.State.Phase==5 && title.State.Fade.Finished() && !pressedStart && (!captureMovie || movieReturned)){key(SDLK_RETURN);pressedStart=true;}
         if(title.State.Phase==10 && !chose){
           if(!capturePointer){key(SDLK_RETURN);chose=true;}
           else {
@@ -4643,10 +4653,13 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
           &title.State.Reveal,&title.State.LogoMove,&title.State.LogoDetail,&title.State.MenuMove,&title.State.MenuDetail,
           &title.State.Buttons[0],&title.State.Buttons[1],&title.State.Buttons[2],&title.State.Buttons[3]};
         for(size_t i=0;i<tweens.size();++i){if(i)trace<<',';trace<<tweens[i]->Value.Current;}
-        trace<<"]}\n";
+        const auto& ms=movie.State();trace<<"],\"movie_flags\":"<<title.MovieFlags<<",\"movie_position_us\":"<<ms.PositionUs
+          <<",\"movie_frame_pts_us\":"<<ms.FramePtsUs<<",\"movie_video_frames\":"<<ms.VideoPresented<<",\"movie_audio_frames\":"<<ms.AudioPlayed
+          <<",\"movie_volume\":"<<ms.Volume<<"}\n";
       }
       int width=0,height=0;SdlCheck(SDL_GetWindowSizeInPixels(window.Window,&width,&height),"title display extent");
       title.Draw(textures,font,uint32_t(utility.OpaqueWord),width,height);
+      if(captureMovie && !movieImage && title.State.Phase==25 && movie.State().VideoPresented>=6){Capture(captureDirectory/"movie-playing.bmp",width,height);movieImage=true;}
       if(capture && ((title.State.Phase!=previousPhase && (title.State.Phase==10 || title.State.Phase==21)) ||
           (title.State.Phase==5 && title.State.Fade.Finished() && !pressedStart)))
         Capture(captureDirectory/("phase-"+std::to_string(title.State.Phase)+".bmp"),width,height);
@@ -4656,13 +4669,15 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     if(capture){
       trace.close();pcm.close();if(!trace || !pcm)throw FormatError("cannot save title trace/PCM");
       if(quit || title.RequestedScene!=2 || title.Resets!=2 || title.HistoryClears!=1)throw FormatError("title capture missed native New Game handoff");
+      if(captureMovie && (!sawMovie || !movieReturned || (captureMovie==1 && !movieSkipped) || !movieImage))throw FormatError("title idle movie did not play/return");
       std::ofstream report(captureDirectory/"title.json");report << "{\"passed\":true,\"frames\":"<<frames<<",\"audio_frames\":"<<audioFrames
         <<",\"pointer\":"<<capturePointer<<",\"resets\":"<<title.Resets<<",\"history_clears\":"<<title.HistoryClears
-        <<",\"scene\":2,\"profile_shortcut\":false,\"submenus_bound\":false,\"movie_bound\":false,\"manual_acceptance\":false}\n";
+        <<",\"scene\":2,\"profile_shortcut\":false,\"submenus_bound\":false,\"movie_bound\":true,\"movie_capture\":"<<int(captureMovie)
+        <<",\"movie_returned\":"<<movieReturned<<",\"manual_acceptance\":false}\n";
       report.close();if(!report)throw FormatError("cannot save title owner report");
     }
     title.Retire();GlCheck("title texture retirement");
-    if(!renderer.Textures.empty() || audio.Playing(6) || audio.Playing(7))
+    if(!renderer.Textures.empty() || audio.Playing(6) || audio.Playing(7) || movie.State().Prepared || movieFrame.Available)
       throw FormatError("title retirement left resources or voices owned");
     if(capture){
       std::ofstream report(captureDirectory/"retirement.json");

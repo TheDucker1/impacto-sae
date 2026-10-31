@@ -12,6 +12,71 @@ static std::string MovieSourceDigest(const AVFrame* frame,int width,int height,i
   constexpr char hex[]="0123456789abcdef";std::string hash;
   for(auto byte:digest){hash+=hex[byte>>4];hash+=hex[byte&15];}return hash;
 }
+int RunMoviePlaybackSession(const std::filesystem::path& root,const std::filesystem::path& output,uint32_t requestedFrames){
+  bool created=false;
+  try{
+    if(requestedFrames>600)throw FormatError("movie session prefix exceeds10s; zero selects explicit EOF");
+    const auto target=std::filesystem::weakly_canonical(output),source=std::filesystem::weakly_canonical(root);
+    for(auto p=target;!p.empty();p=p.parent_path()){
+      if(p==source || p==source.parent_path())throw FormatError("movie session overlaps original data");if(p==p.parent_path())break;
+    }
+    if(std::filesystem::exists(target))throw FormatError("choose a fresh movie session directory");std::filesystem::create_directories(target);created=true;
+    ViewerWindow window(true);SdlCheck(SDL_SetWindowSize(window.Window,960,544),"movie session size");
+    UiBlitRenderer background;PcMovieFrameLayer layer;ArchiveBgmResources music(root);MusicPlayback playback(music,true);
+    MoviePlayback movie;std::ofstream frames(target/"frames.jsonl"),video(target/"video.jsonl"),pcm(target/"output.pcm",std::ios::binary);
+    if(!frames || !video || !pcm)throw FormatError("cannot create movie output session files");
+    size_t planeChecks=0;
+    movie.Present=[&](const AVFrame* frame,int64_t pts){
+      layer.Present(frame,pts);video<<"{\"pts_us\":"<<pts<<",\"upload\":"<<layer.Uploads;
+      if(layer.Uploads<=2){
+        int bytes=0;const auto hash=MovieSourceDigest(frame,frame->width,frame->height,bytes);
+        video<<",\"source_md5\":\""<<hash<<"\"";
+        const GLuint ids[]={layer.Planes.LumaId,layer.Planes.CbId,layer.Planes.CrId};GLint alignment=0;glGetIntegerv(GL_PACK_ALIGNMENT,&alignment);glPixelStorei(GL_PACK_ALIGNMENT,1);
+        for(int plane=0;plane<3;++plane){
+          const int w=frame->width/(plane?2:1),h=frame->height/(plane?2:1);std::vector<uint8_t> pixels(size_t(w)*h);
+          glBindTexture(GL_TEXTURE_2D,ids[plane]);glGetTexImage(GL_TEXTURE_2D,0,GL_RED,GL_UNSIGNED_BYTE,pixels.data());
+          for(int row=0;row<h;++row)if(!std::equal(pixels.data()+size_t(row)*w,pixels.data()+size_t(row+1)*w,frame->data[plane]+size_t(row)*frame->linesize[plane]))
+            throw FormatError("movie GPU plane differs from decoded visible rows");
+          ++planeChecks;
+        }
+        glPixelStorei(GL_PACK_ALIGNMENT,alignment);GlCheck("movie plane storage verification");
+      }
+      video<<"}\n";
+    };
+    movie.Prepare(root/"OP1.usm");
+    for(size_t attempt=0;!movie.Ready() && attempt<10000;++attempt){movie.Update(0);SDL_Delay(1);}
+    if(!movie.Ready() || movie.State().AudioPlayed || movie.State().VideoPresented)throw FormatError("movie decoded preroll did not remain stopped/ready");
+    movie.Start(0);uint64_t rendered=0;uint32_t frame=0;
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(60);
+    const auto draw=[&]{background.Draw({},960,544);if(movie.State().Started && !movie.State().Finished)layer.Draw();};
+    for(;requestedFrames?frame<requestedFrames:!movie.State().Finished;++frame){
+      if(frame>=7000 || std::chrono::steady_clock::now()>deadline)throw FormatError("movie device output session budget exhausted");
+      if(requestedFrames>16){if(frame==16)movie.SetVolume(50);if(frame==32)movie.SetVolume(0);if(frame==48)movie.SetVolume(100);}
+      movie.Update(uint64_t(frame)*16);draw();
+      std::array<int16_t,1536> samples{};playback.Update(0.016f);playback.Render(samples);
+      pcm.write(reinterpret_cast<const char*>(samples.data()),sizeof(samples));rendered+=768;
+      const auto& s=movie.State();frames<<"{\"frame\":"<<frame<<",\"position_us\":"<<s.PositionUs<<",\"video_pts_us\":"<<s.FramePtsUs
+        <<",\"video_presented\":"<<s.VideoPresented<<",\"audio_played\":"<<s.AudioPlayed<<",\"pending_audio\":"<<s.PendingAudio<<",\"pending_video\":"<<s.PendingVideo
+        <<",\"volume\":"<<s.Volume<<",\"finished\":"<<s.Finished<<"}\n";
+      if(frame==15 || frame==63)Capture(target/("frame-"+std::to_string(frame)+".bmp"),960,544);
+      SdlCheck(SDL_GL_SwapWindow(window.Window),"movie session swap");
+    }
+    movie.Update(uint64_t(frame)*16);draw();if(!movie.State().Finished)Capture(target/"frame-final.bmp",960,544);
+    const auto state=movie.State();if(planeChecks!=6 || !state.VideoPresented || !state.AudioPlayed)throw FormatError("movie session did not present actual video/audio");
+    if(!requestedFrames && (!state.Finished || !state.AudioEof || !state.VideoEof || state.AudioPlayed!=uint64_t(state.AudioLimit)))
+      throw FormatError("movie device EOF did not drain actual frame/audio queues");
+    movie.Stop();layer.Retire();if(movie.State().Prepared || layer.Available)throw FormatError("movie output did not retire");
+    frames.close();video.close();pcm.close();if(!frames || !video || !pcm)throw FormatError("cannot save movie output session");
+    std::ofstream report(target/"session.json");report<<"{\"passed\":true,\"full_eof\":"<<(requestedFrames==0)<<",\"rendered_frames\":"<<rendered
+      <<",\"audio_played\":"<<state.AudioPlayed<<",\"audio_limit\":"<<state.AudioLimit<<",\"video_presented\":"<<state.VideoPresented
+      <<",\"position_us\":"<<state.PositionUs<<",\"gpu_plane_checks\":"<<planeChecks<<",\"max_pending_video\":"<<state.MaxPendingVideo
+      <<",\"max_pending_audio\":"<<state.MaxPendingAudio<<",\"retired\":true,\"manual_acceptance\":false}\n";
+    report.close();if(!report)throw FormatError("cannot save movie output summary");return 0;
+  }catch(const std::exception& error){
+    if(created){std::ofstream f(output/"error.txt");f<<std::string(error.what()).substr(0,2048)<<'\n';}
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano movie output session: %s",error.what());return 1;
+  }
+}
 int RunMovieDecodeProbe(const std::filesystem::path& path,const std::filesystem::path& output,
     uint32_t requestedVideo,uint32_t requestedAudio){
   bool created=false;

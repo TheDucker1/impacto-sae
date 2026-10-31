@@ -42,5 +42,18 @@ void GLYUVFrame::Release() {
   glDeleteTextures(3, yuv);
 }
 
+void GLYUVFrame::SubmitStrided(const void* luma,int lumaStride,const void* cb,int cbStride,const void* cr,int crStride){
+  if(lumaStride<int(Width) || cbStride<int(Width)/2 || crStride<int(Width)/2)
+    throw std::invalid_argument("YUV plane stride is smaller than its visible width");
+  GLint alignment=0,rowLength=0;glGetIntegerv(GL_UNPACK_ALIGNMENT,&alignment);glGetIntegerv(GL_UNPACK_ROW_LENGTH,&rowLength);
+  glPixelStorei(GL_UNPACK_ALIGNMENT,1);
+  const GLuint ids[]={LumaId,CbId,CrId};const void* planes[]={luma,cb,cr};const int strides[]={lumaStride,cbStride,crStride};
+  for(int i=0;i<3;++i){
+    glBindTexture(GL_TEXTURE_2D,ids[i]);glPixelStorei(GL_UNPACK_ROW_LENGTH,strides[i]);
+    glTexImage2D(GL_TEXTURE_2D,0,GL_R8,GLsizei(Width)/(i?2:1),GLsizei(Height)/(i?2:1),0,GL_RED,GL_UNSIGNED_BYTE,planes[i]);
+  }
+  glPixelStorei(GL_UNPACK_ALIGNMENT,alignment);glPixelStorei(GL_UNPACK_ROW_LENGTH,rowLength);
+}
+
 }  // namespace OpenGL
 }  // namespace Impacto

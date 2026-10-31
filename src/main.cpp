@@ -309,13 +309,16 @@ int main(int argc, char* argv[]) {
     return Saekano::RunTitleAudioSession(argv[2],argv[3]);
   if(argc==4 && std::string_view(argv[1])=="--saekano-movie-info")return Saekano::RunMovieInfoProbe(argv[2],argv[3]);
   if(argc==6 && std::string_view(argv[1])=="--saekano-movie-decode")return Saekano::RunMovieDecodeProbe(argv[2],argv[5],uint32_t(std::stoul(argv[3])),uint32_t(std::stoul(argv[4])));
+  if(argc==5 && std::string_view(argv[1])=="--saekano-movie-session")return Saekano::RunMoviePlaybackSession(argv[2],argv[4],uint32_t(std::stoul(argv[3])));
   if(argc>=3 && std::string_view(argv[1])=="--saekano-play"){
     if(argc==3)return Saekano::RunTitleScene(argv[2]);
     if(argc==5 && std::string_view(argv[3])=="--save-dir")return Saekano::RunTitleScene(argv[2],argv[4]);
     if(argc==5 && (std::string_view(argv[3])=="--capture-title" || std::string_view(argv[3])=="--capture-title-pointer"))
       return Saekano::RunTitleScene(argv[2],{},argv[4],std::string_view(argv[3])=="--capture-title-pointer");
     if(argc==5 && std::string_view(argv[3])=="--capture-opening")return Saekano::RunTitleScene(argv[2],{},argv[4],false,true);
-    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Usage: --saekano-play USRDIR [--save-dir DIRECTORY | --capture-title DIRECTORY | --capture-title-pointer DIRECTORY | --capture-opening DIRECTORY]");return 1;
+    if(argc==5 && std::string_view(argv[3])=="--capture-title-movie")return Saekano::RunTitleScene(argv[2],{},argv[4],false,false,true);
+    if(argc==5 && std::string_view(argv[3])=="--capture-title-movie-eof")return Saekano::RunTitleScene(argv[2],{},argv[4],false,false,2);
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Usage: --saekano-play USRDIR [--save-dir DIRECTORY | --capture-title DIRECTORY | --capture-title-pointer DIRECTORY | --capture-opening DIRECTORY | --capture-title-movie DIRECTORY]");return 1;
   }
   if (argc >= 2 && std::string_view(argv[1]) == "--saekano-first-scene") {
     if(argc==5 && std::string_view(argv[3])=="--save-dir")
