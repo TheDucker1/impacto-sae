@@ -74,8 +74,19 @@ std::vector<uint16_t> SceneCharacterDrawOrder(const SemanticState& state);
 void RestoreNativeCharacters(SemanticState& state,
                              const NativeCharacterSavePrefix& saved,
                              uint64_t now);
-void TickCharacterQueues(SemanticState& state, uint64_t now);
 class CharacterPoseDriver;
+struct NativeCharacterPoseRestore {
+  bool Started = false, Ready = false;
+};
+// Fresh cache rebuilt from saved actor pose IDs in ascending map-key order.
+// Preparation may be asynchronous; no captured cache/heap objects are needed.
+void BeginNativeCharacterPoseRestore(SemanticState& state,
+                                     CharacterPoseDriver& driver,
+                                     NativeCharacterPoseRestore& restore);
+bool PollNativeCharacterPoseRestore(SemanticState& state,
+                                     CharacterPoseDriver& driver,
+                                     NativeCharacterPoseRestore& restore);
+void TickCharacterQueues(SemanticState& state, uint64_t now);
 void RestoreStaticCharacterPoses(SemanticState& state,
                                  const CharacterPoseDriver* driver);
 struct CharacterColorCommand {

@@ -137,6 +137,64 @@ void RestoreNativeCharacters(SemanticState& state,
   state.Characters = std::move(actors);
   state.CharacterRuntimeState = {true, saved.DefaultColor, {}, {}};
 }
+void BeginNativeCharacterPoseRestore(SemanticState& state,
+                                     CharacterPoseDriver& driver,
+                                     NativeCharacterPoseRestore& restore) {
+  RequireCharacters(state);
+  if (restore.Started)
+    throw FormatError("native character pose restore already started");
+  if (!state.CharacterRuntimeState.Foreground.empty() ||
+      !state.CharacterRuntimeState.Background.empty())
+    throw UnsupportedCommand("native character restore requires idle queues");
+  std::set<int32_t> poses;
+  for (const auto& [id, actor] : state.Characters) {
+    (void)id;
+    if (actor.SavedFields[11] >= 0) poses.insert(actor.SavedFields[11]);
+  }
+  if (poses.size() > state.PoseCache.Slots.size())
+    throw FormatError("saved actors exceed the native ten-pose cache");
+  driver.Reset();
+  state.PoseCache = FreshCharacterPoseCache();
+  for (auto& [id, actor] : state.Characters) {
+    (void)id;
+    actor.Pose = {};
+    actor.Pose.Known = true;
+    actor.Pose.Current = actor.Pose.Requested = actor.SavedFields[11];
+    actor.Pose.Face = actor.Pose.PreviousFace = actor.SavedFields[0];
+    const auto pose = actor.SavedFields[11];
+    if (pose < 0) continue;
+    // Native71f78 touches existing entries, reserves absent ones, then enqueues
+    // the actual pose load. Repeated actors share the same physical cache slot.
+    const auto found = TouchCharacterPose(state.PoseCache, pose);
+    const auto slot = found ? *found : ReserveCharacterPose(state.PoseCache, pose);
+    PrepareCharacterPose(state.PoseCache, slot, driver);
+  }
+  restore.Started = true;
+}
+bool PollNativeCharacterPoseRestore(SemanticState& state,
+                                     CharacterPoseDriver& driver,
+                                     NativeCharacterPoseRestore& restore) {
+  if (!restore.Started)
+    throw FormatError("native character pose restore has not started");
+  if (restore.Ready) return true;
+  if (!driver.GateReady()) return false;
+  PollCharacterPoseLoads(state.PoseCache, driver);
+  for (const auto& [id, actor] : state.Characters) {
+    (void)id;
+    const auto pose = actor.SavedFields[11];
+    if (pose >= 0 && !CharacterPoseReady(state.PoseCache, pose)) return false;
+  }
+  // Native72840's install pass performs another lookup/touch per actor, then
+  // attaches ready geometry. No actor is exposed before all resources arrive.
+  for (const auto& [id, actor] : state.Characters) {
+    (void)id;
+    if (actor.SavedFields[11] >= 0)
+      (void)TouchCharacterPose(state.PoseCache, actor.SavedFields[11]);
+  }
+  RestoreStaticCharacterPoses(state, &driver);
+  restore.Ready = true;
+  return true;
+}
 void TickCharacterQueues(SemanticState& state, uint64_t now) {
   if (!state.CharacterRuntimeState.Known) return;
   auto tick = [&](std::vector<uint16_t>& queue, bool force) {
