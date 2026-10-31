@@ -305,6 +305,8 @@ int main(int argc, char* argv[]) {
     return Saekano::RunSceneSdkUiProbe(argv[2],argv[3]);
   if(argc==4 && std::string_view(argv[1])=="--saekano-options-draw-check")
     return Saekano::RunOptionsDrawProbe(argv[2],argv[3]);
+  if(argc==4 && std::string_view(argv[1])=="--saekano-slot-thumbnail-check")
+    return Saekano::RunSlotThumbnailProbe(argv[2],argv[3]);
   if(argc==5 && std::string_view(argv[1])=="--saekano-title-draw-check")
     return Saekano::RunTitleDrawProbe(argv[2],argv[3],argv[4]);
   if(argc==4 && std::string_view(argv[1])=="--saekano-title-audio-session")

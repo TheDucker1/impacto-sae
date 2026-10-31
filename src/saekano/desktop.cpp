@@ -1,5 +1,6 @@
 #include "systemowner.h"
 #include "progressstore.h"
+#include "slotdata.h"
 #include "desktop.h"
 
 #include "live2dsdk.h"
@@ -539,6 +540,34 @@ void main(){
                  GL_RGBA, GL_UNSIGNED_BYTE, pixels.Rgba.data());
     GlCheck("profile UI texture upload");
   }
+  void UploadSlotThumbnail(uint32_t slot,const SlotThumbnail& thumbnail) {
+    if(slot>=NativeSlotData::SlotCount || thumbnail.Format!=4 || thumbnail.Pixels.size()!=192*108*2)
+      throw FormatError("invalid slot thumbnail surface");
+    const ProfileTextureKey key{ProfileTextureSection::SlotThumbnail,-1,slot};
+    if(Textures.contains(key))throw FormatError("slot thumbnail is owned by another screen");
+    GLuint handle=0;glGenTextures(1,&handle);
+    try {
+      glBindTexture(GL_TEXTURE_2D,handle);
+      // Native b5b9e assembly: linear192x108, one mip, LINEAR min/mag.
+      // InitLinear's default U/V mode is CLAMP. Native source rectangles can
+      // extend one pixel past width; retain them and clamp the actual sampler.
+      glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
+      glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+      glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+      glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+      // GXM05001000 U5U6U5_RGB: GL565 plus the GXM RGB swizzle.
+      // Keep packed precision, including during bilinear filtering.
+      const GLint swizzle[]={GL_BLUE,GL_GREEN,GL_RED,GL_ONE};
+      glTexParameteriv(GL_TEXTURE_2D,GL_TEXTURE_SWIZZLE_RGBA,swizzle);
+      glPixelStorei(GL_UNPACK_ALIGNMENT,2);
+      glPixelStorei(GL_UNPACK_ROW_LENGTH,0);
+      glPixelStorei(GL_UNPACK_SWAP_BYTES,GL_FALSE);
+      glTexImage2D(GL_TEXTURE_2D,0,GL_RGB565,192,108,0,GL_RGB,
+                   GL_UNSIGNED_SHORT_5_6_5,thumbnail.Pixels.data());
+      GlCheck("packed slot thumbnail upload");
+      Textures.emplace(key,BoundTexture{handle,192,108});
+    }catch(...){glDeleteTextures(1,&handle);throw;}
+  }
   void Draw(std::span<const UiSpriteBlit> blits, int width, int height,
             std::span<const UiRenderCommand> commands = {}) {
     if (width <= 0 || height <= 0) return;
@@ -665,6 +694,33 @@ void main(){
     Buffer = Vao = Program = Vertex = Fragment = 0;
   }
   ~UiBlitRenderer() { Release(); }
+};
+class PcSlotThumbnails {
+ public:
+  PcSlotThumbnails(UiBlitRenderer& renderer,std::span<const NativeSlotRecord> records):renderer_(renderer){
+    if(records.size()>NativeSlotData::SlotCount)throw FormatError("too many slot thumbnail records");
+    try{
+      for(size_t i=0;i<records.size();++i)if(records[i].Thumbnail){
+        const ProfileTextureKey key{ProfileTextureSection::SlotThumbnail,-1,uint32_t(i)};
+        // Reserve ownership before upload so allocation failure also rolls back.
+        keys_.push_back(key);
+        try{renderer_.UploadSlotThumbnail(uint32_t(i),*records[i].Thumbnail);}
+        catch(...){keys_.pop_back();throw;}
+      }
+    }catch(...){Release();throw;}
+  }
+  PcSlotThumbnails(const PcSlotThumbnails&)=delete;
+  PcSlotThumbnails& operator=(const PcSlotThumbnails&)=delete;
+  ~PcSlotThumbnails(){Release();}
+  size_t Size()const{return keys_.size();}
+ private:
+  void Release(){
+    for(const auto& key:keys_)if(const auto it=renderer_.Textures.find(key);it!=renderer_.Textures.end()){
+      glDeleteTextures(1,&it->second.Handle);renderer_.Textures.erase(it);
+    }
+    keys_.clear();
+  }
+  UiBlitRenderer& renderer_;std::vector<ProfileTextureKey> keys_;
 };
 struct ParticleGlRenderer {
   const ParticleManager* TextureOwner = nullptr;
@@ -3194,6 +3250,78 @@ int RunScreenFilterProbe(const std::filesystem::path& fixtureDirectory,
     }
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Saekano filter probe: %s", error.what());
     return 1;
+  }
+}
+int RunSlotThumbnailProbe(const std::filesystem::path& slots,const std::filesystem::path& output){
+  bool created=false;
+  try{
+    const auto input=std::filesystem::weakly_canonical(slots),out=std::filesystem::weakly_canonical(output);
+    for(auto p=out;!p.empty();p=p.parent_path()){
+      if(p==input.parent_path())throw FormatError("thumbnail capture overlaps source saves");
+      if(p==p.parent_path())break;
+    }
+    if(std::filesystem::exists(out))throw FormatError("choose a fresh thumbnail capture directory");
+    const auto source=SceneRead(input);auto data=NativeSlotData::Decode(source);
+    std::filesystem::create_directories(out);created=true;
+    ViewerWindow window(true);SdlCheck(SDL_SetWindowSize(window.Window,960,544),"thumbnail viewport");
+    UiBlitRenderer renderer;
+    const ProfileTextureKey sentinel{ProfileTextureSection::SharedUi,-1,0};
+    renderer.Upload(sentinel,{1,1,{13,29,47,255}});const auto sentinelHandle=renderer.Textures.at(sentinel).Handle;
+    std::vector<GLuint> handles;size_t uploaded=0,packedBytes=0;
+    {
+      PcSlotThumbnails owner(renderer,data.Records);uploaded=owner.Size();
+      for(size_t i=0;i<data.Records.size();++i)if(data.Records[i].Thumbnail){
+        const auto& texture=renderer.Textures.at({ProfileTextureSection::SlotThumbnail,-1,uint32_t(i)});
+        handles.push_back(texture.Handle);glBindTexture(GL_TEXTURE_2D,texture.Handle);
+        Bytes packed(192*108*2);glPixelStorei(GL_PACK_ALIGNMENT,2);glPixelStorei(GL_PACK_ROW_LENGTH,0);glPixelStorei(GL_PACK_SWAP_BYTES,GL_FALSE);
+        glGetTexImage(GL_TEXTURE_2D,0,GL_RGB,GL_UNSIGNED_SHORT_5_6_5,packed.data());
+        if(packed!=data.Records[i].Thumbnail->Pixels)throw FormatError("thumbnail packed readback differs");
+        packedBytes+=packed.size();
+      }
+      bool rejected=false;try{PcSlotThumbnails duplicate(renderer,data.Records);}catch(const FormatError&){rejected=true;}
+      if(uploaded && !rejected)throw FormatError("duplicate thumbnail ownership accepted");
+    }
+    for(const auto handle:handles)if(glIsTexture(handle))throw FormatError("thumbnail surface did not retire");
+    if(renderer.Textures.size()!=1 || !glIsTexture(sentinelHandle))throw FormatError("thumbnail retirement damaged shared resources");
+    // The existing real baseline thumbnails are blank. Use an explicit color
+    // fixture to check channels/rows; it is not a native occupied-scene image.
+    std::vector<NativeSlotRecord> fixture(2);fixture[0].Thumbnail.emplace();
+    auto& pixels=fixture[0].Thumbnail->Pixels;pixels.resize(192*108*2);
+    for(size_t i=0;i<pixels.size()/2;++i){const auto v=uint16_t((i*73)^((i/192)*0x421));pixels[2*i]=uint8_t(v);pixels[2*i+1]=uint8_t(v>>8);}
+    int maxError=0;
+    {
+      PcSlotThumbnails owner(renderer,fixture);
+      if(owner.Size()!=1 || renderer.Textures.contains({ProfileTextureSection::SlotThumbnail,-1,1}))throw FormatError("absent thumbnail acquired a surface");
+      for(const bool cropped:{false,true}){
+        const size_t height=cropped?102:108,offset=cropped?1:0;
+        renderer.Draw({},960,544);glDisable(GL_DITHER);
+        UiSpriteBlit blit;blit.Texture={ProfileTextureSection::SlotThumbnail,-1,0};blit.Destination={0,0,192,int32_t(height)};blit.Source={int32_t(offset),int32_t(offset),192,int32_t(height)};blit.Color={255,255,255,255};
+        renderer.DrawQuad(blit,renderer.Textures.at(blit.Texture),false);
+        Bytes actual(192*height*4);glPixelStorei(GL_PACK_ALIGNMENT,4);glReadPixels(0,544-GLint(height),192,GLsizei(height),GL_RGBA,GL_UNSIGNED_BYTE,actual.data());
+        for(size_t y=0;y<height;++y)for(size_t x=0;x<192;++x){
+          const auto i=(y+offset)*192+std::min(x+offset,size_t(191));const uint16_t v=uint16_t(pixels[2*i])|uint16_t(pixels[2*i+1])<<8;
+          const std::array<int,4> expected{int((v&31)*255+15)/31,int(((v>>5)&63)*255+31)/63,int((v>>11)*255+15)/31,255};
+          for(size_t c=0;c<4;++c)maxError=std::max(maxError,std::abs(int(actual[((height-1-y)*192+x)*4+c])-expected[c]));
+        }
+        if(maxError>1)throw FormatError("thumbnail sampled channels/rows/clamp differ");
+        std::ofstream raw(out/(cropped?"sampled-crop-rgba.bin":"sampled-full-rgba.bin"),std::ios::binary);raw.write(reinterpret_cast<const char*>(actual.data()),std::streamsize(actual.size()));
+      }
+    }
+    // A failure after one successful upload must release that upload too.
+    fixture[1].Thumbnail.emplace();fixture[1].Thumbnail->Format=99;
+    bool malformed=false;try{PcSlotThumbnails bad(renderer,fixture);}catch(const FormatError&){malformed=true;}
+    if(!malformed || renderer.Textures.size()!=1 || !glIsTexture(sentinelHandle))throw FormatError("partial thumbnail upload did not roll back");
+    GlCheck("thumbnail upload/sample/retirement checks");
+    if(SceneRead(input)!=source)throw FormatError("source slots changed during read-only thumbnail check");
+    std::ofstream report(out/"thumbnail.json");
+    report<<"{\"passed\":true,\"uploaded\":"<<uploaded<<",\"packed_bytes_compared\":"<<packedBytes
+      <<",\"fixture_pixels\":40320,\"authored_crop_clamp\":true,\"max_sample_error_u8\":"<<maxError
+      <<",\"retired\":true,\"shared_texture_preserved\":true,\"partial_failure_rolled_back\":true,"
+        "\"source_unchanged\":true,\"live_continue_bound\":false,\"native_occupied_pixel_parity\":false}\n";
+    if(!report)throw FormatError("cannot save thumbnail report");return 0;
+  }catch(const std::exception& error){
+    if(created){std::ofstream failure(output/"error.txt");failure<<std::string(error.what()).substr(0,2048);}
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano thumbnail probe: %s",error.what());return 1;
   }
 }
 int RunOptionsDrawProbe(const std::filesystem::path& usrdir,const std::filesystem::path& output){
