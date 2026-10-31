@@ -23,6 +23,7 @@ struct OptionsSliderServices {
   virtual void SetChannelVolume(uint32_t channel,int32_t percent)=0;
   virtual void SetUiVolume(int32_t percent)=0;
 };
+void ApplyOptionsVolume(int32_t row,int32_t percent,OptionsSliderServices& services);
 // Native56374/552fc. Contacts are already sampled from the shared input owner;
 // the frontend uses UpdateWidget to retain the native pre-update handle position.
 int32_t UpdateOptionsSlider(OptionsSliderState& state,OptionsRowNavigation& navigation,

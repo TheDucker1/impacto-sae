@@ -4,6 +4,16 @@
 #include <bit>
 #include <limits>
 namespace Impacto::Saekano {
+void ApplyOptionsVolume(int32_t row,int32_t percent,OptionsSliderServices& h){
+  if(row<0 || row>4 || percent<0 || percent>100)throw FormatError("invalid Options volume request");
+  switch(row){
+    case 0:h.SetBgmVolume(percent);break;
+    case 1:h.SetSeVolume(percent);break;
+    case 2:h.SetVoiceVolume(percent);break;
+    case 3:for(const auto channel:{7u,8u,11u})h.SetChannelVolume(channel,percent);break;
+    case 4:h.SetUiVolume(percent);break;
+  }
+}
 void SelectOptionsRow(OptionsRowNavigation& n,int32_t row){
   const auto delta=row-n.Selected;n.Selected=row;
   if(delta>0){
@@ -40,16 +50,7 @@ int32_t UpdateOptionsSlider(OptionsSliderState& s,OptionsRowNavigation& n,Option
   const auto commit=[&]{
     s.Value=quantize();values[index]=uint8_t(s.Value);
     if(text)snap();
-    else {
-      const int32_t percent=s.Value*10;
-      switch(l.Row){
-        case 0:h.SetBgmVolume(percent);break;
-        case 1:h.SetSeVolume(percent);break;
-        case 2:h.SetVoiceVolume(percent);break;
-        case 3:for(const auto channel:{7u,8u,11u})h.SetChannelVolume(channel,percent);break;
-        case 4:h.SetUiVolume(percent);break;
-      }
-    }
+    else ApplyOptionsVolume(l.Row,s.Value*10,h);
   };
   h.UpdateWidget(s.X,l.Y);
   if(in.Pressed){snap();if(n.Selected!=l.Row){SelectOptionsRow(n,l.Row);h.UiSound(2);}s.KeyboardActive=false;}

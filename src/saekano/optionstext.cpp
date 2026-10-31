@@ -1,5 +1,6 @@
 #include "optionstext.h"
 #include "commands.h"
+#include "optionsrepeat.h"
 #include <algorithm>
 #include <bit>
 #include <limits>
@@ -7,11 +8,6 @@ namespace Impacto::Saekano {
 namespace {
 constexpr std::array<size_t,3> Numeric{0,1,3};
 constexpr std::array<size_t,4> Toggles{2,4,5,6};
-bool Repeat(int32_t counter,std::span<const int32_t> intervals){
-  if(counter<=0)return counter==0;
-  int64_t sum=0;for(auto interval:intervals){sum+=interval;if(sum>=counter)return sum==counter;}
-  return (int64_t(counter)-sum)%intervals.back()==0;
-}
 struct SliderSink final:OptionsSliderServices {
   OptionsTextServices& Host;uint32_t Index;
   SliderSink(OptionsTextServices& host,uint32_t index):Host(host),Index(index){}
@@ -25,7 +21,7 @@ struct SliderSink final:OptionsSliderServices {
 };
 }
 void StartOptionsText(OptionsTextState& s,const OptionsEnvironment& e,const OptionsValues& values,std::span<const int32_t> repeats){
-  if(repeats.empty() || repeats.size()>1000000 || std::any_of(repeats.begin(),repeats.end(),[](int32_t v){return v<=0;}))throw FormatError("invalid Options repeat intervals");
+  ValidateOptionsRepeatIntervals(repeats);
   s={};s.RepeatIntervals.assign(repeats.begin(),repeats.end());
   for(size_t i=0;i<3;++i){
     const auto at=uint16_t(0x16c+i*16);const auto origin=e.Points.at(at),step=e.Points.at(uint16_t(at+8));
@@ -55,15 +51,8 @@ int32_t UpdateOptionsText(OptionsTextState& s,OptionsRowNavigation& n,OptionsVal
   if(!available)return 1;
   const auto row=size_t(n.Selected);
   if(row<3){
-    bool right=false,left=false;
-    const auto action=[&](size_t direction){
-      auto& counter=s.RepeatCounters[direction];
-      if(in.Pressed[direction]){counter=0;return true;}
-      if(!in.Held[direction]){counter=0;return false;}
-      counter=std::bit_cast<int32_t>(uint32_t(counter)+1);return Repeat(counter,s.RepeatIntervals);
-    };
-    right=action(0);if(!right)left=action(1);
-    if(right || left){h.UiSound(2);auto& v=s.Sliders[row].Value;v=std::clamp(v+(right?1:-1),0,s.Maximum[row]);}
+    const auto direction=OptionsRepeatDirection(s.RepeatCounters,s.RepeatIntervals,in.Pressed,in.Held);
+    if(direction){h.UiSound(2);auto& v=s.Sliders[row].Value;v=std::clamp(v+direction,0,s.Maximum[row]);}
     values[Numeric[row]]=uint8_t(s.Sliders[row].Value);snap(row);
   }else if(in.Pressed[0] || in.Pressed[1]){h.UiSound(2);toggle(row-3);}
   return 0;
