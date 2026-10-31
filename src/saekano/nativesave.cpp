@@ -7,6 +7,87 @@
 #include <set>
 
 namespace Impacto::Saekano {
+NativeContextSave DecodeNativeContextSave(std::span<const uint8_t> bytes) {
+  NativeContextSave result;
+  result.Images = DecodeNativeImageSavePrefix(bytes);
+  result.Characters = DecodeNativeCharacterSavePrefix(bytes);
+  size_t cursor = result.Images.EndOffset;
+  auto read = [&](size_t width) {
+    if (cursor > bytes.size() || width > bytes.size() - cursor)
+      throw FormatError("truncated native saved context");
+    uint32_t value = 0;
+    for (size_t i = 0; i < width; ++i)
+      value |= uint32_t(bytes[cursor++]) << (8 * i);
+    return value;
+  };
+  auto field = [&](uint32_t offset, uint8_t width = 4) {
+    auto value = read(width);
+    result.Fields.push_back({offset, value, width});
+    return value;
+  };
+  auto color = [&](uint32_t offset) {
+    const auto packed = read(4);
+    constexpr std::array<unsigned, 4> Shift{16, 8, 0, 24};
+    for (size_t i = 0; i < 4; ++i)
+      result.Fields.push_back({offset + uint32_t(i),
+                               uint8_t(packed >> Shift[i]), 1});
+  };
+  auto count = [&](size_t rowSize) {
+    const auto value = read(4);
+    if (value > (bytes.size() - cursor) / rowSize)
+      throw FormatError("invalid native saved context count");
+    return value;
+  };
+  result.SavedCommand = std::bit_cast<int32_t>(read(4));
+  result.File = std::bit_cast<int32_t>(read(4));
+  result.SavedNextCommand = std::bit_cast<int32_t>(read(4));
+  result.ResumeCommand = result.SavedNextCommand == -1
+                            ? result.SavedCommand : result.SavedNextCommand;
+  field(0x1c54, 1);
+  // Native769dc ignores the serialized count and always reads five shorts.
+  // Reject inconsistent metadata rather than reproduce its unchecked behavior.
+  if (read(4) != result.Shorts.size())
+    throw FormatError("native saved short array must contain five entries");
+  for (auto& value : result.Shorts) value = uint16_t(read(2));
+  for (uint32_t offset : {0x15ac, 0x15b0, 0x15b4, 0x15b8, 0x15bc})
+    field(offset);
+  // Existing character decoder includes the following default-color word2038.
+  cursor = result.Characters.EndOffset;
+  for (uint32_t offset : {0x20b4, 0x20c0, 0x20b8, 0x20c8,
+                          0x20cc, 0x20c4, 0x20bc}) field(offset);
+  const auto codeUnits = count(2);
+  for (uint32_t i = 0; i < codeUnits; ++i)
+    result.StringCodeUnits.push_back(uint16_t(read(2)));
+  field(0x1b9e, 2);
+  const auto listCount = count(12);
+  for (uint32_t i = 0; i < listCount; ++i)
+    result.List.push_back({read(4), read(4), read(4)});
+  field(0x20d8);
+  color(0x1c6c);
+  field(0x1c64);
+  field(0x1c68);
+  field(0x1c60, 1);
+  field(0x14518);
+  // Native9e144 uses the fixed destination span, independent of this count.
+  if (read(4) != result.FixedRecords.size())
+    throw FormatError("native saved fixed array must contain six entries");
+  for (auto& row : result.FixedRecords)
+    for (auto& value : row) value = read(4);
+  field(0x150c);
+  field(0x1bf1, 1);
+  for (uint32_t offset : {0x1c00, 0x1bfc, 0x1c04, 0x1c10}) field(offset);
+  color(0x1c18);
+  const auto tableOffset = cursor;
+  const auto models = count(43);
+  cursor += size_t(models) * 43;
+  read(4);
+  read(4);
+  result.Models = DecodeNativeLive2dSaveTail(bytes, cursor, models);
+  if (result.Models.TableOffset != tableOffset)
+    throw FormatError("native saved model table offset mismatch");
+  result.EndOffset = cursor;
+  return result;
+}
 NativeLive2dSaveTail DecodeNativeLive2dSaveTail(std::span<const uint8_t> bytes,
                                                 size_t used, uint32_t count) {
   constexpr size_t RecordSize = 43;
