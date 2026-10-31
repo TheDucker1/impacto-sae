@@ -16,6 +16,8 @@ struct OptionsControlServices {
   virtual int32_t UpdateSampleNavigation(int32_t selected)=0;
   virtual void ResetSamplePage()=0;
   virtual void UpdateRevertContact()=0;
+  // Native queries the previous Revert update before collecting its next frame.
+  virtual std::optional<bool> RevertReleased(){return std::nullopt;}
 };
 struct OptionsControlState {
   bool Started=false,SampleNavigationEnabled=false;

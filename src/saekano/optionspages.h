@@ -4,9 +4,11 @@
 #include "optionstext.h"
 #include "optionsaudio.h"
 #include "optionsvoice.h"
+#include <optional>
 namespace Impacto::Saekano {
 enum class OptionsWidgetKind { Tab,Revert,Slider,Background,Toggle,Label,Mode,CharacterToggle,CharacterLabel,GroupLabel };
 struct OptionsWidgetId {int32_t Page=-1;OptionsWidgetKind Kind=OptionsWidgetKind::Tab;uint32_t Index=0;};
+struct OptionsWidgetContact {bool Pressed=false,Held=false,Released=false;int32_t PointerX=0;};
 struct OptionsPageInput {
   OptionsControlInput Common;
   OptionsNavigationInput Vertical;
@@ -20,6 +22,11 @@ struct OptionsPageInput {
 struct OptionsPageOutput {
   virtual ~OptionsPageOutput()=default;
   virtual void UpdateWidget(OptionsWidgetId widget,int32_t x,int32_t y)=0;
+  // A live input host updates/queries the concrete widget here. Null retains
+  // explicit contact fixtures; no widget is sampled ahead of the native branch.
+  virtual std::optional<OptionsWidgetContact> CollectWidget(OptionsWidgetId widget,
+      int32_t x,int32_t y,uint64_t){UpdateWidget(widget,x,y);return std::nullopt;}
+  virtual std::optional<OptionsWidgetContact> QueryWidgetContact(OptionsWidgetId){return std::nullopt;}
   virtual void SetToggleVariant(uint32_t page,uint32_t index,bool inverted)=0;
   virtual void UiSound(int32_t id)=0;
   virtual void StopChannel(uint32_t channel)=0;

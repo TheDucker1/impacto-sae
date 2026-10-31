@@ -11,7 +11,6 @@ struct OptionsWidgetComponent {
 };
 struct OptionsWidgetGroup {std::vector<OptionsWidgetComponent> Variants;size_t Selected=0;};
 struct OptionsWidgetRecord {OptionsWidgetId Id;std::vector<OptionsWidgetGroup> Groups;};
-struct OptionsWidgetContact {bool Pressed=false,Held=false,Released=false;int32_t PointerX=0;};
 // Actual53302 widget construction. Collection updates every variant only when
 // that widget's owner delivers Update; queries/drawing use its selected variant.
 class OptionsWidgets {

@@ -25,7 +25,7 @@ int32_t UpdateOptionsControls(OptionsControlState& s,const OptionsControlInput& 
     const auto consumed=s.SelectedTab<3?h.UpdatePage(uint32_t(s.SelectedTab)):0;
     if(!consumed){
       if(in.Close){h.UiSound(3);h.StopChannel(8);return 1;}
-      if(in.Revert || in.ReleasedRevert){h.UiSound(4);h.StopChannel(8);return 2;}
+      if(in.Revert || h.RevertReleased().value_or(in.ReleasedRevert)){h.UiSound(4);h.StopChannel(8);return 2;}
       if(in.PreviousTab || in.NextTab){
         const size_t direction=in.PreviousTab?0:1;
         s.SelectedTab=(s.SelectedTab+s.TabCount+(direction==0?-1:1))%s.TabCount;
