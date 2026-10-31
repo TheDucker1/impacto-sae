@@ -3,6 +3,7 @@
 #include "headlessbackend.h"
 #include "resources.h"
 #include "profilearchive.h"
+#include "optionspreview.h"
 #include "../audio/audiosystem.h"
 #include "../audio/openal/audiobackend.h"
 #include "../audio/openal/openalaudiochannel.h"
@@ -977,6 +978,36 @@ int RunMissionVoiceSession(const std::filesystem::path& usrdir,
   }catch(const std::exception& e) {
     if(created){std::ofstream error(captureDirectory/"error.txt");error << std::string(e.what()).substr(0,2048);}
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano mission voice: %s",e.what());return 1;
+  }
+}
+int RunOptionsPreviewSession(const std::filesystem::path& usrdir,const std::filesystem::path& captureDirectory){
+  bool created=false;
+  try{
+    CreateCaptureDirectory(usrdir,captureDirectory);created=true;
+    if(!SDL_Init(SDL_INIT_EVENTS))throw FormatError(SDL_GetError());
+    struct Cleanup{~Cleanup(){SDL_Quit();}} cleanup;
+    const auto read=[](const std::filesystem::path& path){std::ifstream f(path,std::ios::binary);if(!f)throw FormatError("missing preview resource");return Bytes{std::istreambuf_iterator<char>(f),{}};};
+    auto resources=std::make_unique<GameResources>(read(usrdir/"resource.dat"));ArchiveBgmResources music(usrdir);
+    MusicPlayback playback(music,true);PlaybackProfileVoice output(playback,10,1);OptionsPreviewVoices samples(*resources,output);
+    const auto render=[&](size_t frames){std::vector<int16_t> pcm(frames*2);playback.Render(pcm);return pcm;};
+    output.Prepare(resources->LoadSystemVoice(6,0).Data);output.Start(0);render(2400);
+    if(output.Stopped())throw FormatError("logo source was unavailable before preview replacement");
+    samples.Prepare(0);if(!output.Stopped())throw FormatError("preview preparation did not stop the previous source");
+    samples.Start(50);auto pcm=render(24000);const auto before=playback.ProfileVoicePosition();const auto stopped=output.Stopped();
+    bool rejected=false;try{samples.Prepare(4);}catch(const FormatError&){rejected=true;}
+    if(!rejected || playback.ProfileVoicePosition()!=before || output.Stopped()!=stopped)throw FormatError("invalid preview changed physical7");
+    bool consumed=false;try{samples.Start(550);}catch(const UnsupportedCommand&){consumed=true;}if(!consumed)throw FormatError("preview start reused consumed preparation");
+    if(!before || *before<=0)throw FormatError("preview sample clock did not advance");
+    int32_t peak=0;for(auto sample:pcm)peak=std::max(peak,std::abs(int32_t(sample)));if(peak<=8)throw FormatError("preview prefix is silent");
+    output.Stop();auto tail=render(4800);int32_t tailPeak=0;for(auto sample:std::span(tail).last(2048))tailPeak=std::max(tailPeak,std::abs(int32_t(sample)));
+    if(!output.Stopped() || tailPeak>1)throw FormatError("preview stop did not settle");
+    SaveWav(captureDirectory/"preview-prefix.wav",pcm);
+    std::ofstream report(captureDirectory/"summary.json");report<<"{\"passed\":true,\"mode\":0,\"channel\":7,\"frames\":24000,\"rate\":48000,\"channels\":2,\"peak\":"<<peak
+      <<",\"position_seconds\":"<<*before<<",\"stop_tail_peak\":"<<tailPeak<<",\"replaced_logo\":true,\"prepare_stops_before_start\":true,\"invalid_preserves\":true,\"start_requires_prepare\":true,\"software_openal_output\":true,\"manual_audible_acceptance\":false,\"pc_options_bound\":false}\n";
+    report.close();if(!report)throw FormatError("cannot save preview report");return 0;
+  }catch(const std::exception& error){
+    if(created){std::ofstream out(captureDirectory/"error.txt");out<<std::string(error.what()).substr(0,2048);}
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano Options preview: %s",error.what());return 1;
   }
 }
 int RunTitleAudioSession(const std::filesystem::path& usrdir,const std::filesystem::path& captureDirectory){

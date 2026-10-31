@@ -167,6 +167,8 @@ int RunUiSoundSession(const std::filesystem::path& usrdir,
                       const std::filesystem::path& captureDirectory);
 int RunTitleAudioSession(const std::filesystem::path& usrdir,
                          const std::filesystem::path& captureDirectory);
+int RunOptionsPreviewSession(const std::filesystem::path& usrdir,
+                             const std::filesystem::path& captureDirectory);
 int RunProfileServiceSession(
     const std::filesystem::path& usrdir, uint32_t scene, uint32_t ordinal,
     uint8_t volume, const std::filesystem::path& captureDirectory = {});
