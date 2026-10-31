@@ -34,8 +34,8 @@ void UpdateTitle(TitleState& s,const TitleEnvironment& e,TitleServices& h,const 
   const auto choose=[&](int32_t ordinal){
     if(ordinal<0 || ordinal>=4)throw FormatError("title selection outside authored four-button menu");
     s.Selected=ordinal;
-    if(ordinal==0){h.ResetSession();h.ResetScriptState();s.TargetScene=2;s.Fade.Reverse(now);s.Fade.Enabled=false;request(20);h.PlayMenuVoice(0);h.UiSound(1);}
-    else if(ordinal==1){h.ResetScriptState();h.UiSound(3);h.PlayMenuVoice(1);request(11);}
+    if(ordinal==0){h.ResetSession();h.ClearMessageHistory();s.TargetScene=2;s.Fade.Reverse(now);s.Fade.Enabled=false;request(20);h.PlayMenuVoice(0);h.UiSound(1);}
+    else if(ordinal==1){h.ClearMessageHistory();h.UiSound(3);h.PlayMenuVoice(1);request(11);}
     else {s.Fade.Reverse(now);h.UiSound(3);h.PlayMenuVoice(ordinal);request(ordinal==2?13:17);}
   };
   if(s.Phase==0){h.ResetSession();request(1,true);}
@@ -77,8 +77,8 @@ void UpdateTitle(TitleState& s,const TitleEnvironment& e,TitleServices& h,const 
     if(in.Accept)choose(s.Selected);
     else if(in.Cancel){h.UiSound(4);ResetAnimations(s,e,h,now);s.Idle.Restart(now);request(5,true);}
     else if(in.ReleasedMenuButton){
-      // The pointer branch only resets the script for New Game; the keyboard
-      // Continue branch above also resets it. Preserve that native difference.
+      // The pointer branch only clears text history for New Game; the keyboard
+      // Continue branch above also clears it. Preserve that native difference.
       if(*in.ReleasedMenuButton>=4)throw FormatError("title pointer ordinal is invalid");
       const auto ordinal=int32_t(*in.ReleasedMenuButton);
       if(ordinal==1){s.Selected=1;h.UiSound(3);h.PlayMenuVoice(1);request(11);}

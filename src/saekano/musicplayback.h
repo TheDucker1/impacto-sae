@@ -3,6 +3,7 @@
 #include "commands.h"
 #include "profilevoiceoutput.h"
 #include "ordinaryvoice.h"
+#include "titleaudio.h"
 #include <set>
 
 namespace Impacto::Saekano {
@@ -32,6 +33,7 @@ class MusicPlayback {
   // Caller supplies a known effective gain and preserves the asset lifetime.
   void BindUiSounds(SystemSoundAssets& resources, float gain);
   bool UiSoundPlaying() const;
+  void StopUiSound();
   // Native profile channel7, mapped onto an existing Impacto voice channel.
   // Caller supplies known effective gain. Preparation parses/owns HCA bytes;
   // no playback or successful missing-channel stop is fabricated.
@@ -81,6 +83,17 @@ class PlaybackOrdinaryVoice final : public OrdinaryVoiceOutput {
   MusicPlayback& playback_;
   std::shared_ptr<AwbBank> bank_;
   float gain_;
+};
+
+class PlaybackTitleAudio final : public TitleAudioOutput {
+ public:
+  PlaybackTitleAudio(MusicPlayback& playback,SystemSoundAssets& ui,float voiceGain,float uiGain);
+  void PlayVoice(Bytes encoded)override;
+  void PlayUi(int32_t id)override;
+  void Stop(uint32_t channel)override;
+  bool Playing(uint32_t channel)const override;
+ private:
+  MusicPlayback& playback_;float gain_;
 };
 
 // Native mission channel11 shares its source with battle preview11.
@@ -152,6 +165,8 @@ int RunOrdinaryVoiceStopSession(const std::filesystem::path& usrdir,
                                const std::filesystem::path& captureDirectory);
 int RunUiSoundSession(const std::filesystem::path& usrdir,
                       const std::filesystem::path& captureDirectory);
+int RunTitleAudioSession(const std::filesystem::path& usrdir,
+                         const std::filesystem::path& captureDirectory);
 int RunProfileServiceSession(
     const std::filesystem::path& usrdir, uint32_t scene, uint32_t ordinal,
     uint8_t volume, const std::filesystem::path& captureDirectory = {});

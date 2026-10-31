@@ -477,6 +477,16 @@ void MusicPlayback::BindUiSounds(SystemSoundAssets& resources, float gain) {
 bool MusicPlayback::UiSoundPlaying() const {
   return impl_->UiSound->GetState() != Audio::ACS_Stopped;
 }
+void MusicPlayback::StopUiSound(){impl_->UiSound->Stop(0);AlCheck("UI sound stop");}
+PlaybackTitleAudio::PlaybackTitleAudio(MusicPlayback& playback,SystemSoundAssets& ui,float voiceGain,float uiGain)
+    :playback_(playback),gain_(voiceGain){
+  if(!std::isfinite(gain_) || gain_<0 || gain_>1)throw FormatError("title voice gain outside supported range");
+  playback_.BindUiSounds(ui,uiGain);
+}
+void PlaybackTitleAudio::PlayVoice(Bytes encoded){playback_.PrepareMemoryVoice(7,std::move(encoded),gain_);playback_.StartOrdinaryVoice(7);}
+void PlaybackTitleAudio::PlayUi(int32_t id){playback_.Submit({GameEventKind::Sound,id});}
+void PlaybackTitleAudio::Stop(uint32_t channel){if(channel==6)playback_.StopUiSound();else if(channel==7)playback_.StopOrdinaryVoice(7);else throw FormatError("title audio channel outside6/7");}
+bool PlaybackTitleAudio::Playing(uint32_t channel)const{if(channel==6)return playback_.UiSoundPlaying();if(channel==7)return playback_.OrdinaryVoicePlaying(7);throw FormatError("title audio channel outside6/7");}
 void MusicPlayback::PrepareProfileVoice(Bytes encoded, float gain) {
   if (!std::isfinite(gain) || gain < 0 || gain > 1)
     throw FormatError("profile voice gain outside supported range");
@@ -969,6 +979,49 @@ int RunMissionVoiceSession(const std::filesystem::path& usrdir,
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano mission voice: %s",e.what());return 1;
   }
 }
+int RunTitleAudioSession(const std::filesystem::path& usrdir,const std::filesystem::path& captureDirectory){
+  bool created=false;
+  try{
+    CreateCaptureDirectory(usrdir,captureDirectory);created=true;
+    if(!SDL_Init(SDL_INIT_EVENTS))throw FormatError(SDL_GetError());
+    struct Cleanup{~Cleanup(){SDL_Quit();}} cleanup;
+    const auto read=[](const std::filesystem::path& path){std::ifstream f(path,std::ios::binary);if(!f)throw FormatError("missing title audio resource");return Bytes{std::istreambuf_iterator<char>(f),{}};};
+    auto resources=std::make_unique<GameResources>(read(usrdir/"resource.dat"));
+    SystemSoundAssets ui(read(usrdir/"first.dat"));ArchiveBgmResources music(usrdir);
+    MusicPlayback playback(music,true);PlaybackTitleAudio output(playback,ui,ProfileVoiceGain(10,1),ProfileVoiceGain(8,1));
+    TitleAudioOwner owner(*resources,output);owner.Load(0);
+    const auto render=[&](std::vector<int16_t>& pcm,size_t frames){const auto at=pcm.size();pcm.resize(at+frames*2);playback.Render(std::span(pcm).subspan(at));};
+    std::vector<int16_t> replacement;owner.PlayEntry(0);render(replacement,2400);
+    if(!owner.Playing(7))throw FormatError("title logo cue did not remain active before replacement");
+    const auto beforeReplace=playback.OrdinaryVoicePosition(7);owner.PlayMenu(0);owner.PlayUi(1);
+    const bool overlap=owner.Playing(6) && owner.Playing(7);if(!overlap)throw FormatError("title menu voice and UI sound did not overlap independently");
+    const auto afterReplace=playback.OrdinaryVoicePosition(7);
+    for(size_t tick=0;(owner.Playing(6) || owner.Playing(7)) && tick<2000;++tick)render(replacement,480);
+    if(owner.Playing(6) || owner.Playing(7))throw FormatError("title audio failed to reach actual source EOF");
+    render(replacement,2400);SaveWav(captureDirectory/"replacement.wav",replacement);
+    size_t audible=0;for(auto sample:replacement)if(sample>8 || sample<-8)++audible;
+    if(!audible)throw FormatError("title audio capture is silent");
+    std::vector<int16_t> mode4;owner.PlayEntry(2);render(mode4,2400);
+    const auto beforeMode4=playback.OrdinaryVoicePosition(7);owner.Load(4);owner.PlayMenu(3);
+    const auto afterMode4=playback.OrdinaryVoicePosition(7);
+    const bool preserved=owner.Playing(7) && beforeMode4==afterMode4 && owner.MenuCount()==0;
+    if(!preserved)throw FormatError("empty title voice mode replaced an active logo cue");
+    owner.PlayUi(0);owner.Stop(7);const bool independent=owner.Playing(6) && !owner.Playing(7);
+    if(!independent)throw FormatError("title voice stop affected UI source6");
+    owner.Stop(6);if(owner.Playing(6))throw FormatError("title UI stop failed");
+    SaveWav(captureDirectory/"mode4-prefix.wav",mode4);
+    owner.PlayEntry(3);owner.PlayUi(3);owner.Retire();
+    if(owner.Ready() || playback.UiSoundPlaying() || playback.OrdinaryVoicePlaying(7))throw FormatError("title audio retirement left a source/bank live");
+    owner.Load(1);owner.PlayMenu(0);std::vector<int16_t> rebound;render(rebound,2400);
+    if(!owner.Playing(7))throw FormatError("title audio did not rebind after retirement");
+    owner.Retire();SaveWav(captureDirectory/"rebound-prefix.wav",rebound);
+    std::ofstream report(captureDirectory/"summary.json");report<<"{\"passed\":true,\"sample_rate\":48000,\"channels\":2,\"voice_channel\":7,\"ui_channel\":6,\"replacement_frames\":"<<replacement.size()/2
+      <<",\"audible_samples\":"<<audible<<",\"before_replace_ms\":"<<beforeReplace<<",\"after_replace_ms\":"<<afterReplace<<",\"mode4_position_ms\":"<<afterMode4
+      <<",\"overlap\":true,\"mode4_preserves_logo\":true,\"independent_stops\":true,\"retirement_and_rebind\":true,\"software_openal_output\":true,\"manual_audible_acceptance\":false,\"pc_title_constructed\":false}\n";
+    report.close();if(!report)throw FormatError("cannot save title audio session report");return 0;
+  }catch(const std::exception& e){if(created){std::ofstream error(captureDirectory/"error.txt");error<<std::string(e.what()).substr(0,2048)<<'\n';}SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano title audio: %s",e.what());return 1;}
+}
+
 int RunUiSoundSession(const std::filesystem::path& usrdir,
                       const std::filesystem::path& captureDirectory) {
   bool created = false;

@@ -25,7 +25,7 @@ struct TitleServices {
   virtual ~TitleServices()=default;
   virtual uint8_t VoiceMode()const=0;
   virtual void ResetSession()=0;
-  virtual void ResetScriptState()=0;
+  virtual void ClearMessageHistory()=0; // Native579e clears the backlog text ring.
   virtual void BeginResources(uint8_t voiceMode)=0;
   virtual bool ResourcesReady()=0;
   virtual void CommitResources()=0;
