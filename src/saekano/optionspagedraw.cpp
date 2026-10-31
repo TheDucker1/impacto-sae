@@ -74,8 +74,8 @@ std::vector<OptionsPageDrawCommand> BuildOptionsPageDraw(const OptionsEnvironmen
       OptionsPageDrawCommand c;c.Sprite=ResolveUiSprite({ProfileTextureSection::SystemUi,-1,textures[i]+uint32_t(selected)},shape,scale,scale);out.push_back(c);
     }
     sprite(46,e.Sprites.at(0x358));
-    for(uint32_t i=0;i<9;++i)widget(OptionsWidgetKind::CharacterToggle,i);
     for(uint32_t i=0;i<9;++i)widget(OptionsWidgetKind::CharacterLabel,i);
+    for(uint32_t i=0;i<9;++i)widget(OptionsWidgetKind::CharacterToggle,i);
     for(size_t i=0;i<9;++i){
       auto point=OptionsEnvironment::Point{e.IntegerTables.at(0x3c0).at(i%3),e.IntegerTables.at(0x3d4).at(i/3)};
       if(!values[14+i])point[0]=std::bit_cast<int32_t>(uint32_t(point[0])+e.Scalars.at(0x3d0));
