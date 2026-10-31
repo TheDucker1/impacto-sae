@@ -5,6 +5,7 @@ struct OptionsRowNavigation {
   int32_t Scroll=0,Selected=0,Minimum=0,Maximum=0,Visible=1,Margin=0;
   int32_t PreviousSelected=0,PreviousScroll=0;
 };
+void SelectOptionsRow(OptionsRowNavigation& navigation,int32_t row);
 enum class OptionsSliderKind { Text,Audio };
 struct OptionsSliderLayout {
   OptionsSliderKind Kind=OptionsSliderKind::Text;
