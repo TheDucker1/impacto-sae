@@ -57,8 +57,8 @@ int32_t UpdateSlotBrowser(SlotBrowserState& s,const SlotBrowserInput& in,SlotBro
   int32_t result=3;bool handled=false;
   if(!s.Navigation.Any){
     h.UpdateWidget(SlotBrowserWidget::Page,0);
-    if(h.PageHeld()){
-      const auto velocity=h.PageVelocity();if(!std::isfinite(velocity) || std::abs(double(velocity))>=2147483648.0)throw FormatError("invalid slot page velocity");
+    if(h.PageFlick()){
+      const auto velocity=h.PageVelocityY();if(!std::isfinite(velocity) || std::abs(double(velocity))>=2147483648.0)throw FormatError("invalid slot page velocity");
       handled=true;Page(s,int32_t(velocity)<0,h);
     }
     for(uint32_t i=0;i<4;++i){

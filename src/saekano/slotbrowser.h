@@ -27,8 +27,8 @@ struct SlotBrowserInput { OptionsNavigationInput Vertical;bool Protect=false,Acc
 struct SlotBrowserServices {
   virtual ~SlotBrowserServices()=default;
   virtual void UpdateWidget(SlotBrowserWidget kind,uint32_t row)=0;
-  virtual bool PageHeld()=0;
-  virtual float PageVelocity()=0;
+  virtual bool PageFlick()=0; // Native group9c556: enabled component flag0x80.
+  virtual float PageVelocityY()=0; // Native group9c936: release velocity Y.
   virtual bool Released(SlotBrowserWidget kind,uint32_t row)=0;
   virtual void UiSound(int32_t id)=0;
 };
