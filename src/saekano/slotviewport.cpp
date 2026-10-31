@@ -14,9 +14,9 @@ std::vector<SlotViewportCommand> BuildSlotViewport(const SlotViewportInputs& in)
   const auto render=[&](UiRenderKind kind,int32_t mode=0,std::optional<bool> enabled=std::nullopt){SlotViewportCommand c;c.Render.Kind=kind;c.Render.Mode=mode;c.Render.TestEnabled=enabled;out.push_back(c);};
   const auto rectangle=[&](std::array<int32_t,4> r,std::array<uint8_t,4> color){render(UiRenderKind::Rectangle);out.back().Render.Rectangle=r;out.back().Render.Color=color;};
   if(!in.ExternalMask){
-    render(UiRenderKind::ResetDepthStencilBackground);render(UiRenderKind::Stencil,1);render(UiRenderKind::AlphaTest,0,true);render(UiRenderKind::DepthTest,6,true);
+    render(UiRenderKind::ResetDepthStencilBackground);render(UiRenderKind::Stencil,1);render(UiRenderKind::DepthTest,0,true);render(UiRenderKind::AlphaTest,6,true);
     rectangle({0,0,in.Canvas[0],in.Canvas[1]},{0,0,0,1});render(UiRenderKind::Stencil,2);rectangle(in.Rectangle,{255,255,255,255});
-    render(UiRenderKind::Stencil,3);render(UiRenderKind::DepthTest,3,true);render(UiRenderKind::AlphaTest,5,true);
+    render(UiRenderKind::Stencil,3);render(UiRenderKind::AlphaTest,3,true);render(UiRenderKind::DepthTest,5,true);
   }
   SlotViewportCommand c;
   if(!in.Animated)c.Kind=SlotViewportKind::StaticContent;
@@ -28,7 +28,7 @@ std::vector<SlotViewportCommand> BuildSlotViewport(const SlotViewportInputs& in)
     else{c.Cards.FirstVisible=in.Rows.Scroll;c.Cards.Selected=in.Rows.Selected;}
   }
   out.push_back(c);
-  if(!in.ExternalMask){render(UiRenderKind::DepthTest,3,false);render(UiRenderKind::AlphaTest,5,false);render(UiRenderKind::Stencil,0);}
+  if(!in.ExternalMask){render(UiRenderKind::AlphaTest,3,false);render(UiRenderKind::DepthTest,5,false);render(UiRenderKind::Stencil,0);}
   return out;
 }
 }

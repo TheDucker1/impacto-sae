@@ -8,6 +8,10 @@ class PcTitleOwner final:public TitleServices {
   OptionsPageInput OptionsInput;DialogInput OptionsModalInput;WidgetInputHistory::Snapshot FrameContacts{};
   size_t ConfigEntries=0,ConfigReturns=0,ConfigPreviews=0,ConfigQuestions=0,ConfigCancels=0,ConfigSaves=0;
   PcOptionsOwner* Config()const{return config_.get();}
+  SlotBrowserInput SlotInput;
+  PcSlotOwner* Continue()const{return slot_.get();}
+  size_t ContinueEntries=0,ContinueReturns=0,ContinueDraws=0,ContinueCards=0;
+  int32_t ContinueResult=0,ContinueSelected=-1;
   TitleVisualState Visual;
   TitleEffectState Effects;
   TitleWidgetInput Contacts;
@@ -19,7 +23,7 @@ class PcTitleOwner final:public TitleServices {
       MusicPlayback& playback,ArchiveBgmResources& music,ArchiveSeResources& sounds,PlaybackTitleAudio& output,PlaybackVoiceAttenuation& attenuation,
       MoviePlayback& movie,PcMovieFrameLayer& movieFrame,const std::filesystem::path& root,
       TitleEnvironment environment,TitleSessionSeeds seeds,std::span<const int32_t> repeats,
-      uint32_t holdFrames,std::function<void()> clearHistory,const std::filesystem::path& saveRoot,const NativeSlotData& slots,
+      uint32_t holdFrames,std::function<void()> clearHistory,const std::filesystem::path& saveRoot,NativeSlotData& slots,
       std::function<uint64_t()> audioClock,uint64_t now)
       :Contacts(environment,holdFrames),Now(now),owner_(owner),resources_(resources),renderer_(renderer),
        playback_(playback),music_(music),audio_(resources,output),movie_(movie),movieFrame_(movieFrame),root_(root),env_(std::move(environment)),
@@ -74,6 +78,11 @@ class PcTitleOwner final:public TitleServices {
     return nav.Selected;
   }
   void BeginSubmenu(TitleSubmenu kind)override{
+    if(kind==TitleSubmenu::Load){
+      if(slot_ || config_)throw FormatError("another title submenu is active");
+      slot_=std::make_unique<PcSlotOwner>(owner_,resources_,renderer_,textures_,font_,audioOutput_,root_,saveRoot_,slots_,repeats_,hold_,Now);
+      slot_->BeginFrame(SlotInput,OptionsModalInput,FrameContacts,Now);++ContinueEntries;return;
+    }
     if(kind!=TitleSubmenu::Config)throw UnsupportedCommand("this PC title submenu owner is not bound");
     if(config_)throw FormatError("Options owner is already active");
     config_=std::make_unique<PcOptionsOwner>(owner_,resources_,renderer_,textures_,font_,playback_,audioOutput_,attenuation_,music_,sounds_,root_,saveRoot_,slots_,repeats_,hold_,audioClock_,
@@ -81,9 +90,15 @@ class PcTitleOwner final:public TitleServices {
     config_->BeginFrame(OptionsInput,OptionsModalInput,FrameContacts,Now);++ConfigEntries;
   }
   int32_t UpdateSubmenu(TitleSubmenu kind)override{
+    if(kind==TitleSubmenu::Load){if(!slot_)throw FormatError("Continue update has no owner");return slot_->Update(Now);}
     if(kind!=TitleSubmenu::Config || !config_)throw UnsupportedCommand("PC submenu update has no owner");return config_->Update(Now);
   }
   void DestroySubmenu(TitleSubmenu kind)override{
+    if(kind==TitleSubmenu::Load){
+      if(!slot_ || !slot_->Result)throw FormatError("Continue retired before completion");
+      ContinueResult=slot_->Result;ContinueSelected=slot_->Browser.Rows.Selected;ContinueDraws+=slot_->DrawFrames;ContinueCards+=slot_->CardCommands;
+      slot_.reset();++ContinueReturns;return;
+    }
     if(kind!=TitleSubmenu::Config || !config_ || !config_->State.Finished)throw FormatError("PC submenu retired before completion");
     ConfigPreviews+=config_->PreviewStarts;ConfigQuestions+=config_->QuestionBegins;ConfigCancels+=config_->QuestionCancels;ConfigSaves+=size_t(config_->Dialogs().Save.State().Accepted);
     config_.reset();++ConfigReturns;
@@ -105,7 +120,9 @@ class PcTitleOwner final:public TitleServices {
     RequestedScene=scene;
   }
   void Update(uint64_t now){
-    Now=now;if(config_)config_->BeginFrame(OptionsInput,OptionsModalInput,FrameContacts,now);movie_.Update(now);MovieFlags=uint32_t(movie_.Ready())|(uint32_t(movie_.State().Prepared && !movie_.State().Finished)<<1)|
+    Now=now;if(config_)config_->BeginFrame(OptionsInput,OptionsModalInput,FrameContacts,now);
+    if(slot_)slot_->BeginFrame(SlotInput,OptionsModalInput,FrameContacts,now);
+    movie_.Update(now);MovieFlags=uint32_t(movie_.Ready())|(uint32_t(movie_.State().Prepared && !movie_.State().Finished)<<1)|
       (uint32_t(movie_.State().Finished)<<2);UpdateTitle(State,env_,*this,Input,now);
   }
   void Draw(FontTextures& textures,PcFontFace& font,uint32_t fontSize,int width,int height,
@@ -114,6 +131,7 @@ class PcTitleOwner final:public TitleServices {
     in.ResourceDrawBlocked=!committed_;
     TitleOverlayInputs overlay;overlay.Phase=State.Phase;overlay.FadeAlpha=State.Fade.Value.Current;
     overlay.MovieFadeAlpha=State.MovieFade.Value.Current;overlay.ResourceDrawBlocked=!committed_;overlay.SubmenusPresent[1]=bool(config_);
+    overlay.SubmenusPresent[0]=bool(slot_);
     const auto effects=[&](uint32_t id){
       if(id!=68)throw FormatError("unknown title effect atlas");
       for(const auto& sprite:BuildTitleEffects(Effects,env_)){
@@ -125,13 +143,14 @@ class PcTitleOwner final:public TitleServices {
       if(c.Kind==TitleOverlayKind::MovieChannel){
         if(c.Index>1)throw FormatError("title movie channel outside native pair");
         if(c.Index==0 && movie_.State().Started && !movie_.State().Finished)movieFrame_.Draw();
-      }else if(c.Kind==TitleOverlayKind::Submenu && c.Index==1 && config_){config_->Draw();}
+      }else if(c.Kind==TitleOverlayKind::Submenu && c.Index==0 && slot_){slot_->Draw();}
+      else if(c.Kind==TitleOverlayKind::Submenu && c.Index==1 && config_){config_->Draw();}
       else if(c.Kind!=TitleOverlayKind::SharedDialog)throw UnsupportedCommand("PC title foreground service is not bound");
     };
     DrawTitleFrame(renderer_,textures,font,env_,BuildTitleDraw(env_,in),BuildTitleOverlay(env_,overlay),width,height,effects,services,sprites);
   }
   void Retire(){
-    config_.reset();
+    slot_.reset();config_.reset();
     movie_.Stop();movieFrame_.Retire();
     audio_.Retire();
     for(const auto& key:keys_)if(const auto it=renderer_.Textures.find(key);it!=renderer_.Textures.end()){
@@ -145,7 +164,8 @@ class PcTitleOwner final:public TitleServices {
   TitleEnvironment env_;TitleSessionSeeds seeds_;
   TitleNavigation navigation_;GameRandom random_;std::function<void()> clearHistory_;
   FontTextures& textures_;PcFontFace& font_;ArchiveSeResources& sounds_;PlaybackTitleAudio& audioOutput_;PlaybackVoiceAttenuation& attenuation_;
-  std::filesystem::path saveRoot_;const NativeSlotData& slots_;std::vector<int32_t> repeats_;uint32_t hold_;std::function<uint64_t()> audioClock_;
+  std::filesystem::path saveRoot_;NativeSlotData& slots_;std::vector<int32_t> repeats_;uint32_t hold_;std::function<uint64_t()> audioClock_;
+  std::unique_ptr<PcSlotOwner> slot_;
   std::unique_ptr<PcOptionsOwner> config_;std::set<uint32_t> trophies_;
   std::vector<ProfileTextureKey> keys_;bool ready_=false,committed_=false,firstMusic_=true;
 };

@@ -1,6 +1,11 @@
 #include "systemowner.h"
 #include "progressstore.h"
 #include "slotdata.h"
+#include "slotcontroller.h"
+#include "slotwidgets.h"
+#include "slotcards.h"
+#include "slotdraw.h"
+#include "newmarker.h"
 #include "desktop.h"
 
 #include "live2dsdk.h"
@@ -999,13 +1004,14 @@ struct SceneDialogLayer {
           Shared.Load(sprite.Texture.Entry).Data:Resources.LoadProfileTexture(sprite.Texture).Data));
     Renderer.DrawQuad(sprite,Renderer.Textures.at(sprite.Texture),false);
   }
-  void Draw(const DialogState& modal,const std::u16string& prompt,const DialogContentLayout& layout,size_t group) {
+  void Draw(const DialogState& modal,const std::u16string& prompt,const DialogContentLayout& layout,size_t group,
+      std::array<uint8_t,4> overlayColor={0,0,0,90}) {
     if(!modal.Visible)return;
     glUseProgram(Renderer.Program);glBindVertexArray(Renderer.Vao);glBindBuffer(GL_ARRAY_BUFFER,Renderer.Buffer);
     glActiveTexture(GL_TEXTURE0);glDisable(GL_DEPTH_TEST);glDisable(GL_STENCIL_TEST);glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);glUniform1i(Renderer.AlphaMode,0);Renderer.SetFilter(0,0);
     const auto progress=modal.Opacity.Current;
-    const auto frame=BuildDialogFrame(Environment,{480,272},layout.Width,layout.BodyHeight,progress,{0,0,0,90});
+    const auto frame=BuildDialogFrame(Environment,{480,272},layout.Width,layout.BodyHeight,progress,overlayColor);
     UiSpriteBlit overlay;overlay.Destination=frame.Overlay.Rectangle;overlay.Color=frame.Overlay.Color;
     Renderer.DrawQuad(overlay,{0,1,1},true);
     for(const auto& sprite:frame.Tiles)Sprite(sprite);
@@ -1028,6 +1034,7 @@ struct SceneDialogLayer {
 
 #include "desktopoptions.inc"
 #include "desktopoptionsowner.inc"
+#include "desktopslotowner.inc"
 #include "desktoptitle.inc"
 #include "desktopprofile.inc"
 
@@ -4759,7 +4766,7 @@ int RunMovieInfoProbe(const std::filesystem::path& path,const std::filesystem::p
   }
 }
 int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::path& requestedProgressRoot,
-    const std::filesystem::path& captureDirectory,bool capturePointer,bool captureOpening,uint8_t captureMovie,uint8_t captureOptions){
+    const std::filesystem::path& captureDirectory,bool capturePointer,bool captureOpening,uint8_t captureMovie,uint8_t captureOptions,uint8_t captureContinue){
   bool created=false;
   try{
     const bool capture=!captureDirectory.empty();
@@ -4787,7 +4794,8 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     auto progress=MakeFreshSystemProgress(first,history.InitiallyRead!=0);
     const auto progressRoot=!requestedProgressRoot.empty()?requestedProgressRoot:
       (capture?captureDirectory/"saves":std::filesystem::current_path()/"saves/saekano");
-    const auto session=OpenProgressStore(progressRoot,progress,{});progress=session.System;
+    auto session=OpenProgressStore(progressRoot,progress,{});progress=session.System;
+    const auto initialSlotBytes=captureContinue?session.Slots.Encode():Bytes{};
     LoadSystemOwner(*owner,progress,owner->CgHistory.Required);
     ViewerWindow window(capture,true);SdlCheck(SDL_SetWindowSize(window.Window,960,544),"title viewport size");
     SdlCheck(SDL_SetWindowTitle(window.Window,"Saekano"),"title window name");
@@ -4811,12 +4819,14 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
       if(!trace || !pcm)throw FormatError("cannot open title capture outputs");}
     bool quit=false,pressedStart=false,chose=false,skippedVoice=false,pointerDown=false;std::array<bool,2> held{},horizontalHeld{};
     uint32_t optionsStage=0,optionsGesture=0;bool optionsOpenImage=false,optionsQuestionImage=false,optionsPreviewImage=false;
+    uint32_t continueStage=0;bool continueOpenImage=false;
     bool sawMovie=false,movieReturned=false,movieSkipped=false,movieImage=false;
     std::array<float,2> pointer{};int pointerCapture=0;int32_t previousPhase=-1;size_t frames=0;uint64_t epoch=SDL_GetTicks();
     for(;!quit && !title.RequestedScene;++frames){
       if(capture && frames>=(captureMovie==2?10000u:captureMovie?4000u:1250u))throw FormatError("title capture exhausted its bounded frame budget");
       title.Input={};title.NavigationInput={};title.NavigationInput.Held=held;title.OptionsInput={};title.OptionsInput.Vertical.Held=held;
       title.OptionsInput.HorizontalHeld=horizontalHeld;title.OptionsModalInput={};
+      title.SlotInput={};title.SlotInput.Vertical.Held=held;
       const uint64_t now=capture?frames*16:SDL_GetTicks()-epoch;
       const auto key=[&](SDL_Keycode code){for(auto type:{SDL_EVENT_KEY_DOWN,SDL_EVENT_KEY_UP}){
         SDL_Event event{};event.type=type;event.key.windowID=SDL_GetWindowID(window.Window);event.key.key=code;
@@ -4835,7 +4845,8 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
         if(sawMovie && title.State.Phase==5)movieReturned=true;
         if(title.State.Phase==5 && title.State.Fade.Finished() && !pressedStart && (!captureMovie || movieReturned)){key(SDLK_RETURN);pressedStart=true;}
         if(title.State.Phase==10 && !chose){
-          if(captureOptions){if(title.State.Selected<2)key(SDLK_DOWN);else{key(SDLK_RETURN);chose=true;}}
+          if(captureContinue){if(title.State.Selected<1)key(SDLK_DOWN);else{key(SDLK_RETURN);chose=true;}}
+          else if(captureOptions){if(title.State.Selected<2)key(SDLK_DOWN);else{key(SDLK_RETURN);chose=true;}}
           else if(!capturePointer){key(SDLK_RETURN);chose=true;}
           else {
             const auto box=env.RectangleTables.at(0x358).at(0);SDL_Event event{};
@@ -4843,6 +4854,15 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
             event.button.windowID=SDL_GetWindowID(window.Window);event.button.button=SDL_BUTTON_LEFT;
             event.button.down=pointerCapture==0;event.button.x=float(box[0])+float(box[2])/2;event.button.y=float(box[1])+float(box[3])/2;
             SdlCheck(SDL_PushEvent(&event),"title capture explicit pointer input");if(++pointerCapture==2)chose=true;
+          }
+        }
+        if(captureContinue && title.Continue() && title.Continue()->State.Phase==4){
+          ++continueStage;
+          if(captureContinue==1){if(continueStage==8)key(SDLK_ESCAPE);}
+          else{
+            if(continueStage==1 || continueStage==9 || continueStage==17 || continueStage==25)key(SDLK_DOWN);
+            if(continueStage==34)mouse(0,70,520);
+            if(continueStage==35)mouse(2,70,520);
           }
         }
         if(captureOptions && title.Config()){
@@ -4882,17 +4902,20 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
       }
       SDL_Event event{};
       while(SDL_PollEvent(&event)){
-        if(event.type==SDL_EVENT_QUIT || (event.type==SDL_EVENT_KEY_DOWN && event.key.key==SDLK_ESCAPE && !title.Config()))quit=true;
+        if(event.type==SDL_EVENT_QUIT || (event.type==SDL_EVENT_KEY_DOWN && event.key.key==SDLK_ESCAPE && !title.Config() && !title.Continue()))quit=true;
         if(event.type==SDL_EVENT_KEY_DOWN || event.type==SDL_EVENT_KEY_UP){
           const bool down=event.type==SDL_EVENT_KEY_DOWN;
           title.Input.AnyActivity|=down;
           if(event.key.key==SDLK_UP || event.key.key==SDLK_DOWN){const size_t i=event.key.key==SDLK_DOWN;
             held[i]=down;title.NavigationInput.Held[i]=down;title.NavigationInput.Pressed[i]|=down&&!event.key.repeat;
-            title.OptionsInput.Vertical.Held[i]=down;title.OptionsInput.Vertical.Pressed[i]|=down&&!event.key.repeat;}
+            title.OptionsInput.Vertical.Held[i]=down;title.OptionsInput.Vertical.Pressed[i]|=down&&!event.key.repeat;
+            title.SlotInput.Vertical.Held[i]=down;title.SlotInput.Vertical.Pressed[i]|=down&&!event.key.repeat;}
           if(event.key.key==SDLK_LEFT || event.key.key==SDLK_RIGHT){const size_t i=event.key.key==SDLK_LEFT;
             horizontalHeld[i]=down;title.OptionsInput.HorizontalHeld[i]=down;title.OptionsInput.HorizontalPressed[i]|=down&&!event.key.repeat;}
           if(down&&!event.key.repeat){title.Input.Accept|=event.key.key==SDLK_RETURN;title.Input.Cancel|=event.key.key==SDLK_BACKSPACE;title.Input.Start|=event.key.key==SDLK_SPACE;
             title.OptionsInput.Accept|=event.key.key==SDLK_RETURN;title.OptionsInput.Preview|=event.key.key==SDLK_P;
+            title.SlotInput.Accept|=event.key.key==SDLK_RETURN;title.SlotInput.Protect|=event.key.key==SDLK_P;
+            title.SlotInput.Cancel|=event.key.key==SDLK_BACKSPACE || event.key.key==SDLK_ESCAPE;
             title.OptionsInput.Common.Close|=event.key.key==SDLK_SPACE;
             title.OptionsInput.Common.Revert|=event.key.key==SDLK_BACKSPACE || event.key.key==SDLK_ESCAPE;
             title.OptionsInput.Common.PreviousTab|=event.key.key==SDLK_Q || event.key.key==SDLK_PAGEUP;
@@ -4905,7 +4928,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
           pointerDown=event.type==SDL_EVENT_MOUSE_BUTTON_DOWN;pointer={event.button.x,event.button.y};title.Input.AnyActivity=true;
         }
         if(event.type==SDL_EVENT_MOUSE_MOTION){pointer={event.motion.x,event.motion.y};title.Input.AnyActivity=true;}
-        if(event.type==SDL_EVENT_WINDOW_FOCUS_LOST){held={};horizontalHeld={};title.NavigationInput={};title.OptionsInput={};pointerDown=false;title.Contacts.CancelPointer();if(title.Config())title.Config()->CancelPointer();}
+        if(event.type==SDL_EVENT_WINDOW_FOCUS_LOST){held={};horizontalHeld={};title.NavigationInput={};title.OptionsInput={};title.SlotInput={};pointerDown=false;title.Contacts.CancelPointer();if(title.Config())title.Config()->CancelPointer();if(title.Continue())title.Continue()->CancelPointer();}
       }
       WidgetInputHistory::Snapshot contacts{};
       if(pointerDown){
@@ -4938,11 +4961,24 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
           <<",\"config_tab\":"<<(c?c->State.Pages.Controls.SelectedTab:-1)<<",\"config_audio_row\":"<<(c?c->State.Pages.Rows[1].Selected:-1)
           <<",\"config_text_speed\":"<<unsigned(owner->SystemProgress->Bytes6022c[0])<<",\"config_previews\":"<<(c?c->PreviewStarts:title.ConfigPreviews)
           <<",\"question_phase\":"<<(c?c->Dialogs().Question.Phase:-1)<<",\"save_phase\":"<<(c?c->Dialogs().Save.State().Phase:-1);}
+        if(captureContinue){const auto* c=title.Continue();trace<<",\"continue_phase\":"<<(c?c->State.Phase:-1)
+          <<",\"continue_selected\":"<<(c?c->Browser.Rows.Selected:-1)<<",\"continue_draws\":"<<(c?c->DrawFrames:title.ContinueDraws)
+          <<",\"continue_result\":"<<title.ContinueResult<<",\"continue_cancel\":"<<title.SlotInput.Cancel
+          <<",\"continue_pending\":"<<(c?c->State.PendingPhase.value_or(-1):-1)<<",\"continue_mode\":"<<(c?c->State.Mode:-1)
+          <<",\"continue_contact\":["<<bool(contacts[0])<<','<<(contacts[0]?int(contacts[0]->Id):0)<<','<<(contacts[0]?contacts[0]->Position[0]:0)<<','<<(contacts[0]?contacts[0]->Position[1]:0)<<']'
+          <<",\"continue_keys\":"<<(uint32_t(title.SlotInput.Vertical.Pressed[0])|uint32_t(title.SlotInput.Vertical.Pressed[1])<<1|
+            uint32_t(title.SlotInput.Vertical.Held[0])<<2|uint32_t(title.SlotInput.Vertical.Held[1])<<3|uint32_t(title.SlotInput.Protect)<<4|uint32_t(title.SlotInput.Accept)<<5|uint32_t(title.SlotInput.Cancel)<<6)
+          <<",\"continue_browser\":";
+          if(c && c->BrowserUpdated)c->WriteBrowserSnapshot(trace);else trace<<"null";
+        }
         trace<<"}\n";
       }
       attenuation.Update(audioClock());
       int width=0,height=0;SdlCheck(SDL_GetWindowSizeInPixels(window.Window,&width,&height),"title display extent");
       title.Draw(textures,font,uint32_t(utility.OpaqueWord),width,height);
+      if(captureContinue && title.Continue() && title.Continue()->State.Phase==4 && !continueOpenImage){
+        Capture(captureDirectory/"continue-open.bmp",width,height);continueOpenImage=true;
+      }
       if(captureOptions && title.Config()){
         auto& c=*title.Config();
         if(!optionsOpenImage && c.State.Lifecycle.Phase==4){Capture(captureDirectory/"options-open.bmp",width,height);optionsOpenImage=true;}
@@ -4955,11 +4991,24 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
         Capture(captureDirectory/("phase-"+std::to_string(title.State.Phase)+".bmp"),width,height);
       previousPhase=title.State.Phase;SdlCheck(SDL_GL_SwapWindow(window.Window),"title frame swap");
       if(captureOptions && title.ConfigReturns==1 && title.State.Phase==10){Capture(captureDirectory/"options-return.bmp",width,height);++frames;break;}
+      if(captureContinue && title.ContinueReturns==1 && title.State.Phase==10){Capture(captureDirectory/"continue-return.bmp",width,height);++frames;break;}
       if(!capture)SDL_Delay(16);
     }
     if(capture){
       trace.close();pcm.close();if(!trace || !pcm)throw FormatError("cannot save title trace/PCM");
-      if(captureOptions){
+      if(captureContinue){
+        const auto stored=ReadProgressStore(progressRoot);
+        if(quit || title.RequestedScene || title.ContinueEntries!=1 || title.ContinueReturns!=1 || title.ContinueResult!=2 || !continueOpenImage || !title.ContinueDraws || !title.ContinueCards ||
+           !stored || stored->Generation!=session.Generation || stored->Slots.Encode()!=initialSlotBytes || session.Slots.Encode()!=initialSlotBytes)
+          throw FormatError("Continue cancel missed the live browse/return or changed slots");
+        std::ofstream report(captureDirectory/"continue.json");
+        report<<"{\"passed\":true,\"frames\":"<<frames<<",\"entries\":"<<title.ContinueEntries<<",\"returns\":"<<title.ContinueReturns
+          <<",\"result\":"<<title.ContinueResult<<",\"draw_frames\":"<<title.ContinueDraws<<",\"card_commands\":"<<title.ContinueCards
+          <<",\"mode\":"<<unsigned(captureContinue)<<",\"last_selected\":"<<title.ContinueSelected
+          <<",\"escape_cancels\":"<<(captureContinue==1)<<",\"pointer_back\":"<<(captureContinue==2)
+          <<",\"slots_unchanged\":true,\"save_generation_unchanged\":true,\"occupied_resume\":false,\"manual_acceptance\":false}\n";
+        if(!report)throw FormatError("cannot save Continue report");
+      }else if(captureOptions){
         if(quit || title.RequestedScene || title.ConfigEntries!=1 || title.ConfigReturns!=1 || title.ConfigPreviews!=1 || !optionsOpenImage || !optionsQuestionImage || !optionsPreviewImage)
           throw FormatError("Options capture missed its live round trip");
         const auto stored=ReadProgressStore(progressRoot);if(!stored)throw FormatError("Options private progress disappeared");
@@ -4989,7 +5038,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
       report<<"{\"passed\":true,\"textures\":0,\"ui_playing\":false,\"voice_playing\":false}\n";
       report.close();if(!report)throw FormatError("cannot save title retirement report");
     }
-    if(quit || captureOptions)return 0;
+    if(quit || captureOptions || captureContinue)return 0;
     if(title.RequestedScene!=2)throw UnsupportedCommand("unknown PC title scene request");
     if(capture)std::filesystem::create_directory(captureDirectory/"entry");
     return RunScenarioScene(window,renderer,textures,font,resources,playback,music,sounds,std::move(*owner),nullptr,

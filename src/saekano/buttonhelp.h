@@ -24,6 +24,12 @@ struct ButtonHelpStyle {
   // Counted env_global prefix through c6ac, not fixed file offsets.
   static ButtonHelpStyle Decode(std::span<const uint8_t> bytes);
 };
+struct SlotButtonHelpEnvironment {
+  std::array<int32_t,4> Rectangle{};
+  std::vector<std::vector<ButtonHelpItem>> Rows; // mode0 save, mode1 load.
+  size_t PrefixBytes=0;
+  static SlotButtonHelpEnvironment Decode(std::span<const uint8_t> bytes);
+};
 // Shared37a16/37c04 row layout/drawing. Options uses alignment5 and opacity1.
 std::vector<UiTextBlit> BuildButtonHelp(std::span<const ButtonHelpItem> items,
     std::array<int32_t,4> rectangle,const ButtonHelpStyle& style,const GsfFont& font,

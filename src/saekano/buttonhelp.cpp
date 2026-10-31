@@ -18,6 +18,15 @@ ButtonHelpEnvironment ButtonHelpEnvironment::Decode(std::span<const uint8_t> byt
   e.CommonRectangle=rectangle();e.CommonItems=items();e.OptionsRectangle=rectangle();e.OptionsRows=Table(r,4,items);
   e.PrefixBytes=bytes.size()-r.Remaining();return e;
 }
+SlotButtonHelpEnvironment SlotButtonHelpEnvironment::Decode(std::span<const uint8_t> bytes){
+  const auto prefix=ButtonHelpEnvironment::Decode(bytes).PrefixBytes;
+  PayloadReader r(bytes.subspan(prefix));SlotButtonHelpEnvironment e;
+  for(auto& v:e.Rectangle)v=r.I32();
+  const auto item=[&]{ButtonHelpItem v;v.Key=r.I32();v.Text=r.String();return v;};
+  e.Rows=Table(r,4,[&]{return Table(r,8,item);});
+  if(e.Rows.size()<2)throw FormatError("save/load button-help rows are missing");
+  e.PrefixBytes=bytes.size()-r.Remaining();return e;
+}
 ButtonHelpStyle ButtonHelpStyle::Decode(std::span<const uint8_t> bytes){
   PayloadReader r(bytes);for(size_t i=0;i<3;++i)r.U8();
   const auto words=[&](uint32_t n){r.CheckCount(n,4);for(uint32_t i=0;i<n;++i)r.U32();};
