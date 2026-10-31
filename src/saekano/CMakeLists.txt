@@ -159,6 +159,8 @@ add_executable(saekano_vm_tests ../../tests/saekano/vm_test.cpp)
 if(MSVC)
     # This test holds many independent VM/state fixtures in one process.
     # Windows' default1MiB stack overflows before assertions can run.
+    # Diagnostic fixture owners need the same stack budget as VM tests on Windows.
+    target_link_options(saekano_inspect PRIVATE /STACK:8388608)
     target_link_options(saekano_vm_tests PRIVATE /STACK:8388608)
 endif()
 target_link_libraries(saekano_vm_tests PRIVATE saekano_core)

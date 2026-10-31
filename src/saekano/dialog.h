@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include "formats.h"
 #include "uisprite.h"
 #include "font.h"
@@ -52,6 +53,9 @@ struct DialogInput {
   bool Left = false, Right = false, Accept = false, Cancel = false;
   // Actual widget activation events, after the frontend hit-test service.
   std::array<bool, 3> Activated{};
+  // Collect concrete widgets only in the native pointer branch, after phase
+  // advancement and keyboard arbitration. Empty retains explicit fixtures.
+  std::function<std::array<bool,3>()> CollectActivations;
 };
 struct DialogState {
   bool Visible = false, FocusEnabled = true, CancelEnabled = false,

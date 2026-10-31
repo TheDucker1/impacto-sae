@@ -323,6 +323,10 @@ int main(int argc, char* argv[]) {
     if(argc==5 && std::string_view(argv[3])=="--save-dir")return Saekano::RunTitleScene(argv[2],argv[4]);
     if(argc==5 && (std::string_view(argv[3])=="--capture-title" || std::string_view(argv[3])=="--capture-title-pointer"))
       return Saekano::RunTitleScene(argv[2],{},argv[4],std::string_view(argv[3])=="--capture-title-pointer");
+    if(argc==5 && std::string_view(argv[3])=="--capture-options-pointer")return Saekano::RunTitleScene(argv[2],{},argv[4],false,false,0,4);
+    if(argc==5 && std::string_view(argv[3])=="--capture-options-save")return Saekano::RunTitleScene(argv[2],{},argv[4],false,false,0,1);
+    if(argc==5 && std::string_view(argv[3])=="--capture-options-revert")return Saekano::RunTitleScene(argv[2],{},argv[4],false,false,0,2);
+    if(argc==5 && std::string_view(argv[3])=="--capture-options-no-save")return Saekano::RunTitleScene(argv[2],{},argv[4],false,false,0,3);
     if(argc==5 && std::string_view(argv[3])=="--capture-opening")return Saekano::RunTitleScene(argv[2],{},argv[4],false,true);
     if(argc==5 && std::string_view(argv[3])=="--capture-title-movie")return Saekano::RunTitleScene(argv[2],{},argv[4],false,false,true);
     if(argc==5 && std::string_view(argv[3])=="--capture-title-movie-eof")return Saekano::RunTitleScene(argv[2],{},argv[4],false,false,2);

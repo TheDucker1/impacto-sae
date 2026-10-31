@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 
 #include "commands.h"
 #include "profilevoiceoutput.h"
@@ -113,12 +114,14 @@ class PlaybackTitleAudio final : public TitleAudioOutput {
  public:
   PlaybackTitleAudio(MusicPlayback& playback,SystemSoundAssets& ui,float voiceGain,float uiGain);
   void SetGains(float voiceGain,float uiGain);
+  void BindVoiceAttenuation(PlaybackVoiceAttenuation& owner,std::function<uint64_t()> clock);
   void PlayVoice(Bytes encoded)override;
   void PlayUi(int32_t id)override;
   void Stop(uint32_t channel)override;
   bool Playing(uint32_t channel)const override;
  private:
   MusicPlayback& playback_;float gain_;
+  PlaybackVoiceAttenuation* attenuation_=nullptr;std::function<uint64_t()> audioClock_;
 };
 
 // Native mission channel11 shares its source with battle preview11.

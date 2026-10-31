@@ -193,8 +193,9 @@ void UpdateDialog(DialogState& state, const DialogInput& input, uint64_t now) {
       state.Canceled = true;
       if (state.CloseOnConfirm) state.PendingPhase = 4;
     } else {
-      for (size_t i = 0; i < input.Activated.size(); ++i) {
-        if (!input.Activated[i]) continue;
+      const auto activated=input.CollectActivations?input.CollectActivations():input.Activated;
+      for (size_t i = 0; i < activated.size(); ++i) {
+        if (!activated[i]) continue;
         if (state.ButtonCount > 1) state.Selected = int32_t(i);
         state.Result = state.Selected;
         confirm();

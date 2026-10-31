@@ -31,6 +31,7 @@
 #include "optionspagedraw.h"
 #include "optionswidgets.h"
 #include "optionsdialog.h"
+#include "optionspreview.h"
 #include "buttonhelp.h"
 #include "globalui.h"
 #include "titlesession.h"
@@ -913,8 +914,6 @@ void DrawTitleFrame(UiBlitRenderer& renderer,FontTextures& textures,PcFontFace& 
   GlCheck("title frame drawing");
 }
 #include "desktopmovieframe.inc"
-#include "desktoptitle.inc"
-#include "desktopprofile.inc"
 
 // Shared native dialog geometry, authored labels, font and atlas resources.
 // This layer measures/draws; DialogState owns input/timing and saving owns I/O.
@@ -972,6 +971,9 @@ struct SceneDialogLayer {
 };
 
 #include "desktopoptions.inc"
+#include "desktopoptionsowner.inc"
+#include "desktoptitle.inc"
+#include "desktopprofile.inc"
 
 // An ordinary-dialogue frontend. Unbound auxiliary/effect passes are
 // reported explicitly; this is not yet the complete scenario renderer.
@@ -4629,7 +4631,7 @@ int RunMovieInfoProbe(const std::filesystem::path& path,const std::filesystem::p
   }
 }
 int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::path& requestedProgressRoot,
-    const std::filesystem::path& captureDirectory,bool capturePointer,bool captureOpening,uint8_t captureMovie){
+    const std::filesystem::path& captureDirectory,bool capturePointer,bool captureOpening,uint8_t captureMovie,uint8_t captureOptions){
   bool created=false;
   try{
     const bool capture=!captureDirectory.empty();
@@ -4664,27 +4666,39 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     UiBlitRenderer renderer;FontTextures textures;
     PcFontFace font(SceneRead(usrdir/"DFHSR4.TTC"),GsfFont::Decode(SceneRead(usrdir/"Font.gsf")));
     ArchiveBgmResources music(usrdir);ArchiveSeResources sounds(usrdir);SystemSoundAssets systemSounds(first);
-    MusicPlayback playback(music,capture,&sounds);
+    MusicPlayback playback(music,capture,&sounds);uint64_t audioFrames=0;
+    const auto audioClock=[&]()->uint64_t{return capture?audioFrames/48:SDL_GetTicks();};
+    const auto initialBgm=BgmRequest(0,*owner->BgmMasterVolume,*owner->BgmCommandVolume,music.Coefficient());
+    PlaybackVoiceAttenuation attenuation(playback,int32_t(initialBgm.Volume->ConvertedVolume),int32_t(progress.Bytes6022c[11])*10,true);
     PlaybackTitleAudio audio(playback,systemSounds,ProfileVoiceGain(progress.Bytes6022c[10],1.0f),ProfileVoiceGain(progress.Bytes6022c[9],1.0f));
+    audio.BindVoiceAttenuation(attenuation,audioClock);
     PcMovieFrameLayer movieFrame;MoviePlayback movie;movie.Present=[&](const AVFrame* frame,int64_t pts){movieFrame.Present(frame,pts);};
     // This is the fresh boot owner. A future title return must carry its actual
     // backlog/surface owners rather than substituting this initially empty ring.
     std::vector<std::u16string> backlog;
-    PcTitleOwner title(*owner,resources,renderer,playback,music,audio,movie,movieFrame,usrdir,env,seeds,utility.OpaqueTable,
-      widget.HoldFrames,[&]{backlog.clear();},0);
+    PcTitleOwner title(*owner,resources,renderer,textures,font,playback,music,sounds,audio,attenuation,movie,movieFrame,usrdir,env,seeds,utility.OpaqueTable,
+      widget.HoldFrames,[&]{backlog.clear();},progressRoot,session.Slots,audioClock,0);
     std::ofstream trace,pcm;
     if(capture){trace.open(captureDirectory/"title.jsonl");pcm.open(captureDirectory/"audio.pcm",std::ios::binary);
       if(!trace || !pcm)throw FormatError("cannot open title capture outputs");}
-    bool quit=false,pressedStart=false,chose=false,skippedVoice=false,pointerDown=false;std::array<bool,2> held{};
+    bool quit=false,pressedStart=false,chose=false,skippedVoice=false,pointerDown=false;std::array<bool,2> held{},horizontalHeld{};
+    uint32_t optionsStage=0,optionsGesture=0;bool optionsOpenImage=false,optionsQuestionImage=false,optionsPreviewImage=false;
     bool sawMovie=false,movieReturned=false,movieSkipped=false,movieImage=false;
-    std::array<float,2> pointer{};int pointerCapture=0;int32_t previousPhase=-1;size_t frames=0;uint64_t epoch=SDL_GetTicks(),audioFrames=0;
+    std::array<float,2> pointer{};int pointerCapture=0;int32_t previousPhase=-1;size_t frames=0;uint64_t epoch=SDL_GetTicks();
     for(;!quit && !title.RequestedScene;++frames){
       if(capture && frames>=(captureMovie==2?10000u:captureMovie?4000u:1250u))throw FormatError("title capture exhausted its bounded frame budget");
-      title.Input={};title.NavigationInput={};title.NavigationInput.Held=held;
+      title.Input={};title.NavigationInput={};title.NavigationInput.Held=held;title.OptionsInput={};title.OptionsInput.Vertical.Held=held;
+      title.OptionsInput.HorizontalHeld=horizontalHeld;title.OptionsModalInput={};
       const uint64_t now=capture?frames*16:SDL_GetTicks()-epoch;
       const auto key=[&](SDL_Keycode code){for(auto type:{SDL_EVENT_KEY_DOWN,SDL_EVENT_KEY_UP}){
         SDL_Event event{};event.type=type;event.key.windowID=SDL_GetWindowID(window.Window);event.key.key=code;
         event.key.down=type==SDL_EVENT_KEY_DOWN;SdlCheck(SDL_PushEvent(&event),"title capture explicit keyboard input");}};
+      const auto mouse=[&](uint32_t step,int32_t x,int32_t y){
+        SDL_Event event{};
+        if(step==1){event.type=SDL_EVENT_MOUSE_MOTION;event.motion.windowID=SDL_GetWindowID(window.Window);event.motion.x=float(x);event.motion.y=float(y);}
+        else{event.type=step==0?SDL_EVENT_MOUSE_BUTTON_DOWN:SDL_EVENT_MOUSE_BUTTON_UP;event.button.windowID=SDL_GetWindowID(window.Window);event.button.button=SDL_BUTTON_LEFT;event.button.down=step==0;event.button.x=float(x);event.button.y=float(y);}
+        SdlCheck(SDL_PushEvent(&event),"Options capture explicit pointer input");
+      };
       if(capture){
         if(captureMovie && title.State.Phase==25){
           sawMovie=true;
@@ -4693,7 +4707,8 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
         if(sawMovie && title.State.Phase==5)movieReturned=true;
         if(title.State.Phase==5 && title.State.Fade.Finished() && !pressedStart && (!captureMovie || movieReturned)){key(SDLK_RETURN);pressedStart=true;}
         if(title.State.Phase==10 && !chose){
-          if(!capturePointer){key(SDLK_RETURN);chose=true;}
+          if(captureOptions){if(title.State.Selected<2)key(SDLK_DOWN);else{key(SDLK_RETURN);chose=true;}}
+          else if(!capturePointer){key(SDLK_RETURN);chose=true;}
           else {
             const auto box=env.RectangleTables.at(0x358).at(0);SDL_Event event{};
             event.type=pointerCapture==0?SDL_EVENT_MOUSE_BUTTON_DOWN:SDL_EVENT_MOUSE_BUTTON_UP;
@@ -4702,23 +4717,67 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
             SdlCheck(SDL_PushEvent(&event),"title capture explicit pointer input");if(++pointerCapture==2)chose=true;
           }
         }
+        if(captureOptions && title.Config()){
+          auto& config=*title.Config();const auto& cs=config.State;
+          if(cs.Lifecycle.Phase==4){
+            if(optionsStage==0){
+              if(captureOptions!=4){key(SDLK_RIGHT);optionsStage=1;}
+              else{const auto& l=cs.Pages.Text.Layouts[0];const auto& r=config.Environment().Rectangles.at(0x494);
+                const auto x=optionsGesture==0?cs.Pages.Text.Sliders[0].X:l.OriginX+l.Step*3;
+                mouse(optionsGesture,x+r[0]+r[2]/2,l.Y+r[1]+r[3]/2);
+                if(++optionsGesture==3){optionsGesture=0;optionsStage=1;}
+              }
+            }else if(optionsStage==1 && cs.Pages.Values[0]==3){
+              if(captureOptions!=4){key(SDLK_E);optionsStage=2;}
+              else{const auto& r=config.Environment().RectangleRows.at(0x108).at(0).at(1);mouse(optionsGesture==0?0u:2u,r[0]+r[2]/2,r[1]+r[3]/2);
+                if(++optionsGesture==2){optionsGesture=0;optionsStage=2;}}
+            }
+            else if(optionsStage==2 && cs.Pages.Controls.SelectedTab==1){
+              if(cs.Pages.Rows[1].Selected<3)key(SDLK_DOWN);else{key(SDLK_P);optionsStage=3;}
+            }else if(optionsStage==3 && config.PreviewStarts && playback.ProfileVoicePosition().value_or(0)>0){key(SDLK_SPACE);optionsStage=4;}
+            else if(optionsStage==7){key(SDLK_BACKSPACE);optionsStage=8;}
+          }
+          const auto& question=config.Dialogs().Question;
+          if(question.Visible && question.Phase==3 && !question.PendingPhase){
+            if(optionsStage==4){
+              if(captureOptions==1){key(SDLK_RIGHT);optionsStage=5;}
+              else if(captureOptions==4){const auto r=config.QuestionButtonRectangle(1);mouse(optionsGesture==0?0u:2u,r[0]+r[2]/2,r[1]+r[3]/2);
+                if(++optionsGesture==2){optionsGesture=0;optionsStage=6;}}
+              else if(captureOptions==2){key(SDLK_BACKSPACE);optionsStage=7;}
+              else{key(SDLK_RETURN);optionsStage=6;}
+            }else if(optionsStage==5 && question.Selected==1){key(SDLK_RETURN);optionsStage=6;}
+          }
+          const auto& save=config.Dialogs().Save;
+          if(save.State().Phase==19 && save.Modal.Visible && save.Modal.Phase==3 && !save.Modal.PendingPhase)key(SDLK_RETURN);
+        }
         if(title.State.Phase==21 && !skippedVoice){key(SDLK_RETURN);skippedVoice=true;}
       }
       SDL_Event event{};
       while(SDL_PollEvent(&event)){
-        if(event.type==SDL_EVENT_QUIT || (event.type==SDL_EVENT_KEY_DOWN && event.key.key==SDLK_ESCAPE))quit=true;
+        if(event.type==SDL_EVENT_QUIT || (event.type==SDL_EVENT_KEY_DOWN && event.key.key==SDLK_ESCAPE && !title.Config()))quit=true;
         if(event.type==SDL_EVENT_KEY_DOWN || event.type==SDL_EVENT_KEY_UP){
           const bool down=event.type==SDL_EVENT_KEY_DOWN;
           title.Input.AnyActivity|=down;
           if(event.key.key==SDLK_UP || event.key.key==SDLK_DOWN){const size_t i=event.key.key==SDLK_DOWN;
-            held[i]=down;title.NavigationInput.Held[i]=down;title.NavigationInput.Pressed[i]|=down&&!event.key.repeat;}
-          if(down&&!event.key.repeat){title.Input.Accept|=event.key.key==SDLK_RETURN;title.Input.Cancel|=event.key.key==SDLK_BACKSPACE;title.Input.Start|=event.key.key==SDLK_SPACE;}
+            held[i]=down;title.NavigationInput.Held[i]=down;title.NavigationInput.Pressed[i]|=down&&!event.key.repeat;
+            title.OptionsInput.Vertical.Held[i]=down;title.OptionsInput.Vertical.Pressed[i]|=down&&!event.key.repeat;}
+          if(event.key.key==SDLK_LEFT || event.key.key==SDLK_RIGHT){const size_t i=event.key.key==SDLK_LEFT;
+            horizontalHeld[i]=down;title.OptionsInput.HorizontalHeld[i]=down;title.OptionsInput.HorizontalPressed[i]|=down&&!event.key.repeat;}
+          if(down&&!event.key.repeat){title.Input.Accept|=event.key.key==SDLK_RETURN;title.Input.Cancel|=event.key.key==SDLK_BACKSPACE;title.Input.Start|=event.key.key==SDLK_SPACE;
+            title.OptionsInput.Accept|=event.key.key==SDLK_RETURN;title.OptionsInput.Preview|=event.key.key==SDLK_P;
+            title.OptionsInput.Common.Close|=event.key.key==SDLK_SPACE;
+            title.OptionsInput.Common.Revert|=event.key.key==SDLK_BACKSPACE || event.key.key==SDLK_ESCAPE;
+            title.OptionsInput.Common.PreviousTab|=event.key.key==SDLK_Q || event.key.key==SDLK_PAGEUP;
+            title.OptionsInput.Common.NextTab|=event.key.key==SDLK_E || event.key.key==SDLK_PAGEDOWN;
+            title.OptionsModalInput.Left|=event.key.key==SDLK_LEFT;title.OptionsModalInput.Right|=event.key.key==SDLK_RIGHT;
+            title.OptionsModalInput.Accept|=event.key.key==SDLK_RETURN;title.OptionsModalInput.Cancel|=event.key.key==SDLK_BACKSPACE || event.key.key==SDLK_ESCAPE;
+          }
         }
         if((event.type==SDL_EVENT_MOUSE_BUTTON_DOWN || event.type==SDL_EVENT_MOUSE_BUTTON_UP) && event.button.button==SDL_BUTTON_LEFT){
           pointerDown=event.type==SDL_EVENT_MOUSE_BUTTON_DOWN;pointer={event.button.x,event.button.y};title.Input.AnyActivity=true;
         }
         if(event.type==SDL_EVENT_MOUSE_MOTION){pointer={event.motion.x,event.motion.y};title.Input.AnyActivity=true;}
-        if(event.type==SDL_EVENT_WINDOW_FOCUS_LOST){held={};title.NavigationInput={};pointerDown=false;title.Contacts.CancelPointer();}
+        if(event.type==SDL_EVENT_WINDOW_FOCUS_LOST){held={};horizontalHeld={};title.NavigationInput={};title.OptionsInput={};pointerDown=false;title.Contacts.CancelPointer();if(title.Config())title.Config()->CancelPointer();}
       }
       WidgetInputHistory::Snapshot contacts{};
       if(pointerDown){
@@ -4727,7 +4786,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
         if(scale>0)contacts[0]=WidgetTouch{0,{int16_t(std::clamp((pointer[0]-(w-960*scale)/2)/scale,-32768.f,32767.f)),
           int16_t(std::clamp((pointer[1]-(h-544*scale)/2)/scale,-32768.f,32767.f))}};
       }
-      title.Input.AnyActivity|=pointerDown||held[0]||held[1];title.Contacts.BeginFrame(contacts);
+      title.Input.AnyActivity|=pointerDown||held[0]||held[1];title.Contacts.BeginFrame(contacts);title.FrameContacts=contacts;
       if(quit)break;
       const uint32_t playingBefore=(audio.Playing(6)?1u:0u)|(audio.Playing(7)?2u:0u);
       title.Update(now);playback.Update(0.016f);
@@ -4746,24 +4805,51 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
         for(size_t i=0;i<tweens.size();++i){if(i)trace<<',';trace<<tweens[i]->Value.Current;}
         const auto& ms=movie.State();trace<<"],\"movie_flags\":"<<title.MovieFlags<<",\"movie_position_us\":"<<ms.PositionUs
           <<",\"movie_frame_pts_us\":"<<ms.FramePtsUs<<",\"movie_video_frames\":"<<ms.VideoPresented<<",\"movie_audio_frames\":"<<ms.AudioPlayed
-          <<",\"movie_volume\":"<<ms.Volume<<"}\n";
+          <<",\"movie_volume\":"<<ms.Volume;
+        if(captureOptions){auto* c=title.Config();trace<<",\"config_stage\":"<<optionsStage<<",\"config_phase\":"<<(c?c->State.Lifecycle.Phase:-1)
+          <<",\"config_tab\":"<<(c?c->State.Pages.Controls.SelectedTab:-1)<<",\"config_audio_row\":"<<(c?c->State.Pages.Rows[1].Selected:-1)
+          <<",\"config_text_speed\":"<<unsigned(owner->SystemProgress->Bytes6022c[0])<<",\"config_previews\":"<<(c?c->PreviewStarts:title.ConfigPreviews)
+          <<",\"question_phase\":"<<(c?c->Dialogs().Question.Phase:-1)<<",\"save_phase\":"<<(c?c->Dialogs().Save.State().Phase:-1);}
+        trace<<"}\n";
       }
+      attenuation.Update(audioClock());
       int width=0,height=0;SdlCheck(SDL_GetWindowSizeInPixels(window.Window,&width,&height),"title display extent");
       title.Draw(textures,font,uint32_t(utility.OpaqueWord),width,height);
+      if(captureOptions && title.Config()){
+        auto& c=*title.Config();
+        if(!optionsOpenImage && c.State.Lifecycle.Phase==4){Capture(captureDirectory/"options-open.bmp",width,height);optionsOpenImage=true;}
+        if(!optionsQuestionImage && c.Dialogs().Question.Visible && c.Dialogs().Question.Phase==3){Capture(captureDirectory/"options-question.bmp",width,height);optionsQuestionImage=true;}
+        if(!optionsPreviewImage && c.PreviewStarts && !playback.ProfileVoiceStopped()){Capture(captureDirectory/"options-preview.bmp",width,height);optionsPreviewImage=true;}
+      }
       if(captureMovie && !movieImage && title.State.Phase==25 && movie.State().VideoPresented>=6){Capture(captureDirectory/"movie-playing.bmp",width,height);movieImage=true;}
       if(capture && ((title.State.Phase!=previousPhase && (title.State.Phase==10 || title.State.Phase==21)) ||
           (title.State.Phase==5 && title.State.Fade.Finished() && !pressedStart)))
         Capture(captureDirectory/("phase-"+std::to_string(title.State.Phase)+".bmp"),width,height);
       previousPhase=title.State.Phase;SdlCheck(SDL_GL_SwapWindow(window.Window),"title frame swap");
+      if(captureOptions && title.ConfigReturns==1 && title.State.Phase==10){Capture(captureDirectory/"options-return.bmp",width,height);++frames;break;}
       if(!capture)SDL_Delay(16);
     }
     if(capture){
       trace.close();pcm.close();if(!trace || !pcm)throw FormatError("cannot save title trace/PCM");
-      if(quit || title.RequestedScene!=2 || title.Resets!=2 || title.HistoryClears!=1)throw FormatError("title capture missed native New Game handoff");
+      if(captureOptions){
+        if(quit || title.RequestedScene || title.ConfigEntries!=1 || title.ConfigReturns!=1 || title.ConfigPreviews!=1 || !optionsOpenImage || !optionsQuestionImage || !optionsPreviewImage)
+          throw FormatError("Options capture missed its live round trip");
+        const auto stored=ReadProgressStore(progressRoot);if(!stored)throw FormatError("Options private progress disappeared");
+        const auto working=ReadOptions(*owner->SystemProgress),disk=ReadOptions(stored->System);const bool saved=captureOptions==1 || captureOptions==4;
+        auto expectedWorking=ReadOptions(session.System),expectedDisk=expectedWorking;expectedWorking[0]=captureOptions==2?2:3;expectedDisk[0]=saved?3:2;
+        if(working!=expectedWorking || disk!=expectedDisk || stored->System.Bank1!=session.System.Bank1 || title.ConfigSaves!=size_t(saved) || title.ConfigCancels!=size_t(captureOptions==2) || stored->Slots.Encode()!=session.Slots.Encode())
+          throw FormatError("Options save/cancel/revert did not preserve native preferences and paired slots");
+        if(saved && (stored->Generation==session.Generation || stored->System.Histories[1].Values.empty() || stored->System.Histories[1].Values[0]!=1))
+          throw FormatError("Options save lost the live title music history");
+        std::ofstream options(captureDirectory/"options.json");options<<"{\"passed\":true,\"mode\":"<<unsigned(captureOptions)<<",\"frames\":"<<frames<<",\"entries\":"<<title.ConfigEntries<<",\"returns\":"<<title.ConfigReturns
+          <<",\"preview_starts\":"<<title.ConfigPreviews<<",\"questions\":"<<title.ConfigQuestions<<",\"question_cancels\":"<<title.ConfigCancels<<",\"saves\":"<<title.ConfigSaves
+          <<",\"working_text_speed\":"<<unsigned(working[0])<<",\"stored_text_speed\":"<<unsigned(disk[0])<<",\"all_options_verified\":true,\"paired_slots_preserved\":true,\"manual_acceptance\":false}\n";
+        options.close();if(!options)throw FormatError("cannot save Options report");
+      }else if(quit || title.RequestedScene!=2 || title.Resets!=2 || title.HistoryClears!=1)throw FormatError("title capture missed native New Game handoff");
       if(captureMovie && (!sawMovie || !movieReturned || (captureMovie==1 && !movieSkipped) || !movieImage))throw FormatError("title idle movie did not play/return");
       std::ofstream report(captureDirectory/"title.json");report << "{\"passed\":true,\"frames\":"<<frames<<",\"audio_frames\":"<<audioFrames
         <<",\"pointer\":"<<capturePointer<<",\"resets\":"<<title.Resets<<",\"history_clears\":"<<title.HistoryClears
-        <<",\"scene\":2,\"profile_shortcut\":false,\"submenus_bound\":false,\"movie_bound\":true,\"movie_capture\":"<<int(captureMovie)
+        <<",\"scene\":"<<title.RequestedScene.value_or(-1)<<",\"profile_shortcut\":false,\"config_bound\":true,\"submenus_bound\":false,\"movie_bound\":true,\"movie_capture\":"<<int(captureMovie)
         <<",\"movie_returned\":"<<movieReturned<<",\"manual_acceptance\":false}\n";
       report.close();if(!report)throw FormatError("cannot save title owner report");
     }
@@ -4775,7 +4861,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
       report<<"{\"passed\":true,\"textures\":0,\"ui_playing\":false,\"voice_playing\":false}\n";
       report.close();if(!report)throw FormatError("cannot save title retirement report");
     }
-    if(quit)return 0;
+    if(quit || captureOptions)return 0;
     if(title.RequestedScene!=2)throw UnsupportedCommand("unknown PC title scene request");
     if(capture)std::filesystem::create_directory(captureDirectory/"entry");
     return RunScenarioScene(window,renderer,textures,font,resources,playback,music,sounds,std::move(*owner),nullptr,

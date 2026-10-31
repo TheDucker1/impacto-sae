@@ -44,12 +44,15 @@ void LoadSystemOwner(SemanticState& owner,const NativeSystemSave& progress,
   next->SystemProgress=progress;next->Bank1=progress.Bank1;
   next->CgHistory={true,progress.Histories[0].Values,std::move(requiredCg),progress.Histories[0].Fallback,{}};
   next->MusicHistory=Music(progress.Histories[1]);next->BattleHistory=Music(progress.Histories[6]);
-  const auto& option=progress.Bytes6022c;
-  next->TextSpeed=option[0];next->AutoSpeed=option[1];next->SkipUnreadEnabled=option[2];next->WindowOpacity=option[3];
-  next->ContinueAutoAfterSelection=option[4]!=0;next->ContinueSkipAfterSelection=option[5]!=0;next->ReadColorEnabled=option[6]!=0;
-  next->BgmMasterVolume=int32_t(option[7])*10;next->SeMasterVolume=int32_t(option[8])*10;
-  next->VoiceSettings=OrdinaryVoiceSettings{option[10],option[12]!=0,progress.Bytes6023a};
+  ApplySystemPreferences(*next,progress);
   owner=std::move(*next);
+}
+void ApplySystemPreferences(SemanticState& owner,const NativeSystemSave& progress){
+  const auto& option=progress.Bytes6022c;
+  owner.TextSpeed=option[0];owner.AutoSpeed=option[1];owner.SkipUnreadEnabled=option[2];owner.WindowOpacity=option[3];
+  owner.ContinueAutoAfterSelection=option[4]!=0;owner.ContinueSkipAfterSelection=option[5]!=0;owner.ReadColorEnabled=option[6]!=0;
+  owner.BgmMasterVolume=int32_t(option[7])*10;owner.SeMasterVolume=int32_t(option[8])*10;
+  owner.VoiceSettings=OrdinaryVoiceSettings{option[10],option[12]!=0,progress.Bytes6023a};
 }
 NativeSystemSave SnapshotSystemOwner(const SemanticState& owner,
                                      const RegisteredReadHistory& history) {

@@ -543,7 +543,13 @@ void PlaybackTitleAudio::SetGains(float voiceGain,float uiGain){
   ValidateLiveGain(voiceGain);ValidateLiveGain(uiGain);
   playback_.SetChannelOutputGain(7,voiceGain);playback_.SetChannelOutputGain(6,uiGain);gain_=voiceGain;
 }
-void PlaybackTitleAudio::PlayVoice(Bytes encoded){playback_.PrepareMemoryVoice(7,std::move(encoded),gain_);playback_.StartOrdinaryVoice(7);}
+void PlaybackTitleAudio::BindVoiceAttenuation(PlaybackVoiceAttenuation& owner,std::function<uint64_t()> clock){
+  if(!clock)throw FormatError("missing title audio-service clock");attenuation_=&owner;audioClock_=std::move(clock);
+}
+void PlaybackTitleAudio::PlayVoice(Bytes encoded){
+  playback_.PrepareMemoryVoice(7,std::move(encoded),gain_);
+  if(attenuation_)attenuation_->StartOrdinaryVoice(7,audioClock_());else playback_.StartOrdinaryVoice(7);
+}
 void PlaybackTitleAudio::PlayUi(int32_t id){playback_.Submit({GameEventKind::Sound,id});}
 void PlaybackTitleAudio::Stop(uint32_t channel){if(channel==6)playback_.StopUiSound();else if(channel==7)playback_.StopOrdinaryVoice(7);else throw FormatError("title audio channel outside6/7");}
 bool PlaybackTitleAudio::Playing(uint32_t channel)const{if(channel==6)return playback_.UiSoundPlaying();if(channel==7)return playback_.OrdinaryVoicePlaying(7);throw FormatError("title audio channel outside6/7");}
