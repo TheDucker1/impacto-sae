@@ -76,7 +76,14 @@ int64_t FFmpegFileIO::seek(int64_t offset, int whence) {
   return newPos;
 }
 
-FFmpegPlayer::~FFmpegPlayer() { IsInit = false; }
+FFmpegPlayer::~FFmpegPlayer() { Stop(); IsInit = false; }
+
+void FFmpegPlayer::InitDecodeOnly(bool reconstructMissingTimestamps) {
+  assert(!IsInit);
+  av::init();
+  AudioPlayer=std::make_unique<Audio::FFmpegAudioPlayer>(this);
+  DecodeOnly=true;ReconstructMissingTimestamps=reconstructMissingTimestamps;NoAudio=false;IsInit=true;
+}
 
 void FFmpegPlayer::Init() {
   assert(IsInit == false);
@@ -213,11 +220,12 @@ void FFmpegPlayer::OpenCodec(std::optional<FFmpegStream<MediaType>>& streamOpt,
   std::optional<av::Codec> codec = findDecoderCodec<MediaType>(avStream);
   if (!codec) {
     avStream.reset();
+    return;
   }
 
   DecodingContext_t<MediaType> decoderContext{avStream, *codec};
   if constexpr (MediaType == AVMEDIA_TYPE_VIDEO) {
-    if (auto* ctx = HwDecoderInit(decoderContext.codec().raw()); ctx) {
+    if (auto* ctx = DecodeOnly ? nullptr : HwDecoderInit(decoderContext.codec().raw()); ctx) {
       decoderContext.raw()->hw_device_ctx = ctx;
       decoderContext.raw()->opaque = this;
       decoderContext.raw()->get_format =
@@ -353,13 +361,13 @@ void FFmpegPlayer::Play(Io::Stream* stream, bool looping, bool alpha) {
   if (videoStream.isVideo() && videoStream.isValid()) {
     OpenCodec<AVMEDIA_TYPE_VIDEO>(VideoStream, std::move(videoStream),
                                   videoStreamId);
-    ScrWork[SW_MOVIEFRAME] = 0;
-    ScrWork[SW_MOVIETOTALFRAME] = VideoStream->Duration;
+    if(!DecodeOnly){ScrWork[SW_MOVIEFRAME] = 0;ScrWork[SW_MOVIETOTALFRAME] = VideoStream->Duration;}
   }
+  if(!VideoStream){FormatContext.close();StreamPtr.reset();return;}
   if (audioStream.isAudio() && audioStream.isValid()) {
     OpenCodec<AVMEDIA_TYPE_AUDIO>(AudioStream, std::move(audioStream),
                                   audioStreamId);
-    AudioPlayer->InitConvertContext(AudioStream->CodecContext.raw());
+    if(AudioStream)AudioPlayer->InitConvertContext(AudioStream->CodecContext.raw());
   }
   VideoClock = Clock();
   MasterClock = &VideoClock;
@@ -381,7 +389,7 @@ void FFmpegPlayer::Play(Io::Stream* stream, bool looping, bool alpha) {
         std::thread{&FFmpegPlayer::Decode<AVMEDIA_TYPE_AUDIO>, this,
                     std::ref(*AudioStream)};
   }
-  if (+Profile::Game::GameFeatures & +GameFeature::Subtitles) {
+  if (!DecodeOnly && +Profile::Game::GameFeatures & +GameFeature::Subtitles) {
     InitSubtitles(embeddedSubStreams);
   }
 
@@ -485,6 +493,7 @@ void FFmpegPlayer::HandleSeekRequest() {
 }
 
 void FFmpegPlayer::Read() {
+  std::mutex eofMutex;
   while (!AbortRequest) {
     if (SeekRequest) {
       HandleSeekRequest();
@@ -492,6 +501,8 @@ void FFmpegPlayer::Read() {
 
     AVPacketItem item;
     if (ReaderEOF) {
+      std::unique_lock lock(eofMutex);
+      ReadCond.wait_for(lock,std::chrono::milliseconds(10),[this]{return AbortRequest || SeekRequest;});
       continue;
     }
     std::error_code ec;
@@ -549,6 +560,7 @@ void FFmpegPlayer::Read() {
 }
 
 void FFmpegPlayer::ProcessVideoFrame(Frame_t<AVMEDIA_TYPE_VIDEO>& avFrame) {
+  if(!avFrame)return; // Decoder flush publishes an empty EOF frame.
   auto rawFrame = avFrame.raw();
   if (rawFrame->format == AV_PIX_FMT_NONE ||
       !(av_pix_fmt_desc_get(avFrame.pixelFormat())->flags &
@@ -595,7 +607,8 @@ void FFmpegPlayer::Decode(FFmpegStream<MediaType>& stream) {
         return packet;
       };
 
-  auto pushFrame = [&stream, this](Frame_t<MediaType>&& frame) {
+  int64_t nextPresentationTick=0;
+  auto pushFrame = [&stream, &nextPresentationTick, this](Frame_t<MediaType>&& frame) {
     AVDecodedItem<MediaType> item;
     item.Frame = std::move(frame);
     if (!item.Frame) {
@@ -603,6 +616,23 @@ void FFmpegPlayer::Decode(FFmpegStream<MediaType>& stream) {
     } else {
       item.Serial = stream.PacketQueueSerial;
       item.Timestamp = item.Frame.pts();
+      if(ReconstructMissingTimestamps){
+        if constexpr(MediaType==AVMEDIA_TYPE_VIDEO || MediaType==AVMEDIA_TYPE_AUDIO){
+          av::Rational timebase;
+          int64_t step=1;
+          if constexpr(MediaType==AVMEDIA_TYPE_VIDEO){
+            const auto rate=stream.AvStream.averageFrameRate();
+            timebase=av::Rational(rate.getDenominator(),rate.getNumerator());
+          }else{
+            timebase=av::Rational(1,stream.CodecContext.sampleRate());
+            step=item.Frame.raw()->nb_samples;
+          }
+          if(timebase.getNumerator()>0 && timebase.getDenominator()>0){
+            if(!item.Timestamp.isValid())item.Timestamp=av::Timestamp(nextPresentationTick,timebase);
+            nextPresentationTick=item.Timestamp.timestamp(timebase)+step;
+          }
+        }
+      }
     }
     auto& frameQueue = stream.FrameQueue;
 
@@ -671,6 +701,7 @@ void FFmpegPlayer::Stop() {
     IsPlaying = false;
     PlaybackStarted = false;
     AbortRequest = true;
+    ReadCond.notify_all();
     ReadThread.join();
     ReaderEOF = false;
     if (AudioStream) {
@@ -702,17 +733,20 @@ void FFmpegPlayer::Stop() {
         },
         VideoTexture);
 
-    SetFlag(SF_MOVIEPLAY, false);
+    if(!DecodeOnly)SetFlag(SF_MOVIEPLAY, false);
   }
 }
 
 void FFmpegPlayer::Seek(int64_t pos) {
+  if(DecodeOnly && ReconstructMissingTimestamps)
+    throw std::logic_error("metadata-timed movie decoding requires stop/reopen instead of seek");
   SeekRequest = true;
   SeekPosition = pos;
   ReadCond.notify_one();
 }
 
 void FFmpegPlayer::Update(float dt) {
+  if(DecodeOnly)return;
   if (IsPlaying) {
     using namespace std::literals::chrono_literals;
     if (AudioStream) AudioPlayer->Process();
@@ -863,6 +897,7 @@ void FFmpegPlayer::UpdateSubtitles() {
 }
 
 void FFmpegPlayer::Render(float videoAlpha) {
+  if(DecodeOnly)return;
   if (!IsPlaying || !PlaybackStarted) return;
 
   const RectF dest = {0.0f, 0.0f, Profile::Game::DesignWidth,

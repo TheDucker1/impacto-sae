@@ -40,10 +40,14 @@
 #include "particlefragmentshader.h"
 #include "../io/memorystream.h"
 #include "../texture/texture.h"
+#include "../video/ffmpegplayer.h"
+#include "../io/physicalfilestream.h"
 
 #include <SDL3/SDL.h>
 extern "C" {
 #include <libavformat/avformat.h>
+#include <libavutil/imgutils.h>
+#include <libavutil/md5.h>
 }
 #include <glad/glad.h>
 
@@ -4507,6 +4511,7 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
     return 1;
   }
 }
+#include "desktopmovie.inc"
 int RunMovieInfoProbe(const std::filesystem::path& path,const std::filesystem::path& output){
   AVFormatContext* context=nullptr;
   if(std::filesystem::exists(output))return 1;

@@ -38,6 +38,13 @@ class FFmpegPlayer : public VideoPlayer {
   ~FFmpegPlayer();
 
   void Init() override;
+  // Reuse the engine's demux/decoder threads with a caller-owned presentation
+  // and audio host. No SC3 script flags, global renderer or audio device is
+  // touched. The caller drains the public bounded frame queues and calls Stop.
+  // Opt in only for a verified constant-rate source whose demuxer omits PTS.
+  // Video uses authored average FPS; audio uses decoded sample counts/rate.
+  // Metadata-timed mode supports stop/reopen; seek is rejected explicitly.
+  void InitDecodeOnly(bool reconstructMissingTimestamps=false);
 
   void Play(Io::Stream* stream, bool loop, bool alpha) override;
   void Stop() override;
@@ -53,7 +60,7 @@ class FFmpegPlayer : public VideoPlayer {
   void ProcessAudio();
 
   std::atomic<bool> AbortRequest;
-  bool SeekRequest;
+  std::atomic<bool> SeekRequest{false};
   std::thread ReadThread;
   std::optional<FFmpegStream<AVMEDIA_TYPE_VIDEO>> VideoStream;
   std::optional<FFmpegStream<AVMEDIA_TYPE_AUDIO>> AudioStream;
@@ -95,6 +102,8 @@ class FFmpegPlayer : public VideoPlayer {
   std::unique_ptr<Audio::FFmpegAudioPlayer> AudioPlayer;
 
   bool IsInit = false;
+  bool DecodeOnly = false;
+  bool ReconstructMissingTimestamps = false;
 
   std::variant<std::monostate, YUVFrame*, NV12Frame*> VideoTexture;
 
