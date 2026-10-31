@@ -5,6 +5,8 @@
 #include <optional>
 
 namespace Impacto::Saekano {
+int RunTitleDrawProbe(const std::filesystem::path& usrdir,const std::filesystem::path& inputs,
+                      const std::filesystem::path& output);
 int RunParticleGroupProbe(const std::filesystem::path& usrdir,
                           const std::filesystem::path& fixtureDirectory,
                           const std::filesystem::path& output);

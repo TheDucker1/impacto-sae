@@ -24,6 +24,7 @@
 #include "battleresulthost.h"
 #include "scenequeue.h"
 #include "widgetinput.h"
+#include "titledraw.h"
 #include "skipauto.h"
 #include "mouthselection.h"
 #include "particle.h"
@@ -854,6 +855,43 @@ Bytes SceneRead(const std::filesystem::path& path) {
   std::ifstream file(path, std::ios::binary);
   if (!file) throw FormatError("cannot open scene input: " + path.string());
   return Bytes{std::istreambuf_iterator<char>(file), {}};
+}
+// Shared PC title drawing consumer. Scene owners supply effects and overlay
+// services; an absent owner must reject its request rather than dropping it.
+void DrawTitleFrame(UiBlitRenderer& renderer,FontTextures& textures,PcFontFace& font,
+    const TitleEnvironment& env,std::span<const TitleDrawCommand> main,
+    std::span<const TitleOverlayCommand> overlay,int width,int height,
+    const std::function<void(uint32_t)>& effects,
+    const std::function<void(const TitleOverlayCommand&)>& services,
+    std::ostream* sprites=nullptr,std::ostream* glyphs=nullptr){
+  const auto rectangle=[&](std::array<int32_t,4> geometry,std::array<uint8_t,4> color){
+    UiSpriteBlit solid;solid.Destination=geometry;solid.Color=color;renderer.DrawQuad(solid,{0,1,1},true);
+  };
+  for(const auto& c:main)switch(c.Kind){
+    case TitleDrawKind::Clear:renderer.Draw({},width,height);break;
+    case TitleDrawKind::Blend:
+      if(c.Index!=1)throw UnsupportedCommand("unknown title blend mode");
+      glEnable(GL_BLEND);glBlendEquation(GL_FUNC_ADD);glBlendFuncSeparate(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA,GL_ONE,GL_ONE);break;
+    case TitleDrawKind::TransformReset:
+      // UiBlitRenderer resolves each quad directly in logical960x544 space.
+      // It retains no inherited native transform between these submissions.
+      break;
+    case TitleDrawKind::Sprite:
+      renderer.DrawQuad(c.Sprite,renderer.Textures.at(c.Sprite.Texture),false);
+      if(sprites){WriteUiBlit(*sprites,c.Sprite);*sprites<<'\n';}break;
+    case TitleDrawKind::Text:
+      textures.DrawString(renderer,font,c.Text.Text,c.Text.Position[0],c.Text.Position[1],c.Text.Size,c.Text.Color,glyphs);break;
+    case TitleDrawKind::Widget:
+      // Constructor9a5fa binds these rectangle faces with RGBA zero. Contact
+      // histories are updated separately even though their faces are transparent.
+      rectangle(c.Index==4?env.Rectangles.at(0x368):env.RectangleTables.at(0x358).at(c.Index),{0,0,0,0});break;
+    case TitleDrawKind::Effect:effects(c.Index);break;
+  }
+  for(const auto& c:overlay){
+    if(c.Kind==TitleOverlayKind::Rectangle)rectangle(c.Rectangle,c.Color);
+    else services(c);
+  }
+  GlCheck("title frame drawing");
 }
 #include "desktopprofile.inc"
 
@@ -3116,6 +3154,47 @@ int RunScreenFilterProbe(const std::filesystem::path& fixtureDirectory,
     return 1;
   }
 }
+int RunTitleDrawProbe(const std::filesystem::path& usrdir,const std::filesystem::path& inputs,
+    const std::filesystem::path& output){
+  try{
+    if(std::filesystem::exists(output))throw FormatError("title capture requires a fresh output directory");
+    const auto bytes=SceneRead(inputs);PayloadReader r(bytes);TitleDrawInputs in;
+    in.Phase=r.I32();in.Selected=r.I32();in.Character=r.I32();in.ResourceDrawBlocked=r.U32()!=0;
+    in.Reveal=r.I32();in.LogoMove=r.I32();in.LogoDetail=r.I32();in.MenuMove=r.I32();in.MenuDetail=r.I32();
+    for(auto& value:in.Buttons)value=r.I32();in.BlinkAlpha=r.I32();for(auto& value:in.AmbientDegrees)value=r.I32();in.FontSize=r.U32();
+    TitleOverlayInputs overlays;overlays.Phase=in.Phase;overlays.ResourceDrawBlocked=in.ResourceDrawBlocked;
+    overlays.FadeAlpha=r.I32();overlays.MovieFadeAlpha=r.I32();if(r.Remaining())throw FormatError("unexpected title capture input tail");
+    const auto utilityBytes=SceneRead(usrdir/"env/env_game_utility.dat");PayloadReader utility(std::span<const uint8_t>(utilityBytes).subspan(3));
+    const auto size=utility.U32(),count=utility.U32();utility.CheckCount(count,4);for(uint32_t i=0;i<count;++i)utility.U32();
+    if(utility.U8())throw UnsupportedCommand("title input debug overlay is not bound");
+    if(size!=in.FontSize)throw FormatError("title capture font differs from authored utility size");
+    const auto env=TitleEnvironment::Decode(SceneRead(usrdir/"env/env_scene_title.dat"));
+    const auto main=BuildTitleDraw(env,in);const auto overlay=BuildTitleOverlay(env,overlays);
+    if(std::any_of(main.begin(),main.end(),[](const auto& c){return c.Kind==TitleDrawKind::Effect;}))
+      throw UnsupportedCommand("title particle drawing is not bound; capture an earlier retained phase");
+    if(std::any_of(overlay.begin(),overlay.end(),[](const auto& c){return c.Kind!=TitleOverlayKind::Rectangle && c.Kind!=TitleOverlayKind::SharedDialog;}))
+      throw UnsupportedCommand("title capture requires closed submenus, resources and movie owners");
+    std::filesystem::create_directories(output);
+    auto resources=std::make_unique<GameResources>(SceneRead(usrdir/"resource.dat"));
+    PcFontFace font(SceneRead(usrdir/"DFHSR4.TTC"),GsfFont::Decode(SceneRead(usrdir/"Font.gsf")));
+    ViewerWindow window(true);SdlCheck(SDL_SetWindowTitle(window.Window,"Saekano native title drawing"),"title capture name");
+    SdlCheck(SDL_SetWindowSize(window.Window,960,544),"title capture size");UiBlitRenderer renderer;FontTextures textures;
+    for(const auto& c:main)if(c.Kind==TitleDrawKind::Sprite && !renderer.Textures.contains(c.Sprite.Texture))
+      renderer.Upload(c.Sprite.Texture,DecodeSceneImage(resources->LoadProfileTexture(c.Sprite.Texture).Data));
+    std::ofstream sprites(output/"sprites.jsonl"),glyphs(output/"glyphs.jsonl");
+    if(!sprites || !glyphs)throw FormatError("cannot create title draw reports");
+    const auto unavailable=[](uint32_t){throw UnsupportedCommand("title effect owner is not bound");};
+    const auto closed=[](const TitleOverlayCommand& c){if(c.Kind!=TitleOverlayKind::SharedDialog)throw UnsupportedCommand("title overlay owner is not bound");};
+    int width=0,height=0;SdlCheck(SDL_GetWindowSizeInPixels(window.Window,&width,&height),"title capture extent");
+    DrawTitleFrame(renderer,textures,font,env,main,overlay,width,height,unavailable,closed,&sprites,&glyphs);
+    Capture(output/"frame.bmp",width,height);SdlCheck(SDL_GL_SwapWindow(window.Window),"title capture swap");
+    sprites.close();glyphs.close();if(!sprites || !glyphs)throw FormatError("cannot save title draw reports");
+    std::ofstream report(output/"capture.json");report<<"{\"passed\":true,\"phase\":"<<in.Phase<<",\"main_requests\":"<<main.size()<<",\"overlay_requests\":"<<overlay.size()
+      <<",\"textures\":"<<renderer.Textures.size()<<",\"width\":"<<width<<",\"height\":"<<height<<",\"closed_modal_fixture\":true,\"pc_title_constructed\":false,\"manual_acceptance\":false}\n";
+    report.close();if(!report)throw FormatError("cannot save title capture report");return 0;
+  }catch(const std::exception& e){SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano title capture: %s",e.what());return 1;}
+}
+
 int RunFontSample(const std::filesystem::path& usrdir,
                   const std::filesystem::path& captureDirectory) {
   try {

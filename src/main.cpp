@@ -303,6 +303,8 @@ int main(int argc, char* argv[]) {
     return Saekano::RunScreenFilterProbe(argv[2], argv[3]);
   if (argc == 4 && std::string_view(argv[1]) == "--saekano-sdk-ui-check")
     return Saekano::RunSceneSdkUiProbe(argv[2],argv[3]);
+  if(argc==5 && std::string_view(argv[1])=="--saekano-title-draw-check")
+    return Saekano::RunTitleDrawProbe(argv[2],argv[3],argv[4]);
   if (argc >= 2 && std::string_view(argv[1]) == "--saekano-first-scene") {
     if(argc==5 && std::string_view(argv[3])=="--save-dir")
       return Saekano::RunFirstSceneViewer(argv[2],{},false,false,false,{},{},{},false,false,0,{},{},argv[4]);
