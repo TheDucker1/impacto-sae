@@ -19,9 +19,10 @@ struct OptionsSliderServices {
   virtual void UiSound(int32_t id)=0;
   virtual void SetBgmVolume(int32_t percent)=0;
   virtual void SetSeVolume(int32_t percent)=0;
-  virtual void SetVoiceVolume(int32_t percent)=0;
-  virtual void SetChannelVolume(uint32_t channel,int32_t percent)=0;
   virtual void SetUiVolume(int32_t percent)=0;
+  virtual void SetChannelVolume(uint32_t channel,int32_t percent)=0;
+  // Native aa83c sets the attenuation percentage consumed by mixer b6602.
+  virtual void SetDuckingVolume(int32_t percent)=0;
 };
 void ApplyOptionsVolume(int32_t row,int32_t percent,OptionsSliderServices& services);
 // Native56374/552fc. Contacts are already sampled from the shared input owner;

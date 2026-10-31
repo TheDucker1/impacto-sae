@@ -68,9 +68,9 @@ struct PageAdapter final:OptionsControlServices,OptionsTextServices,OptionsAudio
   void SetCharacterVariant(uint32_t i,bool inverted)override{SetToggleVariant(i,inverted);}
   void SetBgmVolume(int32_t p)override{Sync();Output.SetBgmVolume(p);}
   void SetSeVolume(int32_t p)override{Sync();Output.SetSeVolume(p);}
-  void SetVoiceVolume(int32_t p)override{Sync();Output.SetVoiceVolume(p);}
-  void SetChannelVolume(uint32_t ch,int32_t p)override{Sync();Output.SetChannelVolume(ch,p);}
   void SetUiVolume(int32_t p)override{Sync();Output.SetUiVolume(p);}
+  void SetChannelVolume(uint32_t ch,int32_t p)override{Sync();Output.SetChannelVolume(ch,p);}
+  void SetDuckingVolume(int32_t p)override{Sync();Output.SetDuckingVolume(p);}
   void PrepareSystemPreview(uint32_t ch,int32_t mode)override{Sync();Output.PrepareSystemPreview(ch,mode);}
   void StartSystemPreview(uint32_t ch)override{Sync();Output.StartSystemPreview(ch);}
 };

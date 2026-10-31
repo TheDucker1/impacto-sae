@@ -32,9 +32,10 @@ struct OptionsPageOutput {
   virtual void StopChannel(uint32_t channel)=0;
   virtual void SetBgmVolume(int32_t percent)=0;
   virtual void SetSeVolume(int32_t percent)=0;
-  virtual void SetVoiceVolume(int32_t percent)=0;
-  virtual void SetChannelVolume(uint32_t channel,int32_t percent)=0;
   virtual void SetUiVolume(int32_t percent)=0;
+  virtual void SetChannelVolume(uint32_t channel,int32_t percent)=0;
+  // Attenuation setting, separate from UI channel6 and ordinary voice channels.
+  virtual void SetDuckingVolume(int32_t percent)=0;
   virtual void PrepareSystemPreview(uint32_t channel,int32_t mode)=0;
   virtual void StartSystemPreview(uint32_t channel)=0;
   // Separate text-sample owner; dormant in the fresh Options owner.

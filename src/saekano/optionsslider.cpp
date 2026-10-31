@@ -9,9 +9,9 @@ void ApplyOptionsVolume(int32_t row,int32_t percent,OptionsSliderServices& h){
   switch(row){
     case 0:h.SetBgmVolume(percent);break;
     case 1:h.SetSeVolume(percent);break;
-    case 2:h.SetVoiceVolume(percent);break;
+    case 2:h.SetUiVolume(percent);break;
     case 3:for(const auto channel:{7u,8u,11u})h.SetChannelVolume(channel,percent);break;
-    case 4:h.SetUiVolume(percent);break;
+    case 4:h.SetDuckingVolume(percent);break;
   }
 }
 void SelectOptionsRow(OptionsRowNavigation& n,int32_t row){

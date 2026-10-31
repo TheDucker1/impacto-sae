@@ -15,9 +15,9 @@ struct SliderSink final:OptionsSliderServices {
   void UiSound(int32_t id)override{Host.UiSound(id);}
   void SetBgmVolume(int32_t)override{throw FormatError("text slider requested audio output");}
   void SetSeVolume(int32_t)override{throw FormatError("text slider requested audio output");}
-  void SetVoiceVolume(int32_t)override{throw FormatError("text slider requested audio output");}
-  void SetChannelVolume(uint32_t,int32_t)override{throw FormatError("text slider requested audio output");}
   void SetUiVolume(int32_t)override{throw FormatError("text slider requested audio output");}
+  void SetChannelVolume(uint32_t,int32_t)override{throw FormatError("text slider requested audio output");}
+  void SetDuckingVolume(int32_t)override{throw FormatError("text slider requested audio output");}
 };
 }
 void StartOptionsText(OptionsTextState& s,const OptionsEnvironment& e,const OptionsValues& values,std::span<const int32_t> repeats){
