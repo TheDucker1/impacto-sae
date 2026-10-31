@@ -19,7 +19,7 @@ struct OptionsTextState {
 };
 struct OptionsTextServices {
   virtual ~OptionsTextServices()=default;
-  virtual bool UpdateNavigation(OptionsRowNavigation& navigation)=0; // native moved flag588.
+  virtual bool UpdateNavigation(OptionsRowNavigation& navigation)=0; // native activation flag588, not selection difference.
   virtual void UpdateSliderWidget(uint32_t index,int32_t x,int32_t y)=0;
   virtual void UpdateBackgroundWidget()=0;
   virtual void UpdateToggleWidget(uint32_t index)=0;
