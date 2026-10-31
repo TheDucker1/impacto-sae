@@ -101,6 +101,11 @@ class VirtualMachine {
  public:
   VirtualMachine(ScriptSource& scripts, VmBackend& backend, SemanticState initial,
                   MessageRuntimeContext messageContext = {});
+  // New outer scene2 from the native title. Requires working session reset;
+  // constructs a fresh manager at actual entry0/0, with global progress intact.
+  static std::unique_ptr<VirtualMachine> FromTitleNewGame(
+      ScriptSource& scripts,VmBackend& backend,SemanticState owner,
+      MessageRuntimeContext messageContext={});
   // Outer-loop frontend handoff after a standalone ProfileMode completes.
   // Uses the same fresh-manager reset as the opcode3ed owning path. Destination
   // is derived from the completed mode; callers retain their audio/backend

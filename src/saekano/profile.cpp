@@ -280,10 +280,12 @@ ProfileInitialStats ProfileInitialStats::Decode(
   if (rows > 4)
     throw FormatError("profile initial stats exceed four characters");
   ProfileInitialStats result;
+  result.RowCount=rows;
   for (uint32_t i = 0; i < rows; ++i) {
     const auto count = cursor.Count(4);
     if (count > 3)
       throw FormatError("profile initial stats exceed three fields");
+    result.RowLengths[i]=count;
     for (uint32_t j = 0; j < count; ++j)
       result.Values[i * 3 + j] = cursor.Signed();
   }

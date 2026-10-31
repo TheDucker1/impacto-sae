@@ -62,6 +62,8 @@ struct ProfileInitialStats {
   size_t PrefixBytes = 0;
   // env_otaku_mode's final counted rows, consumed by owner constructor21408.
   static ProfileInitialStats Decode(std::span<const uint8_t> bytes);
+  uint32_t RowCount=0;
+  std::array<uint32_t,4> RowLengths{};
 };
 struct ProfileOwnerState {
   bool Known = false;

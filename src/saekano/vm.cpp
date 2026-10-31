@@ -74,6 +74,17 @@ std::unique_ptr<VirtualMachine> VirtualMachine::FromCompletedProfile(
   vm->boundary_ = VmBoundary::ProfileDestinationLoaded;
   return vm;
 }
+std::unique_ptr<VirtualMachine> VirtualMachine::FromTitleNewGame(
+    ScriptSource& scripts,VmBackend& backend,SemanticState owner,MessageRuntimeContext messageContext){
+  if(!owner.TitleSession || !owner.LastBackgroundId || *owner.LastBackgroundId!=-1)
+    throw UnsupportedCommand("New Game requires the title working-session reset");
+  if(std::any_of(owner.TitleSession->Flags.begin(),owner.TitleSession->Flags.end(),[](auto v){return v!=0;}) ||
+     std::any_of(owner.TitleSession->Words.begin(),owner.TitleSession->Words.end(),[](auto v){return v!=0;}))
+    throw FormatError("New Game working session has not been reset");
+  owner.ScriptFileId=0;owner.CurrentCommandIndex=0;owner.PendingCommandIndex=-1;owner.PendingFileId=-2;
+  owner.LaneCommandIndex.fill(-1);owner.FirstAsyncCommandIndex=-1;
+  return std::unique_ptr<VirtualMachine>(new VirtualMachine(scripts,backend,std::move(owner),messageContext,true));
+}
 
 void VirtualMachine::Load(bool preserveOwnerState) {
   script_ = std::make_unique<ScriptObject>(scripts_.Load(state_.ScriptFileId));

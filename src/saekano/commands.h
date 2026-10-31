@@ -14,6 +14,7 @@
 #include "se.h"
 #include "chapter.h"
 #include "profile.h"
+#include "titlesession.h"
 #include "approachentry.h"
 #include "approachmission.h"
 #include "approachselection.h"
@@ -113,6 +114,7 @@ struct SemanticState {
   CgHistoryState CgHistory;  // Owner state; survives file/context replacement.
   SceneImageState SceneImages;
   std::optional<int32_t> LastBackgroundId;  // Owner S+5e830, outside Bank0.
+  std::optional<TitleSessionFields> TitleSession; // S5e814..5e82f; unknown in portable restores.
   // Requests to the host audio/effect/achievement services, not granted rewards
   // or evidence that a renderer played them. The host drains these each frame.
   std::vector<GameEvent> PendingEvents;
