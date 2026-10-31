@@ -21,14 +21,15 @@ struct ScriptLinearTween {
   void Tick(uint64_t now);
   bool Finished() const;
 };
-// Native9fb60/9fc30 reverse-once channel used by result items. The reverse
+// Native9fb60/9fc30 reversing channel. Result items use limit1; Options uses-1. The reverse
 // restarts at the real clock, carries the native endpoint-based remainder,
 // and increments its counter after the recursive advance has returned.
 struct ScriptReversingTween {
   ScriptLinearTween Channel;
   bool Enabled=false;
   uint32_t Reversals=0;
-  void Configure(int32_t from,int32_t to,int32_t duration,bool enabled,uint64_t now);
+  int32_t RepeatLimit=1; // -1 repeats indefinitely and resets the native counter.
+  void Configure(int32_t from,int32_t to,int32_t duration,bool enabled,uint64_t now,int32_t repeatLimit=1);
   void Restart(uint64_t now);
   void Tick(uint64_t now);
   bool Finished()const{return Channel.Finished();}

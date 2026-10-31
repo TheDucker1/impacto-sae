@@ -7,10 +7,10 @@ class PcOptionsLayer {
       ButtonHelpEnvironment help,ButtonHelpStyle style,uint32_t utilitySize)
       :shared_(shared),env_(std::move(environment)),help_(std::move(help)),style_(std::move(style)),size_(utilitySize){}
   const OptionsEnvironment& Environment()const{return env_;}
-  // The enclosing title frame owns viewport/clear. Modal pointers and header/
-  // alpha are explicit owner inputs; this view does not guess native flags.
+  // The enclosing title frame owns viewport/clear. The header is an explicit
+  // owner input; highlight alpha comes from the actual owner tween.
   Counts Draw(const OptionsOwnerState& owner,const OptionsWidgets& widgets,bool alternate,
-      uint8_t highlightAlpha,OptionsDialogHost& dialogs,std::ostream* commands=nullptr){
+      OptionsDialogHost& dialogs,std::ostream* commands=nullptr){
     Counts count;
     const auto text=[&](const UiTextBlit& t){
       if(commands){WriteDescription(*commands,-1,t);*commands<<'\n';}
@@ -34,7 +34,7 @@ class PcOptionsLayer {
             style_,shared_.Font.Cached(),size_,shared_.Font.NominalSize()))text(t);
         ++count.HelpRows;break;
       case OptionsDrawKind::Page:{
-        auto page=OptionsPageDrawFromState(owner,highlightAlpha);page.Page=c.Index;
+        auto page=OptionsPageDrawFromState(owner,uint8_t(owner.Highlight.Channel.Current));page.Page=c.Index;
         for(const auto& p:BuildOptionsPageDraw(env_,page,shared_.Font.Cached(),size_,shared_.Font.NominalSize())){
           if(p.Kind==OptionsPageDrawKind::Sprite)sprite(p.Sprite);
           else if(p.Kind==OptionsPageDrawKind::Text)text(p.Text);

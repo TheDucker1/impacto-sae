@@ -1,5 +1,6 @@
 #include "optionsowner.h"
 #include "commands.h"
+#include <bit>
 namespace Impacto::Saekano {
 namespace {
 struct OwnerAdapter final:OptionsServices {
@@ -24,13 +25,13 @@ struct OwnerAdapter final:OptionsServices {
   void ApplyAudioOptions()override{Sync();Output.ApplyAudioOptions();}
   void RequestTrophy(uint32_t id)override{Sync();Output.RequestTrophy(id);}
   void TickDecoration(uint64_t now)override{
-    Sync();Output.TickDecoration(now);
+    Sync();S.Highlight.Tick(now);Output.TickDecoration(now);
     S.PreviewHint=S.Pages.Controls.SelectedTab==1 && S.Pages.Rows[1].Selected==3;
   }
 };
 }
 void StartOptionsOwner(OptionsOwnerState& s,const NativeSystemSave& system,const OptionsEnvironment& e,std::span<const int32_t> repeats,uint32_t duration,bool fourth,uint64_t now){
-  s={};StartOptionsPages(s.Pages,system,e,repeats,fourth,now);StartOptions(s.Lifecycle,s.Pages.Values,duration,now);s.SaveQuestion=e.SaveQuestion;s.Started=true;
+  s={};StartOptionsPages(s.Pages,system,e,repeats,fourth,now);StartOptions(s.Lifecycle,s.Pages.Values,duration,now);s.Highlight.Configure(255,std::bit_cast<int32_t>(e.Scalars.at(0x20)),std::bit_cast<int32_t>(e.Scalars.at(0x1c)),true,now,-1);s.SaveQuestion=e.SaveQuestion;s.Started=true;
 }
 int32_t UpdateOptionsOwner(OptionsOwnerState& s,NativeSystemSave& system,const OptionsPageInput& in,OptionsOwnerOutput& out,uint64_t now){
   if(!s.Started || s.Finished)throw UnsupportedCommand("Options owner is not active");OwnerAdapter adapter(s,system,in,out,now);

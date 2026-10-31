@@ -16,6 +16,7 @@ struct OptionsOwnerOutput:OptionsPageOutput {
 struct OptionsOwnerState {
   bool Started=false,Finished=false,PreviewHint=false;
   OptionsState Lifecycle;
+  ScriptReversingTween Highlight; // Native1220, including repeat-1 counter semantics.
   OptionsPageState Pages;
   std::u16string SaveQuestion;
 };

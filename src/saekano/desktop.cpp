@@ -3262,7 +3262,7 @@ int RunOptionsDrawProbe(const std::filesystem::path& usrdir,const std::filesyste
       if(frame==3){dialogs.BeginQuestion(env.SaveQuestion,0);for(uint64_t t=0;t<=1000;t+=16)dialogs.UpdateQuestion(t);}
       renderer.Draw({},width,height);
       std::ofstream commands(out/("commands-"+std::to_string(frame)+".jsonl"));
-      const auto counts=layer.Draw(state,widgets,false,255,dialogs,&commands);
+      const auto counts=layer.Draw(state,widgets,false,dialogs,&commands);
       commands.close();if(!commands || counts.Pages!=1 || counts.HelpRows!=1 || !counts.Sprites || !counts.Texts || counts.Questions!=(frame==3?1u:0u))
         throw FormatError("Options composition fixture missed a layer");
       Capture(out/("frame-"+std::to_string(frame)+".bmp"),width,height);
