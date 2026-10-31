@@ -2,6 +2,11 @@
 #include "commands.h"
 #include <bit>
 namespace Impacto::Saekano {
+void InitializeFreshOptionsRuntime(SemanticState& owner){
+  if(owner.OptionsHeaderByte)throw UnsupportedCommand("Options runtime header is already initialized");
+  // ScriptScenarioStorage_Construct21408 clears60308..6031c, inclusive.
+  owner.OptionsHeaderByte=0;
+}
 namespace {
 struct OwnerAdapter final:OptionsServices {
   OptionsOwnerState& S;NativeSystemSave& System;const OptionsPageInput& Input;OptionsOwnerOutput& Output;uint64_t Now;

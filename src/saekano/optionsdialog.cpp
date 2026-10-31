@@ -17,6 +17,7 @@ void OptionsDialogHost::BeginQuestion(const std::u16string& prompt,uint64_t now)
   prompt_=prompt;layout_=buildLayout_(prompt_,buttons_.size());
   // 57372 calls 8a8c(dialog,2,1,0,1): group2, cancel, initial0, close.
   BeginDialog(Question,layout_,buttons_.size(),0,true,true,now);
+  Question.NativeByte292=1;
   Input={};questionOwned_=true;
 }
 OptionsDialogPoll OptionsDialogHost::UpdateQuestion(uint64_t now){

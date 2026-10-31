@@ -4650,7 +4650,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     const auto utility=AudioEnvironment::Decode(utilityRaw);
     const auto widget=WidgetInputEnvironment::DecodeUtility(utilityRaw);
     auto owner=std::make_unique<SemanticState>();
-    InitializeFreshAudioOwner(*owner);InitializeFreshBattleOwner(*owner);InitializeFreshMessageOwner(*owner);
+    InitializeFreshAudioOwner(*owner);InitializeFreshOptionsRuntime(*owner);InitializeFreshBattleOwner(*owner);InitializeFreshMessageOwner(*owner);
     InitializeFreshCgHistory(*owner,LoadAlbumConfiguration(first,SceneRead(usrdir/"env/env_omake.dat")).RequiredImages);
     InitializeFreshProfileEntry(*owner,ProfileInitialStats::Decode(profile),LoadProfileItemCatalog(first));
     const auto history=HistoryEnvironment::DecodeDebug(SceneRead(usrdir/"env/env_debug.dat"));

@@ -46,6 +46,8 @@ struct SemanticState {
   // Complete raw persistent owner retains all nine history groups, slot metadata,
   // unknown options/words. Typed gameplay consumers below overlay their fields.
   std::optional<NativeSystemSave> SystemProgress;
+  // Ephemeral native owner6031c; system.bin does not serialize this byte.
+  std::optional<uint8_t> OptionsHeaderByte;
   std::optional<OrdinaryVoiceSettings> VoiceSettings;
   int32_t ScriptFileId = 0;
   int32_t CurrentCommandIndex = 0;

@@ -56,6 +56,8 @@ struct DialogInput {
 struct DialogState {
   bool Visible = false, FocusEnabled = true, CancelEnabled = false,
        Canceled = false, CloseOnConfirm = false;
+  // Preserve the native Options flag without assigning unproved semantics.
+  uint8_t NativeByte292 = 0;
   int32_t Phase = 0, Selected = 0, Result = -1;
   std::optional<int32_t> PendingPhase;
   size_t ButtonCount = 0;

@@ -8,6 +8,14 @@ template<class Read> auto Table(PayloadReader& r,size_t stride,Read read){
   for(uint32_t i=0;i<n;++i)values.push_back(read());return values;
 }
 }
+OptionsDebugSettings OptionsDebugSettings::Decode(std::span<const uint8_t> bytes){
+  // Three header bytes,20 feature bytes, two scalar words, eleven feature
+  // bytes, then the silent flag. No counted collections precede this field.
+  constexpr size_t prefix=3+20+8+11+1;
+  if(bytes.size()<prefix)throw FormatError("truncated Options debug settings");
+  OptionsDebugSettings settings;for(size_t i=0;i<3;++i)settings.Flags[i]=bytes[i];
+  settings.Silent=bytes[prefix-1];settings.PrefixBytes=prefix;return settings;
+}
 OptionsEnvironment OptionsEnvironment::Decode(std::span<const uint8_t> bytes){
   if(bytes.size()<3 || bytes.size()>32*1024*1024)throw FormatError("invalid options environment extent");
   PayloadReader r(bytes);OptionsEnvironment e;for(auto& f:e.Flags)f=r.U8();

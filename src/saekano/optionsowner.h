@@ -1,6 +1,9 @@
 #pragma once
 #include "optionspages.h"
 namespace Impacto::Saekano {
+struct SemanticState;
+// Explicit fresh ScenarioOwner construction only; never infer a slot restore.
+void InitializeFreshOptionsRuntime(SemanticState& owner);
 struct OptionsOwnerOutput:OptionsPageOutput {
   virtual void BeginSaveQuestion(const std::u16string& prompt)=0;
   virtual OptionsDialogPoll UpdateSaveQuestion()=0;
