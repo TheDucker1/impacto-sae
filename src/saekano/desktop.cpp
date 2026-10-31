@@ -28,6 +28,11 @@
 #include "titleeffect.h"
 #include "titleinput.h"
 #include "titleaudio.h"
+#include "optionspagedraw.h"
+#include "optionswidgets.h"
+#include "optionsdialog.h"
+#include "buttonhelp.h"
+#include "globalui.h"
 #include "titlesession.h"
 #include "titlenavigation.h"
 #include "skipauto.h"
@@ -965,6 +970,8 @@ struct SceneDialogLayer {
     GlCheck("ending shared modal composition");
   }
 };
+
+#include "desktopoptions.inc"
 
 // An ordinary-dialogue frontend. Unbound auxiliary/effect passes are
 // reported explicitly; this is not yet the complete scenario renderer.
@@ -3187,6 +3194,90 @@ int RunScreenFilterProbe(const std::filesystem::path& fixtureDirectory,
     return 1;
   }
 }
+int RunOptionsDrawProbe(const std::filesystem::path& usrdir,const std::filesystem::path& output){
+  bool created=false;
+  try{
+    const auto out=std::filesystem::weakly_canonical(output),input=std::filesystem::weakly_canonical(usrdir);
+    for(auto p=out;!p.empty();p=p.parent_path()){
+      if(p==input || p==input.parent_path())throw FormatError("Options capture overlaps original data");
+      if(p==p.parent_path())break;
+    }
+    if(std::filesystem::exists(out))throw FormatError("choose a fresh Options capture directory");
+    std::filesystem::create_directories(out);created=true;
+    GameResources resources(SceneRead(usrdir/"resource.dat"));const auto first=SceneRead(usrdir/"first.dat");
+    const auto globalRaw=SceneRead(usrdir/"env/env_global.dat"),utilityRaw=SceneRead(usrdir/"env/env_game_utility.dat");
+    const auto utility=GameUtilityFont::Decode(utilityRaw);const auto audio=AudioEnvironment::Decode(utilityRaw);
+    const auto hold=WidgetInputEnvironment::DecodeUtility(utilityRaw).HoldFrames;
+    const auto env=OptionsEnvironment::Decode(SceneRead(usrdir/"env/env_option.dat"));
+    const auto global=GlobalUiEnvironment::Decode(globalRaw);
+    ViewerWindow window(true,true);SdlCheck(SDL_SetWindowSize(window.Window,960,544),"Options capture viewport");
+    UiBlitRenderer renderer;FontTextures textures;
+    PcFontFace font(SceneRead(usrdir/"DFHSR4.TTC"),GsfFont::Decode(SceneRead(usrdir/"Font.gsf")));
+    const auto format=TextFormatEnvironment::Decode(SceneRead(usrdir/"env/env_string_format.dat"),true);
+    const auto metrics=TextLayoutMetrics::Decode(globalRaw,SceneRead(usrdir/"env/env_message_window.dat"));
+    SceneDialogLayer shared(renderer,textures,font,resources,format,metrics,utility.Size,
+        DialogEnvironment::Decode(SceneRead(usrdir/"env/env_dialog.dat")),first);
+    struct NoWrites final:SaveWriteServices {
+      void Snapshot(SaveWriteStage)override{throw FormatError("draw fixture cannot snapshot saves");}
+      void BeginWrite(SaveWriteStage)override{throw FormatError("draw fixture cannot write saves");}
+      SaveWriteStatus PollWrite()override{throw FormatError("draw fixture cannot poll saves");}
+    } storage;
+    OptionsDialogHost dialogs(shared.Environment,SaveManagerEnvironment::Decode(SceneRead(usrdir/"env/env_save_manager.dat")),
+        [&](const std::u16string& prompt,size_t buttons){return shared.Layout(prompt,buttons);},storage);
+    PcOptionsLayer layer(shared,env,ButtonHelpEnvironment::Decode(SceneRead(usrdir/"env/env_help_mgr.dat")),
+        ButtonHelpStyle::Decode(globalRaw),uint32_t(utility.Size));
+    struct Pose final:OptionsPageOutput {
+      OptionsWidgets& W;int32_t VoicePercent;size_t GainRequests=0;
+      Pose(OptionsWidgets& w,int32_t percent):W(w),VoicePercent(percent){}
+      void UpdateWidget(OptionsWidgetId id,int32_t x,int32_t y)override{W.Update(id,x,y,1000);}
+      std::optional<OptionsWidgetContact> CollectWidget(OptionsWidgetId id,int32_t x,int32_t y,uint64_t now)override{W.Update(id,x,y,now);return W.Contact(id);}
+      std::optional<OptionsWidgetContact> QueryWidgetContact(OptionsWidgetId id)override{return W.Contact(id);}
+      void SetToggleVariant(uint32_t p,uint32_t i,bool v)override{W.SetToggleVariant(p,i,v);}
+      void UiSound(int32_t)override{throw FormatError("draw fixture requested sound");}
+      void StopChannel(uint32_t)override{throw FormatError("draw fixture requested stop");}
+      void SetBgmVolume(int32_t)override{throw FormatError("draw fixture requested BGM");}
+      void SetSeVolume(int32_t)override{throw FormatError("draw fixture requested SE");}
+      void SetUiVolume(int32_t)override{throw FormatError("draw fixture requested UI gain");}
+      void SetChannelVolume(uint32_t ch,int32_t p)override{
+        if(p!=VoicePercent || (ch!=7 && ch!=8 && ch!=11))throw FormatError("unexpected draw-fixture voice gain");
+        ++GainRequests; // Audio page republishes selected-row gain even without input.
+      }
+      void SetDuckingVolume(int32_t)override{throw FormatError("draw fixture requested attenuation");}
+      void PrepareSystemPreview(uint32_t,int32_t)override{throw FormatError("draw fixture requested preview");}
+      void StartSystemPreview(uint32_t)override{throw FormatError("draw fixture requested start");}
+      int32_t UpdateSampleNavigation(int32_t)override{throw FormatError("draw fixture requested sample navigation");}
+      void ResetSamplePage()override{throw FormatError("draw fixture requested sample page");}
+    };
+    std::ofstream report(out/"capture.json");report<<"{\"passed\":true,\"scope\":\"PC Options composition fixtures, no live title/input/save/audio binding\",\"frames\":[";
+    int width=0,height=0;SdlCheck(SDL_GetWindowSizeInPixels(window.Window,&width,&height),"Options capture extent");
+    for(uint32_t frame=0;frame<4;++frame){
+      auto system=MakeFreshSystemProgress(first,false);OptionsOwnerState state;
+      StartOptionsOwner(state,system,env,audio.OpaqueTable,global.FadeDuration,false,0);
+      // Explicit draw fixture, not a claim that the live lifecycle reached it.
+      state.Pages.Controls.SelectedTab=int32_t(frame%3);state.Lifecycle.Fade.Value.Current=0;
+      if(frame==1){state.Pages.Rows[1].Selected=3;state.PreviewHint=true;}
+      OptionsWidgets widgets(env,state.Pages.Values,false,hold);widgets.BeginFrame({});Pose pose(widgets,int32_t(state.Pages.Values[10])*10);
+      UpdateOptionsPages(state.Pages,system,{},pose,1000);
+      if(pose.GainRequests!=(frame==1?3u:0u))throw FormatError("draw fixture missed selected-row gain requests");
+      if(frame==3){dialogs.BeginQuestion(env.SaveQuestion,0);for(uint64_t t=0;t<=1000;t+=16)dialogs.UpdateQuestion(t);}
+      renderer.Draw({},width,height);
+      std::ofstream commands(out/("commands-"+std::to_string(frame)+".jsonl"));
+      const auto counts=layer.Draw(state,widgets,false,255,dialogs,&commands);
+      commands.close();if(!commands || counts.Pages!=1 || counts.HelpRows!=1 || !counts.Sprites || !counts.Texts || counts.Questions!=(frame==3?1u:0u))
+        throw FormatError("Options composition fixture missed a layer");
+      Capture(out/("frame-"+std::to_string(frame)+".bmp"),width,height);
+      SdlCheck(SDL_GL_SwapWindow(window.Window),"Options capture swap");
+      if(frame)report<<',';report<<"{\"page\":"<<state.Pages.Controls.SelectedTab<<",\"sprites\":"<<counts.Sprites<<",\"rectangles\":"<<counts.Rectangles
+        <<",\"texts\":"<<counts.Texts<<",\"widgets\":"<<counts.Widgets<<",\"help_rows\":"<<counts.HelpRows<<",\"question\":"<<counts.Questions<<'}';
+    }
+    report<<"],\"width\":"<<width<<",\"height\":"<<height<<",\"textures\":"<<renderer.Textures.size()<<",\"manual_acceptance\":false,\"pc_options_bound\":false}\n";
+    report.close();if(!report)throw FormatError("cannot save Options composition report");return 0;
+  }catch(const std::exception& e){
+    if(created){std::ofstream error(output/"error.txt");error<<std::string(e.what()).substr(0,2048)<<'\n';}
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Options capture: %s",e.what());return 1;
+  }
+}
+
 int RunTitleDrawProbe(const std::filesystem::path& usrdir,const std::filesystem::path& inputs,
     const std::filesystem::path& output){
   try{
