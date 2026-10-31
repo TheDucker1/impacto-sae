@@ -4,6 +4,7 @@
 #include "profilevoiceoutput.h"
 #include "ordinaryvoice.h"
 #include "titleaudio.h"
+#include "audioducking.h"
 #include <set>
 
 namespace Impacto::Saekano {
@@ -34,6 +35,7 @@ class MusicPlayback {
   void SetBgmOutputGain(float gain);
   void SetChannelOutputGain(uint32_t channel,float gain); // Native2..12.
   float ChannelOutputGain(uint32_t channel) const;
+  AudioDuckingInputs VoiceAttenuationInputs() const;
   // Native UI channel6 is independent of SE2..5 and profile voice7.
   // Caller supplies a known effective gain and preserves the asset lifetime.
   void BindUiSounds(SystemSoundAssets& resources, float gain);
@@ -67,6 +69,23 @@ class MusicPlayback {
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
+};
+
+// Explicit owner for the native target0 attenuation service. Use this object's
+// gain/start methods while bound; pass the actual audio-service clock once the
+// physical host has been pumped. UI and cinematic audio have separate owners.
+class PlaybackVoiceAttenuation {
+ public:
+  PlaybackVoiceAttenuation(MusicPlayback& output,int32_t gainPercent,int32_t attenuationPercent,bool enabled);
+  const BgmVoiceAttenuation& State()const{return state_;}
+  void SetGain(int32_t percent);
+  void SetPercent(int32_t percent){state_.SetPercent(percent);}
+  void SetEnabled(bool enabled){state_.SetEnabled(enabled);}
+  void StartProfileVoice(uint64_t audioNow);
+  void StartOrdinaryVoice(uint32_t channel,uint64_t audioNow);
+  void Update(uint64_t audioNow);
+ private:
+  MusicPlayback& output_;BgmVoiceAttenuation state_;
 };
 
 // On-demand voice.awb preparation7..12, with11 sharing the mission source.
@@ -173,6 +192,8 @@ int RunUiSoundSession(const std::filesystem::path& usrdir,
                       const std::filesystem::path& captureDirectory);
 int RunTitleAudioSession(const std::filesystem::path& usrdir,
                          const std::filesystem::path& captureDirectory);
+int RunVoiceAttenuationSession(const std::filesystem::path& usrdir,
+                               const std::filesystem::path& captureDirectory);
 int RunOptionsMixerSession(const std::filesystem::path& usrdir,
                            const std::filesystem::path& captureDirectory);
 int RunOptionsPreviewSession(const std::filesystem::path& usrdir,

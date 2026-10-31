@@ -309,6 +309,8 @@ int main(int argc, char* argv[]) {
     return Saekano::RunTitleDrawProbe(argv[2],argv[3],argv[4]);
   if(argc==4 && std::string_view(argv[1])=="--saekano-title-audio-session")
     return Saekano::RunTitleAudioSession(argv[2],argv[3]);
+  if(argc==4 && std::string_view(argv[1])=="--saekano-voice-attenuation-session")
+    return Saekano::RunVoiceAttenuationSession(argv[2],argv[3]);
   if(argc==4 && std::string_view(argv[1])=="--saekano-options-mixer-session")
     return Saekano::RunOptionsMixerSession(argv[2],argv[3]);
   if(argc==4 && std::string_view(argv[1])=="--saekano-options-preview-session")

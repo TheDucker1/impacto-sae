@@ -471,6 +471,30 @@ float MusicPlayback::ChannelOutputGain(uint32_t channel)const{
   if(channel==6)return impl_->UiSound->GetVolume();
   return impl_->OrdinaryOutput(channel-7)->GetVolume();
 }
+AudioDuckingInputs MusicPlayback::VoiceAttenuationInputs()const{
+  AudioDuckingInputs in;in.Available=0;in.TargetAvailable=bool(impl_->Channel);
+  for(uint32_t slot=0;slot<6;++slot){
+    const auto& channel=impl_->OrdinaryOutput(slot);const auto bit=1u<<(slot+7);
+    if(channel){in.Available|=bit;const auto s=channel->GetState();if(s==Audio::ACS_Playing || s==Audio::ACS_Paused)in.Busy|=bit;}
+    const bool prepared=slot==0?bool(impl_->PreparedProfileVoice || impl_->PreparedOrdinaryVoices[0]):
+      slot==4?bool(impl_->PreparedMissionVoice):bool(impl_->PreparedOrdinaryVoices[slot]);
+    if(prepared)in.Prepared|=bit;
+  }
+  return in;
+}
+PlaybackVoiceAttenuation::PlaybackVoiceAttenuation(MusicPlayback& output,int32_t gain,int32_t percent,bool enabled):output_(output){
+  state_.SetGain(gain);state_.SetPercent(percent);state_.SetEnabled(enabled);output_.SetBgmOutputGain(float(gain)/100);
+}
+void PlaybackVoiceAttenuation::SetGain(int32_t percent){state_.SetGain(percent);output_.SetBgmOutputGain(float(percent)/100);}
+void PlaybackVoiceAttenuation::StartProfileVoice(uint64_t now){
+  output_.StartProfileVoice();state_.StartVoice(7,true,now);
+}
+void PlaybackVoiceAttenuation::StartOrdinaryVoice(uint32_t channel,uint64_t now){
+  const bool ready=output_.OrdinaryVoiceReady(channel);output_.StartOrdinaryVoice(channel);state_.StartVoice(channel,ready,now);
+}
+void PlaybackVoiceAttenuation::Update(uint64_t now){
+  if(const auto gain=state_.Tick(now,output_.VoiceAttenuationInputs()))output_.SetBgmOutputGain(float(*gain)/100);
+}
 bool MusicPlayback::Playing() const {
   if (impl_->Channel->GetState() != Audio::ACS_Stopped) return true;
   if (impl_->OutgoingBgm->GetState() != Audio::ACS_Stopped) return true;
@@ -1014,6 +1038,54 @@ int RunMissionVoiceSession(const std::filesystem::path& usrdir,
     if(created){std::ofstream error(captureDirectory/"error.txt");error << std::string(e.what()).substr(0,2048);}
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano mission voice: %s",e.what());return 1;
   }
+}
+int RunVoiceAttenuationSession(const std::filesystem::path& usrdir,const std::filesystem::path& captureDirectory){
+  bool created=false;
+  try{
+    CreateCaptureDirectory(usrdir,captureDirectory);created=true;
+    if(!SDL_Init(SDL_INIT_EVENTS))throw FormatError(SDL_GetError());
+    struct Cleanup{~Cleanup(){SDL_Quit();}}cleanup;
+    const auto read=[](const std::filesystem::path& p){std::ifstream f(p,std::ios::binary);if(!f)throw FormatError("missing attenuation resource");return Bytes{std::istreambuf_iterator<char>(f),{}};};
+    auto resources=std::make_unique<GameResources>(read(usrdir/"resource.dat"));const auto clip=resources->LoadSystemVoice(4,0).Data;
+    ArchiveBgmResources music(usrdir);music.Prepare(0);MusicPlayback playback(music,true);
+    GameEvent bgm{GameEventKind::PlayBgm,0};bgm.Bgm=BgmPlayRequest{0,100,BgmVolume{100,60,0.6f}};playback.Submit(bgm);
+    PlaybackVoiceAttenuation attenuation(playback,60,50,true);SystemSoundAssets ui(read(usrdir/"first.dat"));playback.BindUiSounds(ui,0.5f);
+    const auto serial=playback.BgmVoices().Current;uint64_t now=0;std::vector<int16_t> pcm;
+    const auto advance=[&](uint32_t ms){
+      if(ms%10)throw FormatError("attenuation diagnostic requires exact10ms blocks");
+      for(uint32_t i=0;i<ms;i+=10){std::array<int16_t,960> block{};playback.Render(block);pcm.insert(pcm.end(),block.begin(),block.end());now+=10;attenuation.Update(now);}
+    };
+    playback.Submit({GameEventKind::Sound,2});advance(100);
+    if(attenuation.State().Started || playback.BgmOutputGain()!=0.6f)throw FormatError("UI sound triggered voice attenuation");
+    // Muted voices retain real preparation/playback/EOF, isolating BGM in PCM.
+    playback.PrepareProfileVoice(clip,0);attenuation.StartProfileVoice(now);advance(150);
+    if(attenuation.State().CurrentGain!=45 || playback.BgmOutputGain()!=0.45f || playback.ProfileVoiceStopped())throw FormatError("first physical attenuation midpoint differs");
+    playback.PrepareMemoryVoice(8,clip,0);attenuation.StartOrdinaryVoice(8,now);advance(150);
+    if(attenuation.State().SavedGain!=60 || attenuation.State().CurrentGain!=38 || playback.BgmOutputGain()!=0.38f)throw FormatError("overlapping physical start compounded saved gain");
+    playback.StopProfileVoice();advance(150);
+    if(attenuation.State().CurrentGain!=30 || attenuation.State().Phase!=0 || !playback.OrdinaryVoicePlaying(8))throw FormatError("remaining voice failed to retain attenuation");
+    playback.PrepareMemoryVoice(9,clip,0);
+    if(!(playback.VoiceAttenuationInputs().Prepared&(1u<<9)))throw FormatError("physical prepared-state flag missing");
+    while(playback.OrdinaryVoicePlaying(8) && now<6000)advance(10);
+    if(playback.OrdinaryVoicePlaying(8) || attenuation.State().Phase!=2)throw FormatError("actual voice EOF did not initiate restoration");
+    const auto restoreEpoch=attenuation.State().Epoch;advance(150);
+    if(attenuation.State().CurrentGain!=45 || playback.BgmOutputGain()!=0.45f)throw FormatError("physical restoration midpoint differs");advance(150);
+    if(attenuation.State().CurrentGain!=60 || playback.BgmOutputGain()!=0.6f || playback.BgmVoices().Current!=serial || playback.BgmVoices().Outgoing)
+      throw FormatError("physical restoration changed BGM owner or final gain");
+    const auto before=attenuation.State();bool rejected=false;
+    try{attenuation.StartProfileVoice(now);}catch(const UnsupportedCommand&){rejected=true;}
+    if(!rejected || attenuation.State().Epoch!=before.Epoch || attenuation.State().CurrentGain!=before.CurrentGain || attenuation.State().Phase!=before.Phase)
+      throw FormatError("unprepared start changed attenuation state");
+    rejected=false;try{attenuation.SetPercent(101);}catch(const FormatError&){rejected=true;}
+    if(!rejected || attenuation.State().Percent!=50 || playback.BgmOutputGain()!=0.6f)throw FormatError("invalid attenuation setting changed physical output");
+    int32_t peak=0;for(const auto sample:pcm)peak=std::max(peak,std::abs(int32_t(sample)));if(peak<=8)throw FormatError("attenuation BGM output is silent");
+    SaveWav(captureDirectory/"attenuated-bgm.wav",pcm);
+    std::ofstream report(captureDirectory/"summary.json");report<<"{\"passed\":true,\"frames\":"<<pcm.size()/2<<",\"audio_ms\":"<<now<<",\"restore_epoch_ms\":"<<restoreEpoch
+      <<",\"target\":0,\"trigger_sources\":[7,8],\"ui_does_not_trigger\":true,\"gain_midpoints\":[45,38,30,45,60],\"voice_eof_observed\":true,\"prepared9_does_not_hold\":true,\"bgm_serial_preserved\":true,\"invalid_preserves\":true,\"pcm_peak\":"<<peak
+      <<",\"software_openal_output\":true,\"caller_supplied_audio_clock\":true,\"pc_options_bound\":false,\"manual_acceptance\":false}\n";
+    report.close();if(!report)throw FormatError("cannot save attenuation report");return 0;
+  }catch(const std::exception& e){if(created){std::ofstream error(captureDirectory/"error.txt");error<<std::string(e.what()).substr(0,2048);}
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Voice attenuation: %s",e.what());return 1;}
 }
 int RunOptionsMixerSession(const std::filesystem::path& usrdir,const std::filesystem::path& captureDirectory){
   bool created=false;
