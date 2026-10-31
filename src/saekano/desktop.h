@@ -5,9 +5,10 @@
 #include <optional>
 
 namespace Impacto::Saekano {
+int RunMovieInfoProbe(const std::filesystem::path& path,const std::filesystem::path& output);
 int RunTitleScene(const std::filesystem::path& usrdir,
                   const std::filesystem::path& progressRoot={},
-                  const std::filesystem::path& captureDirectory={},bool capturePointer=false);
+                  const std::filesystem::path& captureDirectory={},bool capturePointer=false,bool captureOpening=false);
 int RunTitleDrawProbe(const std::filesystem::path& usrdir,const std::filesystem::path& inputs,
                       const std::filesystem::path& output);
 int RunParticleGroupProbe(const std::filesystem::path& usrdir,

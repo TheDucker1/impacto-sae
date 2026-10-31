@@ -47,7 +47,8 @@ struct TitleServices {
   virtual bool MovieBusy()=0;
   virtual bool MovieFinished()=0;
   virtual void StopMovie()=0;
-  virtual void RefreshMovie()=0;
+  virtual uint8_t MovieVolumeOption()const=0; // Persistent BGM option at S60233.
+  virtual void SetMovieVolume(int32_t percent)=0;
   virtual void ResetEffects(int32_t variant)=0;
   virtual void UpdatePressStartVisual(uint64_t now)=0;
   virtual void UpdateEffects(uint64_t now)=0;

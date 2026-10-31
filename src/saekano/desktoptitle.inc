@@ -75,7 +75,8 @@ class PcTitleOwner final:public TitleServices {
   bool MovieBusy()override{throw UnsupportedCommand("PC title movie owner is not bound");}
   bool MovieFinished()override{throw UnsupportedCommand("PC title movie owner is not bound");}
   void StopMovie()override{throw UnsupportedCommand("PC title movie owner is not bound");}
-  void RefreshMovie()override{throw UnsupportedCommand("PC title movie owner is not bound");}
+  uint8_t MovieVolumeOption()const override{return owner_.SystemProgress->Bytes6022c[7];}
+  void SetMovieVolume(int32_t)override{throw UnsupportedCommand("PC title movie owner is not bound");}
   void ResetEffects(int32_t variant)override{ResetTitleEffects(Effects,env_,variant,Now);}
   void UpdatePressStartVisual(uint64_t)override{Input.PressStartReleased=Contacts.UpdatePressStart();UpdateTitlePressStartVisual(Visual);}
   void UpdateEffects(uint64_t now)override{UpdateTitleEffects(Effects,env_,now);}

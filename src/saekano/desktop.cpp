@@ -42,6 +42,9 @@
 #include "../texture/texture.h"
 
 #include <SDL3/SDL.h>
+extern "C" {
+#include <libavformat/avformat.h>
+}
 #include <glad/glad.h>
 
 #include <algorithm>
@@ -1118,13 +1121,14 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
   backend.SeArchives = &sounds;
   auto vm = completed ? VirtualMachine::FromCompletedProfile(resources,backend,std::move(owner),*completed)
                       : VirtualMachine::FromTitleNewGame(resources,backend,std::move(owner));
-  if(captureMenuInput==17){
+  if(capture && !completed){
     if(completed || vm->State().ScriptFileId!=0 || vm->State().CurrentCommandIndex!=0 ||
         vm->Opcode()!=0 || vm->Boundary()!=VmBoundary::BeforeStart)
       throw FormatError("PC title New Game did not enter the original script0");
     std::ofstream entry(captureDirectory/"entry.json");
     entry << "{\"passed\":true,\"script\":0,\"command\":0,\"opcode\":0,\"before_start\":true,\"profile_shortcut\":false}\n";
-    entry.close();if(!entry)throw FormatError("cannot save PC New Game entry report");return 0;
+    entry.close();if(!entry)throw FormatError("cannot save PC New Game entry report");
+    if(captureMenuInput==17)return 0;
   }
   const auto captureScript = captureScriptOverride.value_or(vm->State().ScriptFileId);
   if (captureFromCommand && (!captureUntilMessage || *captureFromCommand > *captureUntilMessage))
@@ -1204,7 +1208,7 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
   };
   const auto seed = capture ? 0u : uint32_t(SDL_GetTicks());
   vm->SeedRandom(seed);
-  SDL_SetWindowTitle(window.Window, "Saekano — first scene preview");
+  SDL_SetWindowTitle(window.Window,completed?"Saekano — first scene preview":"Saekano");
   std::ofstream report, pcm, events,dialogueVoiceUpdates;
   if (capture) {
     report.open(captureDirectory / "scene-frames.jsonl");
@@ -1865,6 +1869,14 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
                << ",\"opcode\":" << step.Opcode << ",\"boundary\":" << int(step.Boundary) << "}\n";
       if (step.Opcode == 0x64 && step.Boundary == VmBoundary::CommandStarted) {
         firstMessage = now;
+        if(captureMenuInput==18){
+          std::ofstream snapshot(captureDirectory/"opening-owner.json");const auto& state=vm->State();
+          snapshot<<"{\"script\":"<<step.Script<<",\"command\":"<<step.Command<<",\"opcode\":100,\"background\":"<<state.LastBackgroundId.value_or(-1)<<",\"bank0\":[";
+          for(size_t i=0;i<state.Bank0.size();++i){if(i)snapshot<<',';snapshot<<state.Bank0[i];}
+          snapshot<<"],\"stats\":[";
+          for(size_t i=0;i<state.ProfileOwner.Stats.size();++i){if(i)snapshot<<',';snapshot<<state.ProfileOwner.Stats[i];}
+          snapshot<<"]}\n";snapshot.close();if(!snapshot)throw FormatError("cannot save opening owner snapshot");
+        }
         laidOut = false;
         capturePointerStage = 0;
         if((captureResult && !captureChapter && !captureProfile && resultCompleted) || (captureChapter && chapterCompleted) ||
@@ -4495,8 +4507,30 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
     return 1;
   }
 }
+int RunMovieInfoProbe(const std::filesystem::path& path,const std::filesystem::path& output){
+  AVFormatContext* context=nullptr;
+  if(std::filesystem::exists(output))return 1;
+  std::ofstream report(output);if(!report)return 1;
+  try{
+    report<<"{\"avformat_version\":"<<avformat_version()<<",\"usm_demuxer\":"<<(av_find_input_format("usm")?"true":"false");
+    const auto filename=path.string();
+    if(avformat_open_input(&context,filename.c_str(),nullptr,nullptr)<0)throw FormatError("linked FFmpeg cannot open movie");
+    if(avformat_find_stream_info(context,nullptr)<0)throw FormatError("linked FFmpeg cannot read movie streams");
+    report<<",\"streams\":[";
+    for(unsigned i=0;i<context->nb_streams;++i){
+      const auto* stream=context->streams[i];const auto* codec=stream->codecpar;if(i)report<<',';
+      report<<"{\"index\":"<<i<<",\"codec\":\""<<avcodec_get_name(codec->codec_id)<<"\",\"type\":"<<int(codec->codec_type)
+        <<",\"width\":"<<codec->width<<",\"height\":"<<codec->height<<",\"sample_rate\":"<<codec->sample_rate
+        <<",\"channels\":"<<codec->ch_layout.nb_channels<<'}';
+    }
+    report<<"],\"passed\":true}\n";avformat_close_input(&context);report.close();return report?0:1;
+  }catch(const std::exception& error){
+    avformat_close_input(&context);report<<",\"passed\":false}\n";
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano movie inspection: %s",error.what());return 1;
+  }
+}
 int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::path& requestedProgressRoot,
-    const std::filesystem::path& captureDirectory,bool capturePointer){
+    const std::filesystem::path& captureDirectory,bool capturePointer,bool captureOpening){
   bool created=false;
   try{
     const bool capture=!captureDirectory.empty();
@@ -4634,7 +4668,8 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     if(title.RequestedScene!=2)throw UnsupportedCommand("unknown PC title scene request");
     if(capture)std::filesystem::create_directory(captureDirectory/"entry");
     return RunScenarioScene(window,renderer,textures,font,resources,playback,music,sounds,std::move(*owner),nullptr,
-      usrdir,capture?captureDirectory/"entry":std::filesystem::path{},false,false,false,{},{},{},false,false,capture?17:0,{},progressRoot,&session.Slots);
+      usrdir,capture?captureDirectory/"entry":std::filesystem::path{},captureOpening,false,false,
+      {},{},{},false,false,capture?(captureOpening?18:17):0,{},progressRoot,&session.Slots);
   }catch(const std::exception& error){
     if(created){std::ofstream out(captureDirectory/"error.txt");out<<std::string(error.what()).substr(0,2048)<<'\n';}
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano title: %s",error.what());return 1;

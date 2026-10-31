@@ -106,14 +106,14 @@ void UpdateTitle(TitleState& s,const TitleEnvironment& e,TitleServices& h,const 
       if(in.Accept || in.Cancel){h.StopVoice(7);h.StopVoice(6);}
     }else{s.Fade.Enable(now);s.Fade.Tick(now);if(s.Fade.Finished()){h.StopBgm();scene();}}
   }
-  if(s.Phase==22){h.StopBgm();h.PrepareMovie();h.RefreshMovie();s.MovieFade.Configure(0,255,Setting(e,0x40),true,now);request(23);}
+  if(s.Phase==22){h.StopBgm();h.PrepareMovie();h.SetMovieVolume(int32_t(h.MovieVolumeOption())*10);s.MovieFade.Configure(0,255,Setting(e,0x40),true,now);request(23);}
   if(s.Phase==23){s.MovieFade.Tick(now);if(s.MovieFade.Finished() && h.MovieReady())request(24);}
   if(s.Phase==24){h.StartMovie();request(25);}
   if(s.Phase==25){if(!h.MovieBusy()){h.StopMovie();if(h.MovieFinished())request(26);}if(in.Accept)request(26);}
   if(s.Phase==26){if(s.MovieFade.Value.To==255)s.MovieFade.Reverse(now);request(27);}
-  if(s.Phase==27){s.MovieFade.Tick(now);h.RefreshMovie();if(s.MovieFade.Finished()){h.StopMovie();request(28);}}
+  if(s.Phase==27){s.MovieFade.Tick(now);const auto product=std::bit_cast<int32_t>(uint32_t(h.MovieVolumeOption())*uint32_t(s.MovieFade.Value.Current)*10u);h.SetMovieVolume(product/255);if(s.MovieFade.Finished()){h.StopMovie();request(28);}}
   if(s.Phase==28 && !h.MovieBusy()){h.StopMovie();if(h.MovieFinished())request(29);}
-  if(s.Phase==29){h.RefreshMovie();h.PlayBgmAndMark(0);s.Idle.Restart(now);request(5);}
+  if(s.Phase==29){h.SetMovieVolume(int32_t(h.MovieVolumeOption())*10);h.PlayBgmAndMark(0);s.Idle.Restart(now);request(5);}
   if(s.Phase>=10)h.UpdateEffects(now);
   h.TickAmbient(now);
 }
