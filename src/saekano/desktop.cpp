@@ -26,6 +26,10 @@
 #include "widgetinput.h"
 #include "titledraw.h"
 #include "titleeffect.h"
+#include "titleinput.h"
+#include "titleaudio.h"
+#include "titlesession.h"
+#include "titlenavigation.h"
 #include "skipauto.h"
 #include "mouthselection.h"
 #include "particle.h"
@@ -894,6 +898,7 @@ void DrawTitleFrame(UiBlitRenderer& renderer,FontTextures& textures,PcFontFace& 
   }
   GlCheck("title frame drawing");
 }
+#include "desktoptitle.inc"
 #include "desktopprofile.inc"
 
 // Shared native dialog geometry, authored labels, font and atlas resources.
@@ -953,11 +958,11 @@ struct SceneDialogLayer {
 
 // An ordinary-dialogue frontend. Unbound auxiliary/effect passes are
 // reported explicitly; this is not yet the complete scenario renderer.
-int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
+int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
                       FontTextures& fontTextures, PcFontFace& font,
                       GameResources& resources, MusicPlayback& playback,
                       ArchiveBgmResources& music, ArchiveSeResources& sounds,
-                      SemanticState&& owner, const ProfileMode& completed,
+                      SemanticState&& owner, const ProfileMode* completed,
                       const std::filesystem::path& root,
                       const std::filesystem::path& captureDirectory = {},
                       bool captureAuto = false, bool captureButtonAuto = false,
@@ -1111,8 +1116,16 @@ int RunCompletedScene(ViewerWindow& window, UiBlitRenderer& renderer,
   backend.ApproachConfig = ApproachGaugeEnvironment::Decode(SceneRead(root / "env/env_approach.dat"));
   backend.MusicResources = &music;
   backend.SeArchives = &sounds;
-  auto vm = VirtualMachine::FromCompletedProfile(resources, backend,
-                                                 std::move(owner), completed);
+  auto vm = completed ? VirtualMachine::FromCompletedProfile(resources,backend,std::move(owner),*completed)
+                      : VirtualMachine::FromTitleNewGame(resources,backend,std::move(owner));
+  if(captureMenuInput==17){
+    if(completed || vm->State().ScriptFileId!=0 || vm->State().CurrentCommandIndex!=0 ||
+        vm->Opcode()!=0 || vm->Boundary()!=VmBoundary::BeforeStart)
+      throw FormatError("PC title New Game did not enter the original script0");
+    std::ofstream entry(captureDirectory/"entry.json");
+    entry << "{\"passed\":true,\"script\":0,\"command\":0,\"opcode\":0,\"before_start\":true,\"profile_shortcut\":false}\n";
+    entry.close();if(!entry)throw FormatError("cannot save PC New Game entry report");return 0;
+  }
   const auto captureScript = captureScriptOverride.value_or(vm->State().ScriptFileId);
   if (captureFromCommand && (!captureUntilMessage || *captureFromCommand > *captureUntilMessage))
     throw FormatError("capture range requires a start before its target command");
@@ -4367,9 +4380,9 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
         throw FormatError("owning profile capture did not finish within40s");
     }
     if (flowDone && !capture)
-      return RunCompletedScene(window, renderer, fontTextures, *font, resources,
+      return RunScenarioScene(window, renderer, fontTextures, *font, resources,
                                *flowPlayback, *flowMusic, *flowSounds,
-                               std::move(*flowOwner), *flowMode,
+                               std::move(*flowOwner), flowMode.get(),
                                resourceDat.parent_path(),{},false,false,false,{},{},{},false,false,0,{},flowProgressRoot,
                                flowProgress?&flowProgress->Slots:nullptr);
     return 0;
@@ -4468,8 +4481,8 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
     MusicPlayback playback(music, capture, &sounds);
     // Fresh standalone viewer has the same native S60235 option8 as profile flow.
     playback.BindUiSounds(systemSounds,ProfileVoiceGain(owner.SystemProgress?owner.SystemProgress->Bytes6022c[9]:8,1.0f));
-    return RunCompletedScene(window, renderer, fontTextures, font, resources,
-                             playback, music, sounds, std::move(owner), mode,
+    return RunScenarioScene(window, renderer, fontTextures, font, resources,
+                             playback, music, sounds, std::move(owner), &mode,
                              usrdir, captureDirectory, captureAuto, captureButtonAuto, captureVoiced,
                              captureUntilMessage, captureFromCommand,captureScriptOverride,captureWaitingInput,captureConfirmInput,captureMenuInput,capturePlan,progressRoot,session?&session->Slots:nullptr);
   } catch (const std::exception& error) {
@@ -4480,6 +4493,151 @@ int RunFirstSceneViewer(const std::filesystem::path& usrdir,
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Saekano scene: %s",
                  error.what());
     return 1;
+  }
+}
+int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::path& requestedProgressRoot,
+    const std::filesystem::path& captureDirectory,bool capturePointer){
+  bool created=false;
+  try{
+    const bool capture=!captureDirectory.empty();
+    if(capture){
+      const auto out=std::filesystem::weakly_canonical(captureDirectory),input=std::filesystem::weakly_canonical(usrdir);
+      for(auto parent=out;!parent.empty();parent=parent.parent_path()){
+        if(parent==input || parent==input.parent_path())throw FormatError("title capture overlaps original data");
+        if(parent==parent.parent_path())break;
+      }
+      if(std::filesystem::exists(out))throw FormatError("choose a fresh title capture directory");
+      std::filesystem::create_directories(out);created=true;
+    }
+    GameResources resources(SceneRead(usrdir/"resource.dat"));
+    const auto first=SceneRead(usrdir/"first.dat"),profile=SceneRead(usrdir/"env/env_otaku_mode.dat");
+    const auto env=TitleEnvironment::Decode(SceneRead(usrdir/"env/env_scene_title.dat"));
+    const auto seeds=TitleSessionSeeds::Decode(SceneRead(usrdir/"env/env_keyword.dat"),profile);
+    const auto utilityRaw=SceneRead(usrdir/"env/env_game_utility.dat");
+    const auto utility=AudioEnvironment::Decode(utilityRaw);
+    const auto widget=WidgetInputEnvironment::DecodeUtility(utilityRaw);
+    auto owner=std::make_unique<SemanticState>();
+    InitializeFreshAudioOwner(*owner);InitializeFreshBattleOwner(*owner);InitializeFreshMessageOwner(*owner);
+    InitializeFreshCgHistory(*owner,LoadAlbumConfiguration(first,SceneRead(usrdir/"env/env_omake.dat")).RequiredImages);
+    InitializeFreshProfileEntry(*owner,ProfileInitialStats::Decode(profile),LoadProfileItemCatalog(first));
+    const auto history=HistoryEnvironment::DecodeDebug(SceneRead(usrdir/"env/env_debug.dat"));
+    auto progress=MakeFreshSystemProgress(first,history.InitiallyRead!=0);
+    const auto progressRoot=!requestedProgressRoot.empty()?requestedProgressRoot:
+      (capture?captureDirectory/"saves":std::filesystem::current_path()/"saves/saekano");
+    const auto session=OpenProgressStore(progressRoot,progress,{});progress=session.System;
+    LoadSystemOwner(*owner,progress,owner->CgHistory.Required);
+    ViewerWindow window(capture,true);SdlCheck(SDL_SetWindowSize(window.Window,960,544),"title viewport size");
+    SdlCheck(SDL_SetWindowTitle(window.Window,"Saekano"),"title window name");
+    UiBlitRenderer renderer;FontTextures textures;
+    PcFontFace font(SceneRead(usrdir/"DFHSR4.TTC"),GsfFont::Decode(SceneRead(usrdir/"Font.gsf")));
+    ArchiveBgmResources music(usrdir);ArchiveSeResources sounds(usrdir);SystemSoundAssets systemSounds(first);
+    MusicPlayback playback(music,capture,&sounds);
+    PlaybackTitleAudio audio(playback,systemSounds,ProfileVoiceGain(progress.Bytes6022c[10],1.0f),ProfileVoiceGain(progress.Bytes6022c[9],1.0f));
+    // This is the fresh boot owner. A future title return must carry its actual
+    // backlog/surface owners rather than substituting this initially empty ring.
+    std::vector<std::u16string> backlog;
+    PcTitleOwner title(*owner,resources,renderer,playback,music,audio,env,seeds,utility.OpaqueTable,
+      widget.HoldFrames,[&]{backlog.clear();},0);
+    std::ofstream trace,pcm;
+    if(capture){trace.open(captureDirectory/"title.jsonl");pcm.open(captureDirectory/"audio.pcm",std::ios::binary);
+      if(!trace || !pcm)throw FormatError("cannot open title capture outputs");}
+    bool quit=false,pressedStart=false,chose=false,skippedVoice=false,pointerDown=false;std::array<bool,2> held{};
+    std::array<float,2> pointer{};int pointerCapture=0;int32_t previousPhase=-1;size_t frames=0;uint64_t epoch=SDL_GetTicks(),audioFrames=0;
+    for(;!quit && !title.RequestedScene;++frames){
+      if(capture && frames>=1250)throw FormatError("title capture exhausted20s without New Game entry");
+      title.Input={};title.NavigationInput={};title.NavigationInput.Held=held;
+      const uint64_t now=capture?frames*16:SDL_GetTicks()-epoch;
+      const auto key=[&](SDL_Keycode code){for(auto type:{SDL_EVENT_KEY_DOWN,SDL_EVENT_KEY_UP}){
+        SDL_Event event{};event.type=type;event.key.windowID=SDL_GetWindowID(window.Window);event.key.key=code;
+        event.key.down=type==SDL_EVENT_KEY_DOWN;SdlCheck(SDL_PushEvent(&event),"title capture explicit keyboard input");}};
+      if(capture){
+        if(title.State.Phase==5 && title.State.Fade.Finished() && !pressedStart){key(SDLK_RETURN);pressedStart=true;}
+        if(title.State.Phase==10 && !chose){
+          if(!capturePointer){key(SDLK_RETURN);chose=true;}
+          else {
+            const auto box=env.RectangleTables.at(0x358).at(0);SDL_Event event{};
+            event.type=pointerCapture==0?SDL_EVENT_MOUSE_BUTTON_DOWN:SDL_EVENT_MOUSE_BUTTON_UP;
+            event.button.windowID=SDL_GetWindowID(window.Window);event.button.button=SDL_BUTTON_LEFT;
+            event.button.down=pointerCapture==0;event.button.x=float(box[0])+float(box[2])/2;event.button.y=float(box[1])+float(box[3])/2;
+            SdlCheck(SDL_PushEvent(&event),"title capture explicit pointer input");if(++pointerCapture==2)chose=true;
+          }
+        }
+        if(title.State.Phase==21 && !skippedVoice){key(SDLK_RETURN);skippedVoice=true;}
+      }
+      SDL_Event event{};
+      while(SDL_PollEvent(&event)){
+        if(event.type==SDL_EVENT_QUIT || (event.type==SDL_EVENT_KEY_DOWN && event.key.key==SDLK_ESCAPE))quit=true;
+        if(event.type==SDL_EVENT_KEY_DOWN || event.type==SDL_EVENT_KEY_UP){
+          const bool down=event.type==SDL_EVENT_KEY_DOWN;
+          title.Input.AnyActivity|=down;
+          if(event.key.key==SDLK_UP || event.key.key==SDLK_DOWN){const size_t i=event.key.key==SDLK_DOWN;
+            held[i]=down;title.NavigationInput.Held[i]=down;title.NavigationInput.Pressed[i]|=down&&!event.key.repeat;}
+          if(down&&!event.key.repeat){title.Input.Accept|=event.key.key==SDLK_RETURN;title.Input.Cancel|=event.key.key==SDLK_BACKSPACE;title.Input.Start|=event.key.key==SDLK_SPACE;}
+        }
+        if((event.type==SDL_EVENT_MOUSE_BUTTON_DOWN || event.type==SDL_EVENT_MOUSE_BUTTON_UP) && event.button.button==SDL_BUTTON_LEFT){
+          pointerDown=event.type==SDL_EVENT_MOUSE_BUTTON_DOWN;pointer={event.button.x,event.button.y};title.Input.AnyActivity=true;
+        }
+        if(event.type==SDL_EVENT_MOUSE_MOTION){pointer={event.motion.x,event.motion.y};title.Input.AnyActivity=true;}
+        if(event.type==SDL_EVENT_WINDOW_FOCUS_LOST){held={};title.NavigationInput={};pointerDown=false;title.Contacts.CancelPointer();}
+      }
+      WidgetInputHistory::Snapshot contacts{};
+      if(pointerDown){
+        int w=0,h=0;SdlCheck(SDL_GetWindowSize(window.Window,&w,&h),"title pointer viewport");
+        const float scale=std::min(float(w)/960,float(h)/544);
+        if(scale>0)contacts[0]=WidgetTouch{0,{int16_t(std::clamp((pointer[0]-(w-960*scale)/2)/scale,-32768.f,32767.f)),
+          int16_t(std::clamp((pointer[1]-(h-544*scale)/2)/scale,-32768.f,32767.f))}};
+      }
+      title.Input.AnyActivity|=pointerDown||held[0]||held[1];title.Contacts.BeginFrame(contacts);
+      if(quit)break;
+      const uint32_t playingBefore=(audio.Playing(6)?1u:0u)|(audio.Playing(7)?2u:0u);
+      title.Update(now);playback.Update(0.016f);
+      if(capture){
+        std::array<int16_t,1536> samples{};playback.Render(samples);pcm.write(reinterpret_cast<const char*>(samples.data()),sizeof(samples));audioFrames+=768;
+        trace << "{\"frame\":"<<frames<<",\"now\":"<<now<<",\"phase\":"<<title.State.Phase<<",\"pending\":"<<title.State.PendingPhase.value_or(-1)
+          <<",\"selected\":"<<title.State.Selected<<",\"character\":"<<title.State.VoiceCharacter<<",\"fade\":"<<title.State.Fade.Value.Current
+          <<",\"accept\":"<<title.Input.Accept<<",\"pointer_release\":"<<(title.Input.ReleasedMenuButton?int(*title.Input.ReleasedMenuButton):-1)
+          <<",\"flags\":"<<(uint32_t(title.Input.Accept)|uint32_t(title.Input.Cancel)<<1|uint32_t(title.Input.Start)<<2|
+              uint32_t(title.Input.AnyActivity)<<3|uint32_t(title.Input.PressStartReleased)<<4)
+          <<",\"voice_playing\":"<<audio.Playing(7)<<",\"ui_playing\":"<<audio.Playing(6)
+          <<",\"playing_before\":"<<playingBefore<<",\"tweens\":[";
+        const std::array<const TitleTween*,12> tweens={&title.State.Fade,&title.State.Idle,&title.State.MovieFade,
+          &title.State.Reveal,&title.State.LogoMove,&title.State.LogoDetail,&title.State.MenuMove,&title.State.MenuDetail,
+          &title.State.Buttons[0],&title.State.Buttons[1],&title.State.Buttons[2],&title.State.Buttons[3]};
+        for(size_t i=0;i<tweens.size();++i){if(i)trace<<',';trace<<tweens[i]->Value.Current;}
+        trace<<"]}\n";
+      }
+      int width=0,height=0;SdlCheck(SDL_GetWindowSizeInPixels(window.Window,&width,&height),"title display extent");
+      title.Draw(textures,font,uint32_t(utility.OpaqueWord),width,height);
+      if(capture && ((title.State.Phase!=previousPhase && (title.State.Phase==10 || title.State.Phase==21)) ||
+          (title.State.Phase==5 && title.State.Fade.Finished() && !pressedStart)))
+        Capture(captureDirectory/("phase-"+std::to_string(title.State.Phase)+".bmp"),width,height);
+      previousPhase=title.State.Phase;SdlCheck(SDL_GL_SwapWindow(window.Window),"title frame swap");
+      if(!capture)SDL_Delay(16);
+    }
+    if(capture){
+      trace.close();pcm.close();if(!trace || !pcm)throw FormatError("cannot save title trace/PCM");
+      if(quit || title.RequestedScene!=2 || title.Resets!=2 || title.HistoryClears!=1)throw FormatError("title capture missed native New Game handoff");
+      std::ofstream report(captureDirectory/"title.json");report << "{\"passed\":true,\"frames\":"<<frames<<",\"audio_frames\":"<<audioFrames
+        <<",\"pointer\":"<<capturePointer<<",\"resets\":"<<title.Resets<<",\"history_clears\":"<<title.HistoryClears
+        <<",\"scene\":2,\"profile_shortcut\":false,\"submenus_bound\":false,\"movie_bound\":false,\"manual_acceptance\":false}\n";
+      report.close();if(!report)throw FormatError("cannot save title owner report");
+    }
+    title.Retire();GlCheck("title texture retirement");
+    if(!renderer.Textures.empty() || audio.Playing(6) || audio.Playing(7))
+      throw FormatError("title retirement left resources or voices owned");
+    if(capture){
+      std::ofstream report(captureDirectory/"retirement.json");
+      report<<"{\"passed\":true,\"textures\":0,\"ui_playing\":false,\"voice_playing\":false}\n";
+      report.close();if(!report)throw FormatError("cannot save title retirement report");
+    }
+    if(quit)return 0;
+    if(title.RequestedScene!=2)throw UnsupportedCommand("unknown PC title scene request");
+    if(capture)std::filesystem::create_directory(captureDirectory/"entry");
+    return RunScenarioScene(window,renderer,textures,font,resources,playback,music,sounds,std::move(*owner),nullptr,
+      usrdir,capture?captureDirectory/"entry":std::filesystem::path{},false,false,false,{},{},{},false,false,capture?17:0,{},progressRoot,&session.Slots);
+  }catch(const std::exception& error){
+    if(created){std::ofstream out(captureDirectory/"error.txt");out<<std::string(error.what()).substr(0,2048)<<'\n';}
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano title: %s",error.what());return 1;
   }
 }
 }  // namespace Impacto::Saekano

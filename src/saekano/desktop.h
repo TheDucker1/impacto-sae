@@ -5,6 +5,9 @@
 #include <optional>
 
 namespace Impacto::Saekano {
+int RunTitleScene(const std::filesystem::path& usrdir,
+                  const std::filesystem::path& progressRoot={},
+                  const std::filesystem::path& captureDirectory={},bool capturePointer=false);
 int RunTitleDrawProbe(const std::filesystem::path& usrdir,const std::filesystem::path& inputs,
                       const std::filesystem::path& output);
 int RunParticleGroupProbe(const std::filesystem::path& usrdir,
