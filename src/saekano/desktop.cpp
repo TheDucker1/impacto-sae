@@ -1,6 +1,7 @@
 #include "systemowner.h"
 #include "progressstore.h"
 #include "slotdata.h"
+#include "scenethumbnail.h"
 #include "slotcontroller.h"
 #include "slotwidgets.h"
 #include "slotcards.h"
@@ -1033,6 +1034,7 @@ struct SceneDialogLayer {
   }
 };
 
+#include "desktopthumbnail.inc"
 #include "desktopoptions.inc"
 #include "desktopoptionsowner.inc"
 #include "desktopslotowner.inc"
@@ -1058,6 +1060,7 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
                       const std::filesystem::path& progressRoot = {},const NativeSlotData* slotProgress=nullptr,
                       const NativePendingSlotLoad* load=nullptr,uint8_t captureOrdinaryChoice=0) {
   const bool capture = !captureDirectory.empty();
+  PcSceneThumbnail sceneThumbnail;
   const bool captureEnding=captureMenuInput==16;
   const bool captureParticles=captureMenuInput==4;
   const bool captureChapter=captureMenuInput==7;
@@ -2239,6 +2242,7 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
     SdlCheck(SDL_GetWindowSizeInPixels(window.Window, &width, &height),
              "scene frame size");
     renderer.Draw({}, width, height);
+    std::array<GLint,4> sceneViewport{};glGetIntegerv(GL_VIEWPORT,sceneViewport.data());
     renderer.SetFilter(*state.ScreenFilter.Mode, *state.ScreenFilter.Intensity);
     const auto* activeMessage = backend.CurrentMessage();
     const bool approach=state.ApproachMode.Enabled.value_or(false);
@@ -2541,6 +2545,9 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
       glUniform1i(renderer.AlphaMode, 1);
       renderer.DrawQuad(*fade, {0, 1, 1}, true);
       spriteDraws.push_back(*fade);
+    }
+    if(!endingState.Started) {
+      if(sceneViewport[2]>0 && sceneViewport[3]>0)sceneThumbnail.Publish(sceneViewport);
     }
     if(endingState.Started) {
       if(endingHost.Modal.Visible)endingLayer.Draw(endingHost.Modal,endingHost.Prompt(),endingLayout,1);
@@ -3404,6 +3411,7 @@ int RunScreenFilterProbe(const std::filesystem::path& fixtureDirectory,
     return 1;
   }
 }
+#include "desktopthumbnailprobe.inc"
 int RunSlotThumbnailProbe(const std::filesystem::path& slots,const std::filesystem::path& output){
   bool created=false;
   try{

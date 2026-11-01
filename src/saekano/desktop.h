@@ -16,6 +16,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,
                   const std::filesystem::path& captureDirectory={},bool capturePointer=false,bool captureOpening=false,uint8_t captureMovie=0,uint8_t captureOptions=0,uint8_t captureContinue=0);
 int RunOptionsDrawProbe(const std::filesystem::path& usrdir,const std::filesystem::path& output);
 int RunSlotThumbnailProbe(const std::filesystem::path& slots,const std::filesystem::path& output);
+int RunSceneThumbnailProbe(const std::filesystem::path& output);
 int RunTitleDrawProbe(const std::filesystem::path& usrdir,const std::filesystem::path& inputs,
                       const std::filesystem::path& output);
 int RunParticleGroupProbe(const std::filesystem::path& usrdir,
