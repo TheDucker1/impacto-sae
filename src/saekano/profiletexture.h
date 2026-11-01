@@ -25,7 +25,8 @@ enum class ProfileTextureSection : uint32_t {
   TitleUi = 0x108, // resource.dat/root15, SceneTitle+90.
   SystemUi = 0x109, // resource.dat/root13, SceneTitle+a0 and system submenus.
   SlotThumbnail = 0x10a, // Caller-owned data.bin surface; Entry is slot ordinal.
-  ExtrasMovieThumbnail = 0x10b // resource.dat/root2/child1/child1.
+  ExtrasMovieThumbnail = 0x10b, // resource.dat/root2/child1/child1.
+  ExtrasCgThumbnail = 0x10c // resource.dat/root2/child0/child1.
 };
 struct ProfileTextureKey {
   ProfileTextureSection Section;

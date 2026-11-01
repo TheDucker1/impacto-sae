@@ -31,10 +31,11 @@ struct AlbumEnvironment {
 };
 struct AlbumEntry {
   std::u16string Title;
-  int32_t Category = 0;
+  int32_t Category = 0; // Third CSV field, retained for startup compatibility.
   std::vector<int32_t> Images;
-  // Retain the authored gate values without treating them as image IDs.
+  // Native record48/4c: comment.awb wave and CG thumbnail, not unlock gates.
   std::array<int32_t,2> Gates{};
+  int32_t GalleryCategory = 0; // Final CSV field, native record50.
 };
 std::vector<AlbumEntry> DecodeAlbumEntries(std::span<const uint8_t> text,
                                          uint32_t imageColumns);
@@ -42,6 +43,16 @@ std::vector<AlbumEntry> DecodeAlbumEntries(std::span<const uint8_t> text,
 // Values are immutable configuration, not a replacement for saved CG history.
 std::vector<int32_t> DecodeAlbumRequirements(std::span<const uint8_t> text,
                                              uint32_t imageColumns);
+// Native3d55a: category boundaries start on nine-card pages. Padding has no
+// entry; history indices use padded card positions, resource IDs do not.
+struct AlbumGalleryCatalogue {
+  std::vector<AlbumEntry> Entries;
+  std::vector<std::optional<size_t>> Cards;
+  std::array<int32_t,6> CategoryLastPage{};
+  std::vector<int32_t> PageCardCounts;
+  explicit AlbumGalleryCatalogue(std::vector<AlbumEntry> entries);
+  const AlbumEntry* Card(size_t index)const;
+};
 struct AlbumConfiguration {
   AlbumEnvironment Environment;
   std::vector<int32_t> RequiredImages;

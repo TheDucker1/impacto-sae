@@ -187,6 +187,7 @@ std::vector<AlbumEntry> DecodeAlbumEntries(std::span<const uint8_t> bytes,
       }
     }
     const auto first = tokens.Next(), second = tokens.Next();
+    const auto galleryCategory = tokens.Next();
     if (Numeric(category) >= 0 && !first.empty() && !second.empty() &&
         Numeric(first) >= 0 && Numeric(second) >= 0) {
       if (result.size() >= 1000000)
@@ -194,11 +195,36 @@ std::vector<AlbumEntry> DecodeAlbumEntries(std::span<const uint8_t> bytes,
       if (images.size() > 1000000-imageCount)
         throw FormatError("album requirements exceed allocation budget");
       imageCount+=images.size();
-      result.push_back({title,Numeric(category),std::move(images),{Numeric(first),Numeric(second)}});
+      result.push_back({title,Numeric(category),std::move(images),{Numeric(first),Numeric(second)},Numeric(galleryCategory)});
     }
     tokens.FinishRow();
   }
   return result;
+}
+AlbumGalleryCatalogue::AlbumGalleryCatalogue(std::vector<AlbumEntry> entries):Entries(std::move(entries)){
+  std::array<size_t,6> counts{};
+  int32_t category=-1;
+  for(size_t i=0;i<Entries.size();++i){
+    const auto& entry=Entries[i];
+    if(entry.GalleryCategory<0 || entry.GalleryCategory>=6 || entry.GalleryCategory<category)
+      throw FormatError("CG gallery categories are outside the native ordered six groups");
+    if(entry.Images.empty())throw FormatError("CG gallery entry has no image variants");
+    if(entry.GalleryCategory!=category){
+      while(Cards.size()%9)Cards.emplace_back();
+      category=entry.GalleryCategory;
+    }
+    Cards.push_back(i);++counts[size_t(category)];
+  }
+  while(Cards.size()%9)Cards.emplace_back();
+  int32_t page=-1;
+  for(size_t i=0;i<counts.size();++i){page+=int32_t((counts[i]+8)/9);CategoryLastPage[i]=page;}
+  for(size_t first=0;first<Cards.size();first+=9){
+    int32_t count=0;for(size_t i=first;i<first+9;++i)if(Cards[i])++count;
+    PageCardCounts.push_back(count);
+  }
+}
+const AlbumEntry* AlbumGalleryCatalogue::Card(size_t index)const{
+  return index<Cards.size() && Cards[index]?&Entries.at(*Cards[index]):nullptr;
 }
 std::vector<int32_t> DecodeAlbumRequirements(std::span<const uint8_t> bytes,
                                              uint32_t imageColumns) {

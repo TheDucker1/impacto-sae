@@ -83,7 +83,7 @@ Bytes InflateGzip(std::span<const uint8_t> input, size_t outputLimit) {
 }
 
 struct GameResources::FrontendAssets {
-  std::optional<GpdaArchive> TitleUi,SystemUi,SystemVoices,MovieThumbnails;
+  std::optional<GpdaArchive> TitleUi,SystemUi,SystemVoices,MovieThumbnails,CgThumbnails,CgCatalogue;
 };
 GameResources::GameResources(Bytes resourceDat)
     : GameResources(GpdaArchive(std::move(resourceDat))) {}
@@ -95,6 +95,11 @@ GameResources::GameResources(const GpdaArchive& root)
   auto frontend=std::make_shared<FrontendAssets>();
   if(root.Entries().size()>2){
     const auto extras=ResourceSection(root,2);
+    if(!extras.Entries().empty()){
+      const GpdaArchive cg(RawEntry(extras,0));
+      if(!cg.Entries().empty())frontend->CgCatalogue.emplace(RawEntry(cg,0));
+      if(cg.Entries().size()>1)frontend->CgThumbnails.emplace(RawEntry(cg,1));
+    }
     if(extras.Entries().size()>1){
       const GpdaArchive movies(RawEntry(extras,1));
       if(movies.Entries().size()>1)frontend->MovieThumbnails.emplace(RawEntry(movies,1));
@@ -144,6 +149,11 @@ ResourceAsset GameResources::LoadBattleResultVoice(size_t entry) const {
 size_t GameResources::TitleTextureCount()const{return frontend_->TitleUi?frontend_->TitleUi->Entries().size():0;}
 size_t GameResources::SystemTextureCount()const{return frontend_->SystemUi?frontend_->SystemUi->Entries().size():0;}
 size_t GameResources::ExtrasMovieThumbnailCount()const{return frontend_->MovieThumbnails?frontend_->MovieThumbnails->Entries().size():0;}
+size_t GameResources::ExtrasCgThumbnailCount()const{return frontend_->CgThumbnails?frontend_->CgThumbnails->Entries().size():0;}
+ResourceAsset GameResources::LoadExtrasCgCatalogue()const{
+  if(!frontend_->CgCatalogue || frontend_->CgCatalogue->Entries().empty())throw FormatError("CG gallery catalogue is missing");
+  return {frontend_->CgCatalogue->Entries()[0].Name,RawEntry(*frontend_->CgCatalogue,0)};
+}
 size_t GameResources::SystemVoiceBankCount()const{return frontend_->SystemVoices?frontend_->SystemVoices->Entries().size():0;}
 size_t GameResources::SystemVoiceCount(size_t bank)const{
   if(bank>=SystemVoiceBankCount())throw FormatError("system voice bank outside original archive");
@@ -238,6 +248,8 @@ ProfileMenuAsset GameResources::LoadProfileTexture(ProfileTextureKey key) const 
     return load(*frontend_->SystemUi);
   if(key.Section==ProfileTextureSection::ExtrasMovieThumbnail && frontend_->MovieThumbnails)
     return load(*frontend_->MovieThumbnails);
+  if(key.Section==ProfileTextureSection::ExtrasCgThumbnail && frontend_->CgThumbnails)
+    return load(*frontend_->CgThumbnails);
   throw FormatError("profile texture section is unavailable");
 }
 std::vector<ResourceAsset> GameResources::LoadApproachTextures(size_t id) const {

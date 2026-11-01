@@ -27,6 +27,7 @@
 #include "album.h"
 #include "extras.h"
 #include "extrasmovie.h"
+#include "extrascg.h"
 #include "scenemessage.h"
 #include "messagedraw.h"
 #include "battledialogue.h"
@@ -1116,6 +1117,7 @@ struct SceneDialogLayer {
 #include "desktopbacklog.inc"
 #include "desktopextras.inc"
 #include "desktopextrasmovie.inc"
+#include "desktopextrascg.inc"
 #include "desktoptitle.inc"
 #include "desktopprofile.inc"
 
