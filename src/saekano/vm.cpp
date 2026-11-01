@@ -258,8 +258,9 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     state_.BattleSelection={};
     state_.BattleResult={};state_.BattleResult.Known=true;
     if(auto* resources=backend_.BattleAssets())resources->Reset();
-    state_.BgmTrack.reset();
-    state_.BgmCommandVolume.reset();
+    // Constructor calls Reset;801a0154/0158 set remembered BGM=-1/100.
+    state_.BgmTrack = -1;
+    state_.BgmCommandVolume = 100;
     // Reset801a015c/0164/016c: remembered SE ID=-1, volume100, channel0.
     state_.SeTrack = -1;
     state_.SeCommandVolume = 100;
@@ -297,15 +298,17 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     const auto keywordSuppressed = messageContext_.KeywordSuppressed;
     messageContext_ = {};
     messageContext_.BacklogSuppressed = 0; // Context reset801a021a.
-    state_.SnapshotMetadata = {};
-    // Native reset801a02c8 clears context1b58 (=manager1b60).
-    state_.SnapshotMetadata.WorkingMode = 0;
+    state_.SnapshotMetadata = MakeFreshContextSnapshotMetadata();
     messageContext_.SnapshotCursors = FreshMessageSnapshotCursors();
     messageContext_.KeywordSuppressed = keywordSuppressed;  // owner S survives
     dispatcher_ = {};
     // Native payload loading has context writes before any command Start.
     // Reapply only for a fresh context, never over a restored manager snapshot.
     for(size_t i=0;i<commands_.size();++i) {
+      if(script_->Records()[i].Opcode==0x2bd) {
+        PayloadReader reader(script_->Payload(i));
+        state_.SnapshotMetadata.RetainedShort=reader.U16(); // Native8006e75c Load, not execution.
+      }
       if(commands_[i].BattleEntry)LoadBattleEntryFields(state_,*commands_[i].BattleEntry);
       if(commands_[i].BattleVersus)state_.BattleVersus.Text=commands_[i].BattleVersus->Text;
       if(script_->Records()[i].Opcode==0x3f2)++state_.BattleEntry.SelectLoadedCount;
@@ -650,7 +653,7 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
   const auto opcode = script_->Records()[index].Opcode;
   if (!lane && command.Routing.QueueForLane && opcode != 0xcb && opcode != 0x1f9) return true;
   if (lane && !command.LaneStarted) Start(index, now, true);
-  if (opcode == 0x258 || opcode == 0x259 || opcode == 0x25a || opcode == 0x25b || opcode == 0xce || opcode == 0x204) return true;  // Native common completion; no fade/resource wait.
+  if (opcode == 0x258 || opcode == 0x259 || opcode == 0x25a || opcode == 0x25b || opcode == 0xce || opcode == 0x204 || opcode == 0x2bd) return true;  // Native common completion; no fade/resource wait.
   if (opcode == 0x201) {
     if (lane) return true;
     return UpdateCharacterColor(state_, *command.CharacterColor, input.Route == UpdateRoute::Skipping, now);

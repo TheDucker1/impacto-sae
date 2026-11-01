@@ -7,6 +7,17 @@
 #include <cmath>
 
 namespace Impacto::Saekano {
+ContextSnapshotMetadata MakeFreshContextSnapshotMetadata() {
+  ContextSnapshotMetadata metadata;
+  metadata.RetainedString.emplace(); // Native VitaDualString_Construct: empty.
+  metadata.RetainedShort=0; // Native leaves story ID unwritten until opcode02bd Load.
+  metadata.ScriptParticles.emplace();
+  for(auto& row:*metadata.ScriptParticles)row[0]=0xffffffff;
+  // Constructor initializes only group=-1/color0. Value initialization also
+  // clears four unused words per inactive row instead of saving heap residue.
+  metadata.WorkingMode=0;
+  return metadata;
+}
 NativeContextSave CaptureNativeContext(const SemanticState& state,
                                         const MessageRuntimeContext& message) {
   if (!message.Known || !state.MouthControl || !state.Battle.Known ||
