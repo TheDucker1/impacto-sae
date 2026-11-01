@@ -13,7 +13,10 @@ impacto is currently being developed for **64-bit Windows 10 and desktop Linux P
 ### Saekano / PCSG00543 port
 
 The `saekano` branch contains an in-progress PS Vita command-engine backend.
-It is not playable yet. The implementation plan, measured native-reference
+Selected PC gameplay paths work; full-game playability is incomplete. Development
+follows the [Saekano development manifesto](doc/saekano/DEVELOPMENT_MANIFESTO.md):
+reuse existing Impacto services, verify modules first, then integrate representative
+real-data cases. The implementation plan, measured native-reference
 coverage and next work are in [doc/saekano/STATUS.md](doc/saekano/STATUS.md) and
 [doc/saekano/PLAN.md](doc/saekano/PLAN.md).
 
