@@ -1065,6 +1065,7 @@ struct SceneDialogLayer {
 struct ScenarioSceneTransfer {
   std::unique_ptr<NativePendingSlotLoad> Load;
   std::unique_ptr<SemanticState> Owner;
+  bool Title=false;
 };
 int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
                       FontTextures& fontTextures, PcFontFace& font,
@@ -1086,7 +1087,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
   const bool capture = !captureDirectory.empty();
   PcSceneThumbnail sceneThumbnail;
   const bool captureEnding=captureMenuInput==16;
-  const bool captureScenarioMenu=captureMenuInput==19;
+  const bool captureScenarioMenu=captureMenuInput==19 || captureMenuInput==20;
   const bool captureParticles=captureMenuInput==4;
   const bool captureChapter=captureMenuInput==7;
   const bool captureLip=captureMenuInput==9;
@@ -2911,12 +2912,12 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
     SdlCheck(SDL_GL_SwapWindow(window.Window), "scene frame swap");
     if(titleRequested) {
       if(captureEnding){quit=true;break;}
-      throw UnsupportedCommand("PC ending reached title request; title construction is not bound");
+      beginReturnTitle(now,true);
     }
     if (!capture) SDL_Delay(16);
     else if(endingState.Started)SDL_Delay(1);
   }
-  if(transfer && transfer->Load)return 0;
+  if(transfer && (transfer->Load || transfer->Title))return 0;
   if(captureEnding) {
     if(!titleRequested || !endingProbeStarted || !saveConfirmInjected)throw FormatError("ending UI component capture did not finish");
     const auto pair=ReadProgressStore(progressRoot);
@@ -2950,18 +2951,34 @@ int RunScenarioScene(ViewerWindow& window,UiBlitRenderer& renderer,
     std::optional<int32_t> captureScriptOverride={},bool captureWaitingInput=false,
     bool captureConfirmInput=false,int32_t captureMenuInput=0,const std::filesystem::path& capturePlan={},
     const std::filesystem::path& progressRoot={},NativeSlotData* slotProgress=nullptr,
-    const NativePendingSlotLoad* load=nullptr,uint8_t captureOrdinaryChoice=0) {
+    const NativePendingSlotLoad* load=nullptr,uint8_t captureOrdinaryChoice=0,
+    std::unique_ptr<SemanticState>* returnedTitle=nullptr) {
   auto live=std::make_unique<SemanticState>(std::move(owner));
   std::unique_ptr<NativePendingSlotLoad> pending;
   auto output=captureDirectory;
   for(;;) {
     if(!output.empty())std::filesystem::create_directories(output);
+    std::set<ProfileTextureKey> borrowedTextures;
+    for(const auto& [key,texture]:renderer.Textures){(void)texture;borrowedTextures.insert(key);}
     ScenarioSceneTransfer next;
     const auto result=RunScenarioSceneOnce(window,renderer,fontTextures,font,resources,
       playback,music,sounds,std::move(*live),completed,root,output,captureAuto,
       captureButtonAuto,captureVoiced,captureUntilMessage,captureFromCommand,
       captureScriptOverride,captureWaitingInput,captureConfirmInput,captureMenuInput,
       capturePlan,progressRoot,slotProgress,load,captureOrdinaryChoice,&next);
+    // The old scope (including modal/model/movie consumers) has retired. Remove
+    // only its shared-renderer uploads; borrowed textures belong to the caller.
+    for(auto it=renderer.Textures.begin();it!=renderer.Textures.end();) {
+      if(!borrowedTextures.contains(it->first)){glDeleteTextures(1,&it->second.Handle);it=renderer.Textures.erase(it);}
+      else ++it;
+    }
+    if(next.Title) {
+      if(!returnedTitle || !next.Owner)throw UnsupportedCommand("scenario title request has no outer scene owner");
+      // CMain26c3e..26ca8 deletes the old scene before title construction.
+      playback.StopAllChannels();
+      next.Owner->SceneImages={}; // Its scene driver has just been destroyed.
+      *returnedTitle=std::move(next.Owner);return result;
+    }
     if(!next.Load)return result;
     if(!next.Owner)throw FormatError("scenario Load lost its persistent owner");
     live=std::move(next.Owner);pending=std::move(next.Load);load=pending.get();completed=nullptr;
@@ -5003,7 +5020,8 @@ int RunMovieInfoProbe(const std::filesystem::path& path,const std::filesystem::p
   }
 }
 int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::path& requestedProgressRoot,
-    const std::filesystem::path& captureDirectory,bool capturePointer,bool captureOpening,uint8_t captureMovie,uint8_t captureOptions,uint8_t captureContinue,bool captureScenarioMenu){
+    const std::filesystem::path& requestedCaptureDirectory,bool capturePointer,bool captureOpening,uint8_t captureMovie,uint8_t captureOptions,uint8_t captureContinue,uint8_t captureScenarioMenu){
+  auto captureDirectory=requestedCaptureDirectory;
   bool created=false;
   try{
     const bool capture=!captureDirectory.empty();
@@ -5047,7 +5065,12 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     PlaybackTitleAudio audio(playback,systemSounds,ProfileVoiceGain(progress.Bytes6022c[10],1.0f),ProfileVoiceGain(progress.Bytes6022c[9],1.0f));
     audio.BindVoiceAttenuation(attenuation,audioClock);
     PcMovieFrameLayer movieFrame;MoviePlayback movie;movie.Present=[&](const AVFrame* frame,int64_t pts){movieFrame.Present(frame,pts);};
-    // Fresh boot history starts empty; title actions clear the session owner.
+    uint32_t titleVisits=0;
+    std::optional<Bytes> returnedSystemExpected;
+    for(;;) {
+    const bool returnedTitleCapture=captureScenarioMenu==2 && titleVisits>0;
+    // CMain constructs a fresh title after retiring the previous scene. The
+    // persistent session owner and writable store survive the scene loop.
     PcTitleOwner title(*owner,resources,renderer,textures,font,playback,music,sounds,audio,attenuation,movie,movieFrame,usrdir,env,seeds,utility.OpaqueTable,
       widget.HoldFrames,[&]{owner->Backlog.Clear();},progressRoot,session.Slots,audioClock,0);
     std::ofstream trace,pcm;
@@ -5083,7 +5106,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
         if(title.State.Phase==10 && !chose){
           if(captureContinue){if(title.State.Selected<1)key(SDLK_DOWN);else{key(SDLK_RETURN);chose=true;}}
           else if(captureOptions){if(title.State.Selected<2)key(SDLK_DOWN);else{key(SDLK_RETURN);chose=true;}}
-          else if(!capturePointer){key(SDLK_RETURN);chose=true;}
+          else if(!capturePointer && !returnedTitleCapture){key(SDLK_RETURN);chose=true;}
           else {
             const auto box=env.RectangleTables.at(0x358).at(0);SDL_Event event{};
             event.type=pointerCapture==0?SDL_EVENT_MOUSE_BUTTON_DOWN:SDL_EVENT_MOUSE_BUTTON_UP;
@@ -5232,6 +5255,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
           (title.State.Phase==5 && title.State.Fade.Finished() && !pressedStart)))
         Capture(captureDirectory/("phase-"+std::to_string(title.State.Phase)+".bmp"),width,height);
       previousPhase=title.State.Phase;SdlCheck(SDL_GL_SwapWindow(window.Window),"title frame swap");
+      if(returnedTitleCapture && title.State.Phase==10){++frames;break;}
       if(captureOptions && title.ConfigReturns==1 && title.State.Phase==10){Capture(captureDirectory/"options-return.bmp",width,height);++frames;break;}
       if(captureContinue && title.ContinueReturns==1 && title.State.Phase==10){Capture(captureDirectory/"continue-return.bmp",width,height);++frames;break;}
       if(!capture)SDL_Delay(16);
@@ -5273,6 +5297,14 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
           <<",\"preview_starts\":"<<title.ConfigPreviews<<",\"questions\":"<<title.ConfigQuestions<<",\"question_cancels\":"<<title.ConfigCancels<<",\"saves\":"<<title.ConfigSaves
           <<",\"working_text_speed\":"<<unsigned(working[0])<<",\"stored_text_speed\":"<<unsigned(disk[0])<<",\"all_options_verified\":true,\"paired_slots_preserved\":true,\"manual_acceptance\":false}\n";
         options.close();if(!options)throw FormatError("cannot save Options report");
+      }else if(returnedTitleCapture) {
+        if(quit || title.RequestedScene || title.State.Phase!=10 || !title.ResourcesReady() ||
+            title.Resets!=1 || title.HistoryClears!=0 || !owner->SystemProgress || !returnedSystemExpected ||
+            SnapshotSystemOwner(*owner,RestoreSystemReadHistory(*owner->SystemProgress)).Encode()!=*returnedSystemExpected)
+          throw FormatError("returned title lost its usable menu or live scenario progress");
+        const auto stored=ReadProgressStore(progressRoot);
+        if(!stored || stored->Generation!=session.Generation)
+          throw FormatError("return without saving unexpectedly wrote progress");
       }else if(quit || title.RequestedScene!=2 || title.Resets!=2 || title.HistoryClears!=1)throw FormatError("title capture missed native New Game handoff");
       if(captureMovie && (!sawMovie || !movieReturned || (captureMovie==1 && !movieSkipped) || !movieImage))throw FormatError("title idle movie did not play/return");
       std::ofstream report(captureDirectory/"title.json");report << "{\"passed\":true,\"frames\":"<<frames<<",\"audio_frames\":"<<audioFrames
@@ -5289,13 +5321,20 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
       report<<"{\"passed\":true,\"textures\":0,\"ui_playing\":false,\"voice_playing\":false}\n";
       report.close();if(!report)throw FormatError("cannot save title retirement report");
     }
-    if(quit || captureOptions || (captureContinue && captureContinue<3))return 0;
+    if(quit || returnedTitleCapture || captureOptions || (captureContinue && captureContinue<3))return 0;
     if(title.RequestedScene!=2)throw UnsupportedCommand("unknown PC title scene request");
     if(capture)std::filesystem::create_directory(captureDirectory/"entry");
-    return RunScenarioScene(window,renderer,textures,font,resources,playback,music,sounds,std::move(*owner),nullptr,
+    std::unique_ptr<SemanticState> returnedTitle;
+    const auto result=RunScenarioScene(window,renderer,textures,font,resources,playback,music,sounds,std::move(*owner),nullptr,
       usrdir,capture?captureDirectory/"entry":std::filesystem::path{},captureOpening || captureContinue>=3,false,captureContinue>=3,
       captureContinue>=3?std::optional<size_t>(captureContinue==4?149:captureContinue==5?297:size_t(title.PendingLoad->Context.ResumeCommand)):std::nullopt,{},{},captureContinue>=3,false,
-      capture?(captureScenarioMenu?19:captureContinue>=3?0:captureOpening?18:17):0,{},progressRoot,&session.Slots,title.PendingLoad.get(),captureContinue>=4?captureContinue-3:0);
+      capture?(captureScenarioMenu==2?20:captureScenarioMenu?19:captureContinue>=3?0:captureOpening?18:17):0,{},progressRoot,&session.Slots,title.PendingLoad.get(),captureContinue>=4?captureContinue-3:0,&returnedTitle);
+    if(!returnedTitle)return result;
+    if(captureScenarioMenu==2)returnedSystemExpected=SnapshotSystemOwner(*returnedTitle,
+      RestoreSystemReadHistory(*returnedTitle->SystemProgress)).Encode();
+    *owner=std::move(*returnedTitle);++titleVisits;
+    if(capture){captureDirectory/="returned-title";std::filesystem::create_directories(captureDirectory);}
+    }
   }catch(const std::exception& error){
     if(created){std::ofstream out(captureDirectory/"error.txt");out<<std::string(error.what()).substr(0,2048)<<'\n';}
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano title: %s",error.what());return 1;

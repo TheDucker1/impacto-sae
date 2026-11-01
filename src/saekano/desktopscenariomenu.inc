@@ -9,6 +9,14 @@ OptionsPageInput scenarioOptionsInput;
 DialogInput scenarioModalInput;
 std::array<bool,2> modalVertical{},modalHorizontal{};
 bool requestSystemMenu=false;
+bool returningTitle=false;
+TitleTween titleReturnFade;
+const auto beginReturnTitle=[&](uint64_t now,bool alreadyOpaque=false) {
+  if(returningTitle)return;
+  returningTitle=true;
+  titleReturnFade.Configure(alreadyOpaque?255:1,255,
+      alreadyOpaque?1:backend.GlobalUiSettings->FadeDuration,true,now);
+};
 int32_t previousMenuAction=0;
 const auto scenarioRepeat=AudioEnvironment::Decode(SceneRead(root/"env/env_game_utility.dat")).OpaqueTable;
 const auto optionByte=[&](size_t index) {
@@ -25,7 +33,7 @@ scenarioUiAudio.BindVoiceAttenuation(scenarioAttenuation,scenarioAudioClock);
 const SavePreviewFormatter scenarioSaveFormatter{format,font.Cached(),metrics,
     uint32_t(utility.Size),font.NominalSize(),SavePreviewSettings::FromSlotEnvironment(
       SlotEnvironment::Decode(SceneRead(root/"env/env_saveload.dat")))};
-const auto modalOwned=[&]{return bool(systemMenu || scenarioSlots || scenarioOptions);};
+const auto modalOwned=[&]{return bool(systemMenu || scenarioSlots || scenarioOptions || returningTitle);};
 const auto openSystemMenu=[&] {
   if(!slotProgress || progressRoot.empty())throw UnsupportedCommand("scenario menu needs a writable session owner");
   systemMenu=std::make_unique<PcSystemMenuOwner>(vm->State(),resources,renderer,
@@ -128,7 +136,7 @@ const auto updateScenarioModal=[&](uint64_t now) {
           scenarioAudioClock,[&](uint8_t mode){scenarioMenuVoices.Load(mode);},
           [&](uint32_t id){sessionTrophies.insert(int32_t(id));},now);
       else if(action==4)throw UnsupportedCommand("scenario backlog screen is not yet bound");
-      else if(action==5)throw UnsupportedCommand("scenario return-to-title construction is not yet bound");
+      else if(action==5)beginReturnTitle(now);
       else {previousMenuAction=0;sceneInput.CancelPointer();}
       return;
     }
@@ -154,6 +162,15 @@ const auto updateScenarioModal=[&](uint64_t now) {
       openSystemMenu();return;
     }
   }
+  if(returningTitle) {
+    titleReturnFade.Tick(now);
+    if(titleReturnFade.Finished()) {
+      if(!transfer)throw FormatError("return to title has no outer scene owner");
+      vm->State().SystemProgress=SnapshotSystemOwner(vm->State(),registeredHistory);
+      transfer->Owner=std::make_unique<SemanticState>(std::move(vm->State()));
+      transfer->Title=true;quit=true;return;
+    }
+  }
   scenarioAttenuation.Update(now);
   playback.Update(float(now-previous)/1000);previous=now;
   if(capture){std::array<int16_t,1536> samples{};playback.Render(samples);}
@@ -164,6 +181,11 @@ const auto updateScenarioModal=[&](uint64_t now) {
   glViewport(viewport[0],viewport[1],viewport[2],viewport[3]);sceneThumbnail.Present(viewport);
   if(systemMenu)systemMenu->Draw(vm->State().ChapterId,vm->State().Titles.empty()?u"":vm->State().Titles[0]);
   if(scenarioSlots)scenarioSlots->Draw();if(scenarioOptions)scenarioOptions->Draw();
+  if(returningTitle) {
+    UiRenderCommand fade;fade.Kind=UiRenderKind::Rectangle;fade.Rectangle={0,0,960,544};
+    fade.Color={0,0,0,uint8_t(titleReturnFade.Value.Current)};
+    renderer.Execute(std::span<const UiRenderCommand>(&fade,1));
+  }
   SdlCheck(SDL_GL_SwapWindow(window.Window),"scenario modal swap");
 };
 
@@ -187,7 +209,11 @@ const auto captureScenarioMenuInput=[&](uint64_t now) {
       if(backend.CursorVisible() && sceneThumbnail.Ready())key(SDLK_ESCAPE,1);
       break;
     case 1:
-      if(systemMenu && systemMenu->Phase()==5)key(SDLK_RETURN,2);
+      if(systemMenu && systemMenu->Phase()==5) {
+        if(captureMenuInput==20) {
+          if(systemMenu->Selected()!=4)key(SDLK_DOWN,1);else key(SDLK_RETURN,20);
+        }else key(SDLK_RETURN,2);
+      }
       break;
     case 2:
       if(scenarioSlots && scenarioSlots->State.Phase==4)key(SDLK_RETURN,3);
@@ -236,6 +262,15 @@ const auto captureScenarioMenuInput=[&](uint64_t now) {
     case 9:
       if(scenarioSlots && scenarioSlots->State.OperationPhase==3 &&
           scenarioSlots->Question().Visible && scenarioSlots->Question().Phase==3)key(SDLK_RETURN,10);
+      break;
+    case 20:
+      if(systemMenu && systemMenu->Question().Visible && systemMenu->Question().Phase==3) {
+        if(systemMenu->Question().Selected!=1)key(SDLK_RIGHT,20);else key(SDLK_RETURN,21);
+      }
+      break;
+    case 21:
+      if(systemMenu && systemMenu->Question().Visible && systemMenu->Question().Phase==3 &&
+          systemMenu->Question().ButtonCount==3)key(SDLK_RETURN,22); // Return without a system write.
       break;
   }
 };

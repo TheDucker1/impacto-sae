@@ -348,6 +348,7 @@ int main(int argc, char* argv[]) {
     if(argc==5 && std::string_view(argv[3])=="--capture-options-no-save")return Saekano::RunTitleScene(argv[2],{},argv[4],false,false,0,3);
     if(argc==5 && std::string_view(argv[3])=="--capture-opening")return Saekano::RunTitleScene(argv[2],{},argv[4],false,true);
     if(argc==5 && std::string_view(argv[3])=="--capture-menu-save-load")return Saekano::RunTitleScene(argv[2],{},argv[4],false,false,0,0,0,true);
+    if(argc==5 && std::string_view(argv[3])=="--capture-return-title")return Saekano::RunTitleScene(argv[2],{},argv[4],false,false,0,0,0,2);
     if(argc==5 && std::string_view(argv[3])=="--capture-title-movie")return Saekano::RunTitleScene(argv[2],{},argv[4],false,false,true);
     if(argc==5 && std::string_view(argv[3])=="--capture-title-movie-eof")return Saekano::RunTitleScene(argv[2],{},argv[4],false,false,2);
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Usage: --saekano-play USRDIR [--save-dir DIRECTORY | --capture-title DIRECTORY | --capture-title-pointer DIRECTORY | --capture-opening DIRECTORY | --capture-title-movie DIRECTORY]");return 1;

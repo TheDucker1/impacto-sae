@@ -40,6 +40,7 @@ class PcSystemMenuOwner final : public SystemMenuServices {
   int32_t Update(SystemMenuInput input){return menu_.Update(input,Now);}
   int32_t Phase()const{return menu_.Phase();}
   int32_t Selected()const{return menu_.Selected();}
+  const DialogState& Question()const{return question_;}
   void Draw(int32_t chapterId,const std::u16string& chapterText) {
     auto& renderer=shared_.Renderer;
     glUseProgram(renderer.Program);glBindVertexArray(renderer.Vao);glBindBuffer(GL_ARRAY_BUFFER,renderer.Buffer);
