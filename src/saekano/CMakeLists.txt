@@ -68,7 +68,7 @@ add_executable(saekano_ordinary_choice_probe ../../tools/saekano/ordinary_choice
 target_link_libraries(saekano_ordinary_choice_probe PRIVATE saekano_core)
 target_sources(saekano_core PRIVATE title.cpp)
 target_sources(saekano_core PRIVATE titlecontroller.cpp)
-target_sources(saekano_core PRIVATE extras.cpp extrasmovie.cpp extrascg.cpp extrasmusic.cpp)
+target_sources(saekano_core PRIVATE extras.cpp extrasmovie.cpp extrascg.cpp extrasmusic.cpp extrasbattle.cpp)
 target_sources(saekano_core PRIVATE titledraw.cpp)
 target_sources(saekano_core PRIVATE titleinput.cpp)
 target_sources(saekano_core PRIVATE titleeffect.cpp)

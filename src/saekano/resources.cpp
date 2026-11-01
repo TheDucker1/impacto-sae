@@ -83,7 +83,7 @@ Bytes InflateGzip(std::span<const uint8_t> input, size_t outputLimit) {
 }
 
 struct GameResources::FrontendAssets {
-  std::optional<GpdaArchive> TitleUi,SystemUi,SystemVoices,MovieThumbnails,CgThumbnails,CgCatalogue,BattleReplayScripts;
+  std::optional<GpdaArchive> TitleUi,SystemUi,SystemVoices,MovieThumbnails,CgThumbnails,CgCatalogue,BattleReplayScripts,BattleThumbnails;
 };
 GameResources::GameResources(Bytes resourceDat)
     : GameResources(GpdaArchive(std::move(resourceDat))) {}
@@ -107,6 +107,7 @@ GameResources::GameResources(const GpdaArchive& root)
     if(extras.Entries().size()>2){
       const GpdaArchive battle(RawEntry(extras,2));
       if(!battle.Entries().empty())frontend->BattleReplayScripts.emplace(RawEntry(battle,0));
+      if(battle.Entries().size()>1)frontend->BattleThumbnails.emplace(RawEntry(battle,1));
     }
   }
   if(root.Entries().size()>15)frontend->TitleUi.emplace(ResourceSection(root,15));
@@ -154,6 +155,7 @@ size_t GameResources::TitleTextureCount()const{return frontend_->TitleUi?fronten
 size_t GameResources::SystemTextureCount()const{return frontend_->SystemUi?frontend_->SystemUi->Entries().size():0;}
 size_t GameResources::ExtrasMovieThumbnailCount()const{return frontend_->MovieThumbnails?frontend_->MovieThumbnails->Entries().size():0;}
 size_t GameResources::ExtrasCgThumbnailCount()const{return frontend_->CgThumbnails?frontend_->CgThumbnails->Entries().size():0;}
+size_t GameResources::ExtrasBattleThumbnailCount()const{return frontend_->BattleThumbnails?frontend_->BattleThumbnails->Entries().size():0;}
 ResourceAsset GameResources::LoadExtrasCgCatalogue()const{
   if(!frontend_->CgCatalogue || frontend_->CgCatalogue->Entries().empty())throw FormatError("CG gallery catalogue is missing");
   return {frontend_->CgCatalogue->Entries()[0].Name,RawEntry(*frontend_->CgCatalogue,0)};
@@ -258,6 +260,8 @@ ProfileMenuAsset GameResources::LoadProfileTexture(ProfileTextureKey key) const 
     return load(*frontend_->MovieThumbnails);
   if(key.Section==ProfileTextureSection::ExtrasCgThumbnail && frontend_->CgThumbnails)
     return load(*frontend_->CgThumbnails);
+  if(key.Section==ProfileTextureSection::ExtrasBattleThumbnail && frontend_->BattleThumbnails)
+    return load(*frontend_->BattleThumbnails);
   throw FormatError("profile texture section is unavailable");
 }
 std::vector<ResourceAsset> GameResources::LoadApproachTextures(size_t id) const {

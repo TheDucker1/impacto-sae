@@ -41,8 +41,11 @@ struct ExtrasChildButtonHelpEnvironment {
   std::array<std::array<int32_t,4>,2> AlbumRectangles;
   std::array<std::vector<std::vector<ButtonHelpItem>>,2> AlbumRows;
   std::vector<std::vector<ButtonHelpItem>> MovieRows;
+  std::array<int32_t,4> BattleRectangle{};
+  std::vector<std::vector<ButtonHelpItem>> BattleRows;
   size_t PrefixBytes=0;
   static ExtrasChildButtonHelpEnvironment Decode(std::span<const uint8_t> bytes);
+  static ExtrasChildButtonHelpEnvironment DecodeThroughBattle(std::span<const uint8_t> bytes);
 };
 // Shared37a16/37c04 row layout/drawing. Options uses alignment5 and opacity1.
 std::vector<UiTextBlit> BuildButtonHelp(std::span<const ButtonHelpItem> items,

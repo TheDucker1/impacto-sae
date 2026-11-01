@@ -42,6 +42,12 @@ ExtrasChildButtonHelpEnvironment ExtrasChildButtonHelpEnvironment::Decode(std::s
   for(size_t i=0;i<2;++i){for(auto& v:e.AlbumRectangles[i])v=r.I32();e.AlbumRows[i]=rows();}
   e.MovieRows=rows();e.PrefixBytes=bytes.size()-r.Remaining();return e;
 }
+ExtrasChildButtonHelpEnvironment ExtrasChildButtonHelpEnvironment::DecodeThroughBattle(std::span<const uint8_t> bytes){
+  auto e=Decode(bytes);PayloadReader r(bytes.subspan(e.PrefixBytes));
+  for(auto& v:e.BattleRectangle)v=r.I32();
+  e.BattleRows=Table(r,4,[&]{return Table(r,8,[&]{ButtonHelpItem v;v.Key=r.I32();v.Text=r.String();return v;});});
+  e.PrefixBytes=bytes.size()-r.Remaining();return e;
+}
 ButtonHelpStyle ButtonHelpStyle::Decode(std::span<const uint8_t> bytes){
   PayloadReader r(bytes);for(size_t i=0;i<3;++i)r.U8();
   const auto words=[&](uint32_t n){r.CheckCount(n,4);for(uint32_t i=0;i<n;++i)r.U32();};

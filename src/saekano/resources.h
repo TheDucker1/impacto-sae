@@ -105,6 +105,7 @@ class GameResources final : public ScriptSource {
   size_t SystemTextureCount() const;
   size_t ExtrasMovieThumbnailCount() const;
   size_t ExtrasCgThumbnailCount() const;
+  size_t ExtrasBattleThumbnailCount() const;
   ResourceAsset LoadExtrasCgCatalogue() const;
   ResourceAsset LoadExtrasBattleScripts() const;
   size_t SystemVoiceBankCount() const;

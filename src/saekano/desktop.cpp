@@ -29,6 +29,7 @@
 #include "extrasmovie.h"
 #include "extrascg.h"
 #include "extrasmusic.h"
+#include "extrasbattle.h"
 #include "scenemessage.h"
 #include "messagedraw.h"
 #include "battledialogue.h"
@@ -3134,6 +3135,7 @@ int RunScenarioScene(ViewerWindow& window,UiBlitRenderer& renderer,
     }
   }
 }
+#include "desktopextrasbattle.inc"
 }  // namespace
 
 int RunSceneSdkUiProbe(const std::filesystem::path& usrdir,
