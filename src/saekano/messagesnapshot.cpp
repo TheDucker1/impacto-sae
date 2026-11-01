@@ -23,6 +23,9 @@ std::array<size_t, 4> Fields(const NativeContextSave& saved) {
   return result;
 }
 }  // namespace
+MessageSnapshotCursors FreshMessageSnapshotCursors() {
+  return {{-1, -1}, {-1, -1}};
+}
 MessageSnapshotCursors RestoreMessageSnapshotCursors(const NativeContextSave& saved) {
   const auto fields = Fields(saved);
   MessageSnapshotCursors result;

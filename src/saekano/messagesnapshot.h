@@ -12,6 +12,9 @@ struct NativeContextSave;
 struct MessageSnapshotCursors {
   std::array<std::optional<int32_t>, 2> SpeakerIds{}, Commands{};
 };
+// Native reset writes all four fields to-1. Apply only on manager replacement,
+// never to fill metadata omitted by a portable restore.
+MessageSnapshotCursors FreshMessageSnapshotCursors();
 MessageSnapshotCursors RestoreMessageSnapshotCursors(const NativeContextSave& saved);
 void ProjectMessageSnapshotCursors(NativeContextSave& saved,
                                    const MessageSnapshotCursors& cursors);

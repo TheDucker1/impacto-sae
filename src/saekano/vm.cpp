@@ -292,6 +292,7 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     state_.DayEnabled = 0;
     const auto keywordSuppressed = messageContext_.KeywordSuppressed;
     messageContext_ = {};
+    messageContext_.SnapshotCursors = FreshMessageSnapshotCursors();
     messageContext_.KeywordSuppressed = keywordSuppressed;  // owner S survives
     dispatcher_ = {};
     // Native payload loading has context writes before any command Start.
