@@ -219,8 +219,12 @@ OrdinaryMessageEnvironment OrdinaryMessageEnvironment::Decode(
   result.AutoRotationDuration = reader.I32();
   if (result.AutoRotationDuration < 0)
     throw FormatError("negative ordinary auto rotation duration");
-  for (size_t i = 0; i < 3; ++i) UiSpriteDefinition::ReadLegacy(reader);
-  for (size_t i = 0; i < 6; ++i) reader.U32();
+  result.MenuHint = UiSpriteDefinition::ReadLegacy(reader);
+  for (auto& sprite : result.MenuSprites)
+    sprite = UiSpriteDefinition::ReadLegacy(reader);
+  for (auto& value : result.MenuHitRegion) value = reader.I32();
+  reader.U32();
+  reader.U32();
   const auto count = reader.U32();
   reader.CheckCount(count, 4);
   for (uint32_t i = 0; i < count; ++i) reader.U32();

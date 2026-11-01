@@ -130,6 +130,9 @@ struct OrdinaryMessageEnvironment {
   std::array<UiSpriteDefinition, 2> Cursors;
   std::array<UiSpriteDefinition, 9> Auxiliary;
   int32_t AutoRotationDuration = 0;
+  UiSpriteDefinition MenuHint;
+  std::array<UiSpriteDefinition, 2> MenuSprites;
+  std::array<int32_t, 4> MenuHitRegion{};
   int32_t WindowTravel = 0, TextWidth = 0;
   std::array<int32_t, 2> TextPosition{};
   size_t PrefixBytes = 0;

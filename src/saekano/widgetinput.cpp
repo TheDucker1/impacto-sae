@@ -198,9 +198,13 @@ std::array<float, 2> WidgetInputHistory::Velocity(uint32_t channel) const {
 }
 OrdinaryWidgetInput::OrdinaryWidgetInput(
     const OrdinaryMessageEnvironment& environment, uint32_t holdFrames)
-    : environment_(environment) {
+    : environment_(environment),
+      menuComponents_{WidgetEventHistory(holdFrames),
+                      WidgetEventHistory(holdFrames),
+                      WidgetEventHistory(holdFrames)} {
   components_.reserve(10);
   for (size_t i = 0; i < 10; ++i) components_.emplace_back(holdFrames);
+  menuComponents_[0].Enabled = menuComponents_[1].Enabled = false;
 }
 void OrdinaryWidgetInput::BeginFrame(WidgetInputHistory::Snapshot snapshot) {
   input_.BeginFrame(std::move(snapshot));
@@ -228,10 +232,32 @@ void OrdinaryWidgetInput::UpdateButtons(std::array<int32_t, 2> offset) {
                                                uint32_t(offset[axis]));
     UpdateComponent(i + 1, rectangle);
   }
+  // Native74d3e collects this separate widget after skip/auto, at offset0,0.
+  // Disabled sprite query gates do not suppress their input publications.
+  for (size_t i = 0; i < menuComponents_.size(); ++i) {
+    auto& component = menuComponents_[i];
+    const auto rectangle = i < 2
+        ? ResolveUiSprite({ProfileTextureSection::MainUi, -1, 7},
+                          environment_.MenuSprites[i]).Destination
+        : environment_.MenuHitRegion;
+    component.Update(SampleWidgetContact(rectangle, input_.Current[0],
+        input_.Previous[0], component.TrackedId, input_.Velocity(0)));
+    input_.Publish(component.Flags);
+  }
+}
+bool OrdinaryWidgetInput::MenuReleased() const {
+  for (const auto& component : menuComponents_)
+    if (component.Enabled && (component.Flags & uint16_t(WidgetQuery::Released)))
+      return true;
+  return false;
 }
 void OrdinaryWidgetInput::CancelPointer() {
   input_.Current = input_.Previous = {};
   for (auto& component : components_) {
+    component.TrackedId = -1;
+    component.Flags = 0;
+  }
+  for (auto& component : menuComponents_) {
     component.TrackedId = -1;
     component.Flags = 0;
   }

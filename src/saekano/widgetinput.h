@@ -84,7 +84,7 @@ struct WidgetInputHistory {
   void Publish(uint16_t widgetFlags);
   std::array<float, 2> Velocity(uint32_t channel) const;
 };
-// Fresh ordinary manager's ten input components in native factory order.
+// Ordinary manager's primary/skip/auto components and separate menu widget.
 class OrdinaryWidgetInput {
  public:
   OrdinaryWidgetInput(const OrdinaryMessageEnvironment& environment,
@@ -96,6 +96,7 @@ class OrdinaryWidgetInput {
                          // activation.
   bool Query(uint32_t widget, WidgetQuery query, bool condition0 = false,
               bool condition1 = false) const;
+  bool MenuReleased() const;
   const WidgetInputHistory& Input() const { return input_; }
   const std::vector<WidgetEventHistory>& Components() const {
     return components_;
@@ -106,5 +107,7 @@ class OrdinaryWidgetInput {
   OrdinaryMessageEnvironment environment_;
   WidgetInputHistory input_;
   std::vector<WidgetEventHistory> components_;
+  // Native M150a0: two decorative sprites, then the enabled hit rectangle.
+  std::array<WidgetEventHistory, 3> menuComponents_;
 };
 }  // namespace Impacto::Saekano

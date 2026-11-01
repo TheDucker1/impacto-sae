@@ -2405,6 +2405,15 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
         {(*state.Quake[2])[0],
          std::bit_cast<int32_t>(uint32_t(slide) +
                                 uint32_t((*state.Quake[2])[1]))});
+    // Wrapper3024e consumes the separate widget after the manager update.
+    if (!quit && !replayScript && !endingState.Started && !vm->CurrentProfile() &&
+        !state.OrdinaryChoice.Visible && sceneThumbnail.Ready() &&
+        ShouldEnterScenarioMenu({state.ExitRequested != 0, state.BattleEntry.Enabled,
+            state.ApproachMode.Enabled.value_or(false), backend.CursorVisible(),
+            state.ScenarioMenuBlocked, false, sceneInput.MenuReleased()})) {
+      enterSystemMenu();
+      continue;
+    }
     autoRotation.Update(now);
     int width = 0, height = 0;
     SdlCheck(SDL_GetWindowSizeInPixels(window.Window, &width, &height),
@@ -2694,6 +2703,19 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       }
       const auto banner=BuildChapterTitleBanner(chapterVisual,state.ChapterId);
       uploadMain(banner.Texture.Entry);drawSprite(banner);spriteDraws.push_back(banner);
+    }
+    if (!vm->MovieActive() && !state.TitleDisplay.value_or(false) &&
+        !state.BattleEntry.Enabled && !approach) {
+      // HUD766b4..767d2: authored MainUi7 hint and the separate menu widget.
+      uploadMain(7);
+      auto sprite = ResolveUiSprite({ProfileTextureSection::MainUi, -1, 7},
+                                    visual.Window.MenuHint);
+      drawSprite(sprite);spriteDraws.push_back(sprite);
+      for (auto definition : visual.Window.MenuSprites) {
+        definition.Color = {255, 255, 255, 255};
+        sprite = ResolveUiSprite({ProfileTextureSection::MainUi, -1, 7}, definition);
+        drawSprite(sprite);spriteDraws.push_back(sprite);
+      }
     }
     if(approach) {
       if(!state.ApproachMode.Id || !state.Approach.Known)
