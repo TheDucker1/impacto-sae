@@ -163,6 +163,12 @@ void VirtualMachine::Load(bool preserveOwnerState) {
       command.RuleWipe = RuleWipeCommand::Decode(script_->Payload(i));
     } else if (opcode == 0x190) {
       command.Quake = QuakeCommand::Decode(script_->Payload(i));
+    } else if(opcode==0x1c3) {
+      command.Particle=ScriptParticleCommand::Decode(script_->Payload(i));
+      command.Routing={command.Particle->Route!=0,command.Particle->Lane};
+      if(command.Routing.QueueForLane && command.Routing.Lane>=5)throw FormatError("particle lane exceeds engine lane count");
+    } else if(opcode==0x1c4) {
+      command.ClearParticle=ClearScriptParticleCommand::Decode(script_->Payload(i));
     } else if (opcode == 0xcb) {
       command.DrawImage = DrawImageCommand::Decode(script_->Payload(i));
       command.Routing = {command.DrawImage->Route != 0, command.DrawImage->Lane};
@@ -327,6 +333,7 @@ void VirtualMachine::Load(bool preserveOwnerState) {
   // Native LoadScriptInit prepares/reseeds the particle manager. A bound
   // frontend must distinguish fresh manager replacement from restored state.
   backend_.ResetParticles(preserveOwnerState);
+  for(auto& opacity:state_.ScriptParticleOpacity)opacity.Start(100,100,0,0);
   if(auto* audio=backend_.MissionVoices()) {
     audio->Reset();audio->Register(CollectScriptVoiceIds(*script_));
   }
@@ -624,6 +631,14 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
     StartRuleWipe(state_, command.WipeAnimation, *command.RuleWipe, *images, now);
   } else if (opcode == 0x190 && !lane) {
     StartQuake(state_, command.QuakeRuntime, *command.Quake, now);
+  } else if(opcode==0x1c3) {
+    if(!lane && !command.Routing.QueueForLane) {
+      auto* host=backend_.ScriptParticles();if(!host)throw UnsupportedCommand("script particle services are unavailable");
+      StartScriptParticle(state_,*command.Particle,*host,true,now);
+    }
+  } else if(opcode==0x1c4 && !lane) {
+    auto* host=backend_.ScriptParticles();if(!host)throw UnsupportedCommand("script particle services are unavailable");
+    StartClearScriptParticle(state_,*command.ClearParticle,*host,now);
   } else if (opcode == 0x258 && !lane) {
     auto* music = backend_.Music();
     if (!music) throw UnsupportedCommand("original BGM resource backend is unavailable");
@@ -834,6 +849,19 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
     if (lane) return true;
     return UpdateQuake(state_, command.QuakeRuntime, *command.Quake,
                        input.Route == UpdateRoute::Skipping, now);
+  }
+  if(opcode==0x1c3) {
+    if(lane) {
+      auto* host=backend_.ScriptParticles();if(!host)throw UnsupportedCommand("script particle services are unavailable");
+      StartScriptParticle(state_,*command.Particle,*host,false,now);
+    }
+    return true;
+  }
+  if(opcode==0x1c4) {
+    if(lane)return true;
+    auto* host=backend_.ScriptParticles();if(!host)throw UnsupportedCommand("script particle services are unavailable");
+    // Normal and skip both retain the native opacity/deadline wait.
+    return UpdateClearScriptParticle(state_,*command.ClearParticle,*host,now);
   }
   if (opcode == 0x3f5) {
     if (lane) return true;

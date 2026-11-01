@@ -273,9 +273,11 @@ std::vector<NativeSavedParticleRequest> BuildNativeSlotParticleRequests(
         {std::bit_cast<int32_t>(row[2]), std::bit_cast<int32_t>(row[3])},
         camera, scale);
     request.Group = uint32_t(group);
-    // The native owner uses B,G,R,A float slots; the wire word is AARRGGBB.
+    // FixedRecords preserves raw RGBA bytes (word AABBGGRR). Request float
+    // slots are B,G,R,A; ordinary command payloads use the other packed order.
+    constexpr std::array<size_t,4> shifts{16,8,0,24};
     for (size_t c = 0; c < 4; ++c)
-      request.Owner[10 + c] = float(uint8_t(row[4] >> (8 * c))) / 255.0f;
+      request.Owner[10 + c] = float(uint8_t(row[4] >> shifts[c])) / 255.0f;
     result.push_back({i, size_t(effect), request, prewarm});
   }
   return result;

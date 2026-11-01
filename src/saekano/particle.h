@@ -330,6 +330,7 @@ class ParticleManager {
   // Prewarm advances the entire manager in16ms steps, not only the new handle.
   bool Request(size_t effectId, const ParticleEffectRequest& request, int32_t prewarmMilliseconds = 0);
   void Update();  // Simulation only; GPU preparation remains a separate consumer.
+  void ClearGroup(size_t group); // Native9742 -> a4a24; preserve bound resources/repeat counters.
   void SetPaused(size_t group, bool paused);
   void SetOriginOffset(size_t group, const std::array<float, 2>& offset);
   const GroupHandles& Handles(size_t group) const;
@@ -354,4 +355,30 @@ class ParticleManager {
   ParticleRandomState random_;
   ParticleGroupClock clock_;
 };
+
+struct SemanticState;
+struct ScriptParticleCommand {
+  uint32_t Route=0,Target=0,Lane=0;
+  int32_t Group=0,Effect=0,Character=-1,X=0,Y=0,Persistent=0,Scale=100;
+  uint32_t Color=0xffffffff;
+  static ScriptParticleCommand Decode(std::span<const uint8_t> payload);
+};
+struct ClearScriptParticleCommand {
+  int32_t Group=0,Duration=0;
+  static ClearScriptParticleCommand Decode(std::span<const uint8_t> payload);
+};
+// Actual services borrowed by the command owner, not a second particle manager.
+struct ScriptParticleHost {
+  ParticleManager& Manager;
+  const GameResources& Resources;
+  const ParticleEnvironment& Environment;
+  const SceneCameraParameters& Camera;
+  uint32_t Groups;
+};
+void StartScriptParticle(SemanticState& state,const ScriptParticleCommand& command,
+                         ScriptParticleHost& host,bool retain,uint64_t now);
+void StartClearScriptParticle(SemanticState& state,const ClearScriptParticleCommand& command,
+                              ScriptParticleHost& host,uint64_t now);
+bool UpdateClearScriptParticle(SemanticState& state,const ClearScriptParticleCommand& command,
+                               ScriptParticleHost& host,uint64_t now);
 }  // namespace Impacto::Saekano

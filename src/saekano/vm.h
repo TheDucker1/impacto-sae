@@ -46,6 +46,7 @@ class VmBackend {
     throw UnsupportedCommand("backend does not restore saved particle descriptors");
   }
   virtual bool StartParticleEffect(const GameEvent&) { return false; }
+  virtual ScriptParticleHost* ScriptParticles() { return nullptr; }
   virtual void SetSplitDialogue(bool) {}
   virtual void SetMessageDualCleanup(bool) {}
   virtual void ClearMessage(size_t) {}
@@ -212,6 +213,8 @@ class VirtualMachine {
     std::optional<RuleWipeCommand> RuleWipe;
     RuleWipeAnimation WipeAnimation;
     std::optional<QuakeCommand> Quake;
+    std::optional<ScriptParticleCommand> Particle;
+    std::optional<ClearScriptParticleCommand> ClearParticle;
     QuakeAnimation QuakeRuntime;
     std::optional<ScreenFadeCommand> ScreenFade;
     ScreenFadeAnimation FadeAnimation;

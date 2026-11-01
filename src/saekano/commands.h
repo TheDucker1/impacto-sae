@@ -28,6 +28,7 @@
 #include "battleversus.h"
 #include "battleselection.h"
 #include "battleresult.h"
+#include "particle.h"
 
 #include <array>
 #include <map>
@@ -49,6 +50,7 @@ struct GameEvent {
 struct SemanticState {
   BacklogHistory Backlog;  // Shared session owner; survives manager/file replacement.
   ContextSnapshotMetadata SnapshotMetadata;
+  std::array<ScriptLinearTween,ParticleManager::GroupCount> ScriptParticleOpacity;
   std::optional<NativeWorkingRecord> WorkingSave;  // Session S5e814; absent in portable inputs.
   // Complete raw persistent owner retains all nine history groups, slot metadata,
   // unknown options/words. Typed gameplay consumers below overlay their fields.

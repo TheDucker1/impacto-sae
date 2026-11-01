@@ -1159,6 +1159,12 @@ void ParticleManager::SetPaused(size_t group, bool paused) {
   if (group >= GroupCount) throw FormatError("particle pause group outside manager");
   clock_.Paused[group] = paused;
 }
+void ParticleManager::ClearGroup(size_t group) {
+  for(auto& handle:groups_.at(group)) {
+    handle.State.Rows.clear();
+    handle.State.Enabled=handle.State.Running=handle.State.Emitting=false;
+  }
+}
 void ParticleManager::SetOriginOffset(size_t group, const std::array<float, 2>& offset) {
   if (group >= GroupCount) throw FormatError("particle origin group outside manager");
   origins_[group] = offset;
@@ -1224,5 +1230,70 @@ std::vector<ParticleDrawCommand> ParticleManager::BuildDrawCommands(size_t group
     for (const auto candidate : batch.Candidates) append(sources[candidate], true);
   for (const auto& source : CollectDrawSources(group, false)) append(source, false);
   return result;
+}
+ScriptParticleCommand ScriptParticleCommand::Decode(std::span<const uint8_t> payload) {
+  PayloadReader reader(payload);ScriptParticleCommand command;
+  command.Route=reader.U32();command.Target=reader.U32();command.Group=reader.I32();command.Effect=reader.I32();
+  if(command.Target==1)command.Character=reader.I32();
+  command.X=reader.I32();command.Y=reader.I32();command.Persistent=reader.I32();command.Scale=reader.I32();
+  command.Color=reader.U32();command.Lane=reader.U32();return command;
+}
+ClearScriptParticleCommand ClearScriptParticleCommand::Decode(std::span<const uint8_t> payload) {
+  PayloadReader reader(payload);return {reader.I32(),reader.I32()};
+}
+namespace {
+size_t ScriptParticleGroup(int32_t group,const ScriptParticleHost& host) {
+  if(host.Groups>ParticleManager::GroupCount || group<0 || uint32_t(group)>=host.Groups)
+    throw FormatError("script particle group outside authored manager");
+  return size_t(group);
+}
+void RetireScriptParticle(SemanticState& state,size_t group,ScriptParticleHost& host) {
+  host.Manager.ClearGroup(group);
+  if(state.SnapshotMetadata.ScriptParticles && group<state.SnapshotMetadata.ScriptParticles->size())
+    state.SnapshotMetadata.ScriptParticles->at(group)[0]=0xffffffff;
+}
+}
+void StartScriptParticle(SemanticState& state,const ScriptParticleCommand& command,
+                         ScriptParticleHost& host,bool retain,uint64_t now) {
+  const auto group=ScriptParticleGroup(command.Group,host);
+  if(command.Effect<0 || size_t(command.Effect)>=host.Environment.Effects.size())
+    throw FormatError("script particle effect outside authored environment");
+  // No authored command targets a character. Its R34c/R350 published geometry
+  // must be bound explicitly before extending this path; do not guess from tweens.
+  if(command.Target)throw UnsupportedCommand("script particle character anchor is not bound");
+  const bool persistent=retain && command.Persistent==1;
+  if(persistent && (!state.SnapshotMetadata.ScriptParticles || group>=state.SnapshotMetadata.ScriptParticles->size()))
+    throw UnsupportedCommand("script particle persistent descriptor owner is unavailable");
+  const auto scale=host.Environment.Scalar*(float(command.Scale)/100.f);
+  auto request=BuildApproachParticleRequest({command.X,command.Y},host.Camera,scale);
+  request.Group=uint32_t(group);
+  for(size_t c=0;c<4;++c)request.Owner[10+c]=float(uint8_t(command.Color>>(8*c)))/255.f;
+  host.Manager.LoadEffect(host.Resources,host.Environment,size_t(command.Effect));
+  if(!host.Manager.Request(size_t(command.Effect),request,host.Environment.Effects[size_t(command.Effect)].Parameter))
+    throw UnsupportedCommand("script particle resource was not registered");
+  if(persistent) {
+    // Runtime/context descriptor bytes are RGBA, unlike the AARRGGBB payload.
+    const auto rgba=(command.Color&0xff00ff00u)|((command.Color&255u)<<16)|((command.Color>>16)&255u);
+    state.SnapshotMetadata.ScriptParticles->at(group)={uint32_t(group),uint32_t(command.Effect),
+      uint32_t(command.X),uint32_t(command.Y),rgba,uint32_t(command.Scale)};
+  }
+  state.ScriptParticleOpacity[group].Start(100,100,0,now);
+}
+void StartClearScriptParticle(SemanticState& state,const ClearScriptParticleCommand& command,
+                              ScriptParticleHost& host,uint64_t now) {
+  const auto group=ScriptParticleGroup(command.Group,host);
+  if(command.Duration<=16) {
+    // Safe expected behavior: an immediate clear must not resurrect on Load.
+    // Native only invalidates the restart descriptor on its delayed-clear path.
+    RetireScriptParticle(state,group,host);
+  } else state.ScriptParticleOpacity[group].Start(100,0,command.Duration,now);
+}
+bool UpdateClearScriptParticle(SemanticState& state,const ClearScriptParticleCommand& command,
+                               ScriptParticleHost& host,uint64_t now) {
+  if(command.Duration<=16)return true;
+  const auto group=ScriptParticleGroup(command.Group,host);
+  auto& opacity=state.ScriptParticleOpacity[group];opacity.Tick(now);
+  if(!opacity.Finished())return false;
+  RetireScriptParticle(state,group,host);return true;
 }
 }  // namespace Impacto::Saekano

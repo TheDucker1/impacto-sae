@@ -1215,6 +1215,8 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
     particleCaptureRequested=true;
   };
   const auto opacityGroups=EndingEnvironment::Decode(SceneRead(root/"env/env_script.dat")).ParticleOpacityGroups;
+  ScriptParticleHost scriptParticles{particles,resources,particleEnvironment,particleCamera,opacityGroups};
+  backend.ScriptParticleConsumer=&scriptParticles;
   backend.ParticleRestore=[&](const NativeContextSave& saved){
     RestoreNativeSlotParticles(particles,resources,saved,particleCamera,particleEnvironment,opacityGroups);
   };
