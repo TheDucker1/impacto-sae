@@ -1,5 +1,6 @@
 #pragma once
 #include "optionsnavigation.h"
+#include <functional>
 
 namespace Impacto::Saekano {
 // Native9f8d0/9f880: one integer step per update, not a millisecond tween.
@@ -22,6 +23,14 @@ struct SlotBrowserState {
   std::array<int32_t,2> PageCounters{};
   SlotBrowserSettings Settings;
 };
+// Shared208ba..20eb6 list owner. SlotBrowser's historical name is retained for
+// existing consumers; Backlog composes the same navigator/frame channels.
+void StartListBrowser(SlotBrowserState& state,const SlotBrowserSettings& settings,
+    std::span<const int32_t> repeats,int32_t count,int32_t visible,int32_t margin,int32_t selected,uint64_t now);
+void SelectListBrowserRow(SlotBrowserState& state,int32_t selected);
+void UpdateListNavigation(SlotBrowserState& state,const OptionsNavigationInput& input,
+    const std::function<void(int32_t)>& sound);
+void PageListBrowser(SlotBrowserState& state,bool forward,const std::function<void(int32_t)>& sound);
 enum class SlotBrowserWidget { Page,Protect,Activate,Back };
 struct SlotBrowserInput { OptionsNavigationInput Vertical;bool Protect=false,Accept=false,Cancel=false; };
 struct SlotBrowserServices {

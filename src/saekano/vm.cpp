@@ -110,7 +110,7 @@ std::unique_ptr<VirtualMachine> VirtualMachine::FromNativeSlot(
   auto vm = std::unique_ptr<VirtualMachine>(new VirtualMachine(
       scripts, backend, std::move(owner), messageContext, true));
   ApplyNativeSlotWorkingOwner(vm->state_, pending);
-  vm->state_.Backlog.Clear();  // Native wrapper309a4, immediately after Load preparation.
+  if(!pending.FromBacklog)vm->state_.Backlog.Clear(); // Slot309a4 clears; rewind30b56 truncates before this call.
   vm->state_.WorkingSave = NativeWorkingRecord{pending.Record, MakeNativeWorkingContext(pending.Record)};
   QueueNativeSlotLoadStops(vm->state_);
   auto restore = std::make_unique<SlotRestore>();
@@ -480,7 +480,8 @@ void VirtualMachine::SetupMessage(size_t index, uint64_t now) {
       if(!group || *group < -1 || *group > 8)throw UnsupportedCommand("message backlog voice group is unknown");
       // Native844b6 refreshes after text setup, before copying this record.
       RefreshWorkingContext();
-      state_.Backlog.AppendMessage(state_.Messages[context],read,uint8_t(*group),CaptureWorkingRecord(),*environment);
+      state_.Backlog.AppendMessage(state_.Messages[context],read,uint8_t(*group),CaptureWorkingRecord(),*environment,
+          backend_.MessageBacklogVoice(index));
     }
   }
 }

@@ -100,6 +100,7 @@ class PlaybackOrdinaryVoice final : public OrdinaryVoiceOutput {
   PlaybackOrdinaryVoice(MusicPlayback& playback,
                         const std::filesystem::path& usrdir,
                         uint8_t volume, float coefficient);
+  void SetVolume(uint8_t volume);
   void Prepare(uint32_t channel, int16_t voiceId) override;
   void PrepareMemory(uint32_t channel, Bytes encoded) override;
   void Start(uint32_t channel) override;

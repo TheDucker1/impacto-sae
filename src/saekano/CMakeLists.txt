@@ -52,7 +52,7 @@ add_executable(saekano_save_preview_probe ../../tools/saekano/save_preview_probe
 target_link_libraries(saekano_save_preview_probe PRIVATE saekano_core)
 add_executable(saekano_save_formatter_probe ../../tools/saekano/save_formatter_probe.cpp)
 target_link_libraries(saekano_save_formatter_probe PRIVATE saekano_core)
-target_sources(saekano_core PRIVATE backlog.cpp)
+target_sources(saekano_core PRIVATE backlog.cpp backlogscreen.cpp)
 add_executable(saekano_backlog_probe ../../tools/saekano/backlog_probe.cpp)
 target_link_libraries(saekano_backlog_probe PRIVATE saekano_core)
 add_executable(saekano_slot_record_probe ../../tools/saekano/slot_record_probe.cpp)

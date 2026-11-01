@@ -39,6 +39,7 @@
 #include "optionswidgets.h"
 #include "optionsdialog.h"
 #include "systemmenu.h"
+#include "backlogscreen.h"
 #include "savepreview.h"
 #include "optionspreview.h"
 #include "buttonhelp.h"
@@ -1057,6 +1058,7 @@ struct SceneDialogLayer {
 #include "desktopoptionsowner.inc"
 #include "desktopslotowner.inc"
 #include "desktopsystemmenu.inc"
+#include "desktopbacklog.inc"
 #include "desktoptitle.inc"
 #include "desktopprofile.inc"
 
@@ -1087,7 +1089,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
   const bool capture = !captureDirectory.empty();
   PcSceneThumbnail sceneThumbnail;
   const bool captureEnding=captureMenuInput==16;
-  const bool captureScenarioMenu=captureMenuInput==19 || captureMenuInput==20;
+  const bool captureScenarioMenu=captureMenuInput>=19 && captureMenuInput<=21;
   const bool captureParticles=captureMenuInput==4;
   const bool captureChapter=captureMenuInput==7;
   const bool captureLip=captureMenuInput==9;
@@ -1472,7 +1474,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
   bool loadedMessageAdvanced=false;
   uint8_t ordinaryCaptureStage=0;
   std::optional<std::pair<int32_t,int32_t>> previousOrdinaryState;
-  const uint32_t frameBudget = (captureChapter || captureProfile)?220000:(captureParticles || captureResult)?100000:(captureFromCommand ? (captureBranch?40000:20000) : 2000);
+  const uint32_t frameBudget = (captureChapter || captureProfile)?220000:(captureParticles || captureResult)?100000:captureMenuInput==21?6000:(captureFromCommand ? (captureBranch?40000:20000) : 2000);
   for (uint32_t frame = 0; !quit && (!capture || frame < frameBudget); ++frame) {
     const uint64_t now =
         capture ? uint64_t(frame) * 16 : SDL_GetTicks() - epoch;
@@ -1500,7 +1502,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
     particleClock=now;
     messageCursor.Update(now);
     CommandInput input;
-    systemMenuInput={};scenarioSlotInput={};scenarioOptionsInput={};scenarioModalInput={};requestSystemMenu=false;
+    systemMenuInput={};scenarioSlotInput={};scenarioOptionsInput={};scenarioBacklogInput={};scenarioModalInput={};requestSystemMenu=false;
     uint32_t battleFaces=0;
     WidgetInputHistory::Snapshot pointerSnapshot;
     SkipAutoInput policyInput;
@@ -2666,7 +2668,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
     }
     if(captureRuby)signature=std::to_string(message->Command)+':'+std::to_string(message->Reveal.Revealed)+':'+
         std::to_string((now-message->Epoch)/500)+':'+std::to_string(quit);
-    if (capture && captureActive && (saved == 0 || signature != previousSignature ||
+    if (capture && captureActive && captureMenuInput!=21 && (saved == 0 || signature != previousSignature ||
                     now - lastSaved >= 1500 || quit)) {
       const auto file = "scene-" + std::to_string(saved++) + ".bmp";
       Capture(captureDirectory / file, width, height);
@@ -2695,6 +2697,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
              << ",\"completed\":" << (quit ? "true" : "false")
              << ",\"capture_confirmation_sent\":" << (confirmSent?"true":"false")
              << ",\"capture_wait_reached\":" << (targetWaitingReached?"true":"false")
+             << ",\"backlog_count\":" << state.Backlog.Count() << ",\"backlog_restore\":" << (load && load->FromBacklog)
              << ",\"mission_voice_playing\":" << (playback.MissionVoicePlaying()?"true":"false")
              << ",\"bgm\":" << state.BgmTrack.value_or(-1)
              << ",\"screen_fade\":" << state.ScreenFade.value_or(-1)
@@ -5328,7 +5331,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     const auto result=RunScenarioScene(window,renderer,textures,font,resources,playback,music,sounds,std::move(*owner),nullptr,
       usrdir,capture?captureDirectory/"entry":std::filesystem::path{},captureOpening || captureContinue>=3,false,captureContinue>=3,
       captureContinue>=3?std::optional<size_t>(captureContinue==4?149:captureContinue==5?297:size_t(title.PendingLoad->Context.ResumeCommand)):std::nullopt,{},{},captureContinue>=3,false,
-      capture?(captureScenarioMenu==2?20:captureScenarioMenu?19:captureContinue>=3?0:captureOpening?18:17):0,{},progressRoot,&session.Slots,title.PendingLoad.get(),captureContinue>=4?captureContinue-3:0,&returnedTitle);
+      capture?(captureScenarioMenu==3?21:captureScenarioMenu==2?20:captureScenarioMenu?19:captureContinue>=3?0:captureOpening?18:17):0,{},progressRoot,&session.Slots,title.PendingLoad.get(),captureContinue>=4?captureContinue-3:0,&returnedTitle);
     if(!returnedTitle)return result;
     if(captureScenarioMenu==2)returnedSystemExpected=SnapshotSystemOwner(*returnedTitle,
       RestoreSystemReadHistory(*returnedTitle->SystemProgress)).Encode();

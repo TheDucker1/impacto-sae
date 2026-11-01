@@ -6,12 +6,8 @@
 #include <algorithm>
 
 namespace Impacto::Saekano {
-std::unique_ptr<NativePendingSlotLoad> StageNativeSlotLoad(
-    const NativeSlotData& slots, size_t ordinal) {
-  if (slots.Records.size() != NativeSlotData::SlotCount || ordinal >= slots.Records.size())
-    throw FormatError("invalid native load slot selection");
-  const auto& source = slots.Records[ordinal];
-  if (!source.Bytes2b6[2]) throw FormatError("cannot load an empty native slot");
+namespace {
+std::unique_ptr<NativePendingSlotLoad> StageRecord(const NativeSlotRecord& source,size_t ordinal) {
   auto pending = std::make_unique<NativePendingSlotLoad>();
   pending->Ordinal = ordinal;
   pending->Record = source;
@@ -25,10 +21,21 @@ std::unique_ptr<NativePendingSlotLoad> StageNativeSlotLoad(
     throw FormatError("native slot header disagrees with saved context");
   return pending;
 }
+}
+std::unique_ptr<NativePendingSlotLoad> StageNativeSlotLoad(const NativeSlotData& slots,size_t ordinal) {
+  if(slots.Records.size()!=NativeSlotData::SlotCount || ordinal>=slots.Records.size())
+    throw FormatError("invalid native load slot selection");
+  if(!slots.Records[ordinal].Bytes2b6[2])throw FormatError("cannot load an empty native slot");
+  return StageRecord(slots.Records[ordinal],ordinal);
+}
+std::unique_ptr<NativePendingSlotLoad> StageNativeBacklogLoad(BacklogHistory& history,size_t ordinal) {
+  auto pending=StageRecord(history.At(ordinal).Record,ordinal);
+  pending->FromBacklog=true;history.Truncate(ordinal);return pending;
+}
 void ApplyNativeSlotWorkingOwner(SemanticState& owner,
                                  const NativePendingSlotLoad& pending) {
   const auto& saved = pending.Record;
-  if (!saved.Bytes2b6[2] || saved.Bytes2b6[1])
+  if ((!pending.FromBacklog && !saved.Bytes2b6[2]) || saved.Bytes2b6[1])
     throw FormatError("native pending load record is not staged");
   auto next = std::make_unique<SemanticState>(owner);
   TitleSessionFields session;

@@ -1,10 +1,15 @@
 #include "optionsnavigation.h"
 #include "optionsrepeat.h"
 #include "commands.h"
+#include <algorithm>
 namespace Impacto::Saekano {
 namespace {
 void Check(const OptionsRowNavigation& n){
-  if(n.Minimum!=0 || n.Maximum<0 || n.Maximum>1000000 || n.Selected<0 || n.Selected>n.Maximum || n.Scroll<0 || n.Scroll>n.Maximum || n.Visible<=0 || n.Visible>n.Maximum+1 || n.Margin<0 || n.Margin>=n.Visible)throw FormatError("invalid Options vertical navigator");
+  // Backlog restores its authored three-row viewport after selecting within a
+  // shorter initial count; blank leading rows can give it a negative scroll.
+  if(n.Minimum!=0 || n.Maximum<0 || n.Maximum>1000000 || n.Selected<0 || n.Selected>n.Maximum || n.Visible<=0 || n.Visible>1000001 ||
+      n.Scroll<std::min(0,n.Maximum-n.Visible+1) || n.Scroll>n.Maximum || n.Margin<0 || n.Margin>=n.Visible)
+    throw FormatError("invalid Options vertical navigator");
 }
 }
 void StartOptionsNavigation(OptionsNavigationState& s,OptionsRowNavigation& n,uint32_t count,uint32_t visible,uint32_t margin,std::span<const int32_t> repeats,bool continuous){

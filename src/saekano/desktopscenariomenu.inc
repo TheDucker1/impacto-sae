@@ -3,12 +3,15 @@
 std::unique_ptr<PcSystemMenuOwner> systemMenu;
 std::unique_ptr<PcSlotOwner> scenarioSlots;
 std::unique_ptr<PcOptionsOwner> scenarioOptions;
+std::unique_ptr<PcBacklogOwner> scenarioBacklog;
 SystemMenuInput systemMenuInput;
 SlotBrowserInput scenarioSlotInput;
 OptionsPageInput scenarioOptionsInput;
+BacklogInput scenarioBacklogInput;
 DialogInput scenarioModalInput;
 std::array<bool,2> modalVertical{},modalHorizontal{};
 bool requestSystemMenu=false;
+bool captureBacklogImage=false;
 bool returningTitle=false;
 TitleTween titleReturnFade;
 const auto beginReturnTitle=[&](uint64_t now,bool alreadyOpaque=false) {
@@ -33,7 +36,7 @@ scenarioUiAudio.BindVoiceAttenuation(scenarioAttenuation,scenarioAudioClock);
 const SavePreviewFormatter scenarioSaveFormatter{format,font.Cached(),metrics,
     uint32_t(utility.Size),font.NominalSize(),SavePreviewSettings::FromSlotEnvironment(
       SlotEnvironment::Decode(SceneRead(root/"env/env_saveload.dat")))};
-const auto modalOwned=[&]{return bool(systemMenu || scenarioSlots || scenarioOptions || returningTitle);};
+const auto modalOwned=[&]{return bool(systemMenu || scenarioSlots || scenarioOptions || scenarioBacklog || returningTitle);};
 const auto openSystemMenu=[&] {
   if(!slotProgress || progressRoot.empty())throw UnsupportedCommand("scenario menu needs a writable session owner");
   systemMenu=std::make_unique<PcSystemMenuOwner>(vm->State(),resources,renderer,
@@ -66,6 +69,7 @@ const auto handleModalEvent=[&](const SDL_Event& e) {
       const size_t i=key==SDLK_DOWN;modalVertical[i]=down;
       scenarioSlotInput.Vertical.Pressed[i]|=pressed;
       scenarioOptionsInput.Vertical.Pressed[i]|=pressed;
+      scenarioBacklogInput.Vertical.Pressed[i]|=pressed;
       if(i)systemMenuInput.Next|=pressed;else systemMenuInput.Previous|=pressed;
     }
     if(key==SDLK_LEFT || key==SDLK_RIGHT) {
@@ -84,6 +88,7 @@ const auto handleModalEvent=[&](const SDL_Event& e) {
       scenarioOptionsInput.Common.PreviousTab|=key==SDLK_Q||key==SDLK_PAGEUP;
       scenarioOptionsInput.Common.NextTab|=key==SDLK_E||key==SDLK_PAGEDOWN;
       scenarioModalInput.Accept|=accept;scenarioModalInput.Cancel|=cancel;
+      scenarioBacklogInput.Rewind|=accept;scenarioBacklogInput.Replay|=key==SDLK_P;scenarioBacklogInput.Cancel|=cancel;
     }
   }
   if(e.type==SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
@@ -102,7 +107,12 @@ const auto handleModalEvent=[&](const SDL_Event& e) {
     scenarioModalInput.Left|=b==SDL_GAMEPAD_BUTTON_DPAD_LEFT;
     scenarioModalInput.Right|=b==SDL_GAMEPAD_BUTTON_DPAD_RIGHT;
     scenarioModalInput.Accept|=b==SDL_GAMEPAD_BUTTON_EAST;scenarioModalInput.Cancel|=b==SDL_GAMEPAD_BUTTON_SOUTH;
+    scenarioBacklogInput.Vertical.Pressed[0]|=b==SDL_GAMEPAD_BUTTON_DPAD_UP;
+    scenarioBacklogInput.Vertical.Pressed[1]|=b==SDL_GAMEPAD_BUTTON_DPAD_DOWN;
+    scenarioBacklogInput.Rewind|=b==SDL_GAMEPAD_BUTTON_EAST;scenarioBacklogInput.Replay|=b==SDL_GAMEPAD_BUTTON_WEST;
+    scenarioBacklogInput.Cancel|=b==SDL_GAMEPAD_BUTTON_SOUTH;
   }
+  if(e.type==SDL_EVENT_MOUSE_WHEEL && scenarioBacklog && e.wheel.y!=0)scenarioBacklogInput.Vertical.Pressed[e.wheel.y<0]=true;
   if((e.type==SDL_EVENT_MOUSE_BUTTON_DOWN || e.type==SDL_EVENT_MOUSE_BUTTON_UP) && e.button.button==SDL_BUTTON_LEFT) {
     pointerDown=e.type==SDL_EVENT_MOUSE_BUTTON_DOWN;pointerPosition={e.button.x,e.button.y};
   }
@@ -111,6 +121,7 @@ const auto handleModalEvent=[&](const SDL_Event& e) {
     pointerDown=false;modalVertical=modalHorizontal={};
     if(systemMenu)systemMenu->CancelPointer();if(scenarioSlots)scenarioSlots->CancelPointer();
     if(scenarioOptions)scenarioOptions->CancelPointer();
+    if(scenarioBacklog)scenarioBacklog->CancelPointer();
   }
 };
 const auto updateScenarioModal=[&](uint64_t now) {
@@ -121,6 +132,7 @@ const auto updateScenarioModal=[&](uint64_t now) {
   }
   scenarioSlotInput.Vertical.Held=modalVertical;scenarioOptionsInput.Vertical.Held=modalVertical;
   scenarioOptionsInput.HorizontalHeld=modalHorizontal;
+  scenarioBacklogInput.Vertical.Held=modalVertical;
   if(systemMenu) {
     systemMenu->BeginFrame(contacts,scenarioModalInput,now);
     const auto action=systemMenu->Update(systemMenuInput);
@@ -135,7 +147,8 @@ const auto updateScenarioModal=[&](uint64_t now) {
           root,progressRoot,*slotProgress,scenarioRepeat,inputEnvironment.HoldFrames,
           scenarioAudioClock,[&](uint8_t mode){scenarioMenuVoices.Load(mode);},
           [&](uint32_t id){sessionTrophies.insert(int32_t(id));},now);
-      else if(action==4)throw UnsupportedCommand("scenario backlog screen is not yet bound");
+      else if(action==4)scenarioBacklog=std::make_unique<PcBacklogOwner>(vm->State(),resources,renderer,
+          fontTextures,font,scenarioUiAudio,*voiceOwner,root,scenarioRepeat,inputEnvironment.HoldFrames);
       else if(action==5)beginReturnTitle(now);
       else {previousMenuAction=0;sceneInput.CancelPointer();}
       return;
@@ -156,11 +169,22 @@ const auto updateScenarioModal=[&](uint64_t now) {
   }else if(scenarioOptions) {
     scenarioOptions->BeginFrame(scenarioOptionsInput,scenarioModalInput,contacts,now);
     if(scenarioOptions->Update(now)) {
-      scenarioOptions.reset();voiceSettings=*vm->State().VoiceSettings;voiceOwner->Settings=voiceSettings;
+      scenarioOptions.reset();voiceSettings=*vm->State().VoiceSettings;voiceOwner->Settings=voiceSettings;voices.SetVolume(voiceSettings.Volume);
       backend.SetPreferences(*vm->State().TextSpeed,vm->State().AutoSpeed);
       opacity=*vm->State().WindowOpacity;
       openSystemMenu();return;
     }
+  }else if(scenarioBacklog) {
+    scenarioBacklog->BeginFrame(scenarioBacklogInput,scenarioModalInput,contacts,now);
+    const auto result=scenarioBacklog->Update(now);
+    if(result==2) {
+      if(!transfer)throw FormatError("backlog rewind has no outer restore owner");
+      transfer->Load=StageNativeBacklogLoad(vm->State().Backlog,size_t(scenarioBacklog->Selected()));
+      vm->State().SystemProgress=SnapshotSystemOwner(vm->State(),registeredHistory);
+      transfer->Owner=std::make_unique<SemanticState>(std::move(vm->State()));
+      scenarioBacklog.reset();quit=true;return;
+    }
+    if(result==1){scenarioBacklog.reset();openSystemMenu();return;}
   }
   if(returningTitle) {
     titleReturnFade.Tick(now);
@@ -181,6 +205,8 @@ const auto updateScenarioModal=[&](uint64_t now) {
   glViewport(viewport[0],viewport[1],viewport[2],viewport[3]);sceneThumbnail.Present(viewport);
   if(systemMenu)systemMenu->Draw(vm->State().ChapterId,vm->State().Titles.empty()?u"":vm->State().Titles[0]);
   if(scenarioSlots)scenarioSlots->Draw();if(scenarioOptions)scenarioOptions->Draw();
+  if(scenarioBacklog)scenarioBacklog->Draw();
+  if(captureBacklogImage){Capture(captureDirectory/"backlog.bmp",width,height);captureBacklogImage=false;}
   if(returningTitle) {
     UiRenderCommand fade;fade.Kind=UiRenderKind::Rectangle;fade.Rectangle={0,0,960,544};
     fade.Color={0,0,0,uint8_t(titleReturnFade.Value.Current)};
@@ -193,6 +219,7 @@ const auto updateScenarioModal=[&](uint64_t now) {
 // acknowledgement, menu Load, then the ordinary FromNativeSlot owner handoff.
 // Only SDL events are supplied; no controller phase/result/cursor is assigned.
 uint32_t scenarioCaptureStage=0;
+int32_t initialBacklogScroll=-1;
 const auto captureScenarioMenuInput=[&](uint64_t now) {
   const auto key=[&](SDL_Keycode code,uint32_t next) {
     for(const auto type:{SDL_EVENT_KEY_DOWN,SDL_EVENT_KEY_UP}) {
@@ -206,12 +233,17 @@ const auto captureScenarioMenuInput=[&](uint64_t now) {
   };
   switch(scenarioCaptureStage) {
     case 0:
-      if(backend.CursorVisible() && sceneThumbnail.Ready())key(SDLK_ESCAPE,1);
+      if(backend.CursorVisible() && sceneThumbnail.Ready() && vm->Opcode()==0x64){
+        if(captureMenuInput==21 && vm->State().Backlog.Count()<5)key(SDLK_RETURN,0);
+        else key(SDLK_ESCAPE,1);
+      }
       break;
     case 1:
       if(systemMenu && systemMenu->Phase()==5) {
         if(captureMenuInput==20) {
           if(systemMenu->Selected()!=4)key(SDLK_DOWN,1);else key(SDLK_RETURN,20);
+        }else if(captureMenuInput==21){
+          if(systemMenu->Selected()!=3)key(SDLK_DOWN,1);else key(SDLK_RETURN,30);
         }else key(SDLK_RETURN,2);
       }
       break;
@@ -271,6 +303,35 @@ const auto captureScenarioMenuInput=[&](uint64_t now) {
     case 21:
       if(systemMenu && systemMenu->Question().Visible && systemMenu->Question().Phase==3 &&
           systemMenu->Question().ButtonCount==3)key(SDLK_RETURN,22); // Return without a system write.
+      break;
+    case 30:
+      if(scenarioBacklog && scenarioBacklog->Phase()==2 && !scenarioBacklog->Scrolling()){
+        if(initialBacklogScroll<0)initialBacklogScroll=scenarioBacklog->FirstVisible();
+        if(scenarioBacklog->Selected()>1)key(SDLK_UP,30);else key(SDLK_P,31);
+      }
+      break;
+    case 31:
+      if(scenarioBacklog && scenarioBacklog->VoicePlaying(size_t(scenarioBacklog->Selected()))){
+        if(scenarioBacklog->FirstVisible()>=initialBacklogScroll || scenarioBacklog->ReplayStarts!=1)
+          throw FormatError("backlog capture did not scroll and start its physical voice");
+        captureBacklogImage=true;
+        const auto& record=vm->State().Backlog.At(size_t(scenarioBacklog->Selected())).Record;
+        const auto context=DecodeNativeContextSave(record.Bytesad8);
+        std::ofstream report(captureDirectory/"backlog-interaction.json");
+        report<<"{\"history_count\":"<<vm->State().Backlog.Count()<<",\"selected\":"<<scenarioBacklog->Selected()
+          <<",\"initial_scroll\":"<<initialBacklogScroll<<",\"scroll\":"<<scenarioBacklog->FirstVisible()
+          <<",\"replay_starts\":"<<scenarioBacklog->ReplayStarts<<",\"voice_playing\":true,\"rewind_file\":"<<context.File
+          <<",\"rewind_command\":"<<context.ResumeCommand<<",\"before_script\":"<<vm->State().ScriptFileId
+          <<",\"before_command\":"<<vm->State().CurrentCommandIndex<<"}\n";
+        report.close();if(!report)throw FormatError("cannot save backlog interaction report");
+        key(SDLK_P,32);
+      }
+      break;
+    case 32:
+      if(scenarioBacklog && !scenarioBacklog->VoicePlaying(size_t(scenarioBacklog->Selected())))key(SDLK_RETURN,33);
+      break;
+    case 33:
+      if(scenarioBacklog && scenarioBacklog->Question().Visible && scenarioBacklog->Question().Phase==3)key(SDLK_RETURN,34);
       break;
   }
 };

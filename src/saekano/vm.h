@@ -52,6 +52,7 @@ class VmBackend {
   virtual void BeginMessage(size_t command, const MessageCommand& message,
                              size_t context, uint64_t now) = 0;
   virtual std::optional<int32_t> MessageVoiceGroup(size_t) const { return std::nullopt; }
+  virtual int32_t MessageBacklogVoice(size_t) const { return -1; }
   virtual std::optional<bool> MessageWasRead(int32_t,uint32_t,std::span<const ScriptRecord>) const { return std::nullopt; }
   virtual bool MessageRevealed(size_t command, uint64_t now) = 0;
   virtual bool MessageAdvanceAllowed(size_t command, uint64_t now) = 0;

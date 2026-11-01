@@ -29,7 +29,8 @@ struct ScriptReversingTween {
   bool Enabled=false;
   uint32_t Reversals=0;
   int32_t RepeatLimit=1; // -1 repeats indefinitely and resets the native counter.
-  void Configure(int32_t from,int32_t to,int32_t duration,bool enabled,uint64_t now,int32_t repeatLimit=1);
+  bool ReverseAtEnd=true; //9fb1a restarts at From;9fb60 reverses the endpoints.
+  void Configure(int32_t from,int32_t to,int32_t duration,bool enabled,uint64_t now,int32_t repeatLimit=1,bool reverseAtEnd=true);
   void Restart(uint64_t now);
   void Tick(uint64_t now);
   bool Finished()const{return Channel.Finished();}

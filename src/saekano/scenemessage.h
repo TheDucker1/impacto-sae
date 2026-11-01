@@ -68,6 +68,7 @@ class SceneMessageBackend : public HeadlessBackend {
   void BeginMessage(size_t command, const MessageCommand& message, size_t side,
                     uint64_t now) override;
   std::optional<int32_t> MessageVoiceGroup(size_t command) const override;
+  int32_t MessageBacklogVoice(size_t command) const override;
   void SetSplitDialogue(bool split) override { splitDialogue_=split; }
   void SetMessageDualCleanup(bool enabled) override { dualCleanup_=enabled; }
   void ClearMessage(size_t side) override;

@@ -124,9 +124,9 @@ void ScriptLinearTween::Tick(uint64_t now) {
 bool ScriptLinearTween::Finished() const {
   return Current == To && Sample - Epoch >= uint64_t(Duration);
 }
-void ScriptReversingTween::Configure(int32_t from,int32_t to,int32_t duration,bool enabled,uint64_t now,int32_t repeatLimit){
+void ScriptReversingTween::Configure(int32_t from,int32_t to,int32_t duration,bool enabled,uint64_t now,int32_t repeatLimit,bool reverseAtEnd){
   if(repeatLimit < -1)throw FormatError("invalid reversing tween repeat limit");
-  Channel.Start(from,to,duration,now);Enabled=enabled;Reversals=0;RepeatLimit=repeatLimit;
+  Channel.Start(from,to,duration,now);Enabled=enabled;Reversals=0;RepeatLimit=repeatLimit;ReverseAtEnd=reverseAtEnd;
 }
 void ScriptReversingTween::Restart(uint64_t now){
   Channel.StartUnsigned(Channel.From,Channel.To,Channel.Duration,now);Enabled=true;
@@ -152,7 +152,8 @@ void ScriptReversingTween::Advance(int32_t delta,uint64_t clock,size_t depth){
     c.Sample=deadline;c.Current=c.To;
   }
   if(c.Finished() && (RepeatLimit==-1 || Reversals<uint32_t(RepeatLimit))){
-    c.StartUnsigned(c.To,c.From,c.Duration,clock);
+    if(ReverseAtEnd)c.StartUnsigned(c.To,c.From,c.Duration,clock);
+    else c.StartUnsigned(c.From,c.To,c.Duration,clock);
     if(c.Duration)Advance(std::bit_cast<int32_t>(carry),clock,depth+1);
     ++Reversals;
   }

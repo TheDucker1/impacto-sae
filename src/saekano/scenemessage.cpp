@@ -153,6 +153,10 @@ std::optional<int32_t> SceneMessageBackend::MessageVoiceGroup(size_t command) co
   if(!current_ || current_->Command!=command)return std::nullopt;
   return current_->BacklogVoiceGroup;
 }
+int32_t SceneMessageBackend::MessageBacklogVoice(size_t command) const {
+  if(!current_ || current_->Command!=command)throw FormatError("backlog voice has no current message");
+  return current_->VoiceId;
+}
 void SceneMessageBackend::UpdateMessage(uint64_t now) {
   if (!current_) return;
   if (voices_) voices_->Output.Update(now);

@@ -713,6 +713,7 @@ void PlaybackOrdinaryVoice::Prepare(uint32_t channel, int16_t voiceId) {
   auto reader = std::make_unique<HcaWaveReader>(bank_, uint32_t(voiceId));
   playback_.PrepareOrdinaryVoice(channel, uint32_t(voiceId), std::move(reader), gain_);
 }
+void PlaybackOrdinaryVoice::SetVolume(uint8_t volume){gain_=ProfileVoiceGain(volume,1.0f);}
 void PlaybackOrdinaryVoice::Start(uint32_t channel) {
   playback_.StartOrdinaryVoice(channel);
 }

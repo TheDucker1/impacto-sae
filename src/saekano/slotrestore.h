@@ -10,16 +10,19 @@ namespace Impacto::Saekano {
 struct SemanticState;
 struct MessageRuntimeContext;
 class SceneImageDriver;
+class BacklogHistory;
 // Native selected record -> pending S5e814, protected flag cleared, load request.
 // Kept separate from the current scene until the outer Load transition consumes
 // it. Native pointers, thumbnails and strings have ordinary PC ownership here.
 struct NativePendingSlotLoad {
+  bool FromBacklog = false;
   size_t Ordinal = 0;
   NativeSlotRecord Record;
   NativeContextSave Context;
 };
 std::unique_ptr<NativePendingSlotLoad> StageNativeSlotLoad(
     const NativeSlotData& slots, size_t ordinal);
+std::unique_ptr<NativePendingSlotLoad> StageNativeBacklogLoad(BacklogHistory& history,size_t ordinal);
 // Working owner only: Bank0/session/background/profile stats/chapter/day/time.
 // Persistent Bank1/preferences/histories and live manager fields survive this
 // step. Resource/context restoration must finish separately before VM Start.
