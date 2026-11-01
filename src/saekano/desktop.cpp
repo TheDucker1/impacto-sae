@@ -429,7 +429,7 @@ struct UiBlitRenderer {
   GLuint Program = 0, Vertex = 0, Fragment = 0, Vao = 0, Buffer = 0;
   GLint Tint = -1, Solid = -1, AlphaMode = -1;
   GLint FilterMode = -1, FilterValue = -1, Glyph = -1;
-  GLint ColoredRule = -1, RuleValue = -1;
+  GLint ColoredRule = -1, ImageRule = -1, RuleValue = -1;
   struct BoundTexture {
     GLuint Handle;
     uint32_t Width, Height;
@@ -462,6 +462,7 @@ void main(){texturePosition=uv;gl_Position=vec4(position.x/480.0-1.0,1.0-positio
 #extension GL_ARB_gpu_shader5 : require
 in vec2 texturePosition;
 uniform sampler2D image;
+uniform sampler2D ruleMask;
 uniform vec4 tint;
 uniform bool solid;
 uniform int alphaMode;
@@ -469,12 +470,57 @@ uniform int filterMode;
 uniform float filterValue;
 uniform bool glyph;
 uniform bool coloredRule;
+uniform bool imageRule;
 uniform float ruleValue;
 out vec4 outputColor;
+// Original image-rule GXP arithmetic; preserve its packed register stores.
+vec4 pa[32],sa[32],internals[3];
+float pack2xF16(vec2 _240)
+{
+    return uintBitsToFloat(packHalf2x16(_240));
+}
+
+void primary_program()
+{
+    vec2 _162 = vec2(pa[1].x, pa[1].y);
+    vec2 _170 = vec2(pa[1].z, pa[1].w);
+    internals[0] = vec4(_162.x, _162.y, _170.x, _170.y);
+    internals[0] = pa[0] * internals[0];
+    vec4 _201 = internals[1];
+    _201.x = sa[0].x + pa[2].w;
+    internals[1] = _201;
+    vec4 _215 = internals[1];
+    _215.x = min(internals[1].x, sa[0].z);
+    internals[1] = _215;
+    vec4 _224 = internals[1];
+    _224.x = max(internals[1].x, 0.0);
+    internals[1] = _224;
+    vec4 _235 = vec4(1.0, 1.0, 1.0, internals[1].x) * internals[0];
+    vec2 _251 = vec2(pack2xF16(vec2(_235.x, _235.y)), pack2xF16(vec2(_235.z, _235.w)));
+    pa[0] = vec4(_251.x, _251.y, pa[0].z, pa[0].w);
+}
+
+vec2 unpack2xF16(float _116)
+{
+    return unpackHalf2x16(floatBitsToUint(_116));
+}
+
+void frag_output_finalize()
+{
+    vec2 _113 = vec2(pa[0].x, pa[0].y);
+    vec2 _122 = unpack2xF16(_113.x);
+    vec2 _124 = unpack2xF16(_113.y);
+    outputColor = vec4(_122.x, _122.y, _124.x, _124.y);
+}
+
 void main(){
   outputColor=solid?tint:texture(image,texturePosition)*tint;
   // Native rectangles and glyphs use independent fragment programs.
-  if(coloredRule){
+  if(imageRule){
+    sa[0]=vec4(ruleValue,0.0,1.0,0.0);
+    pa[0]=tint;pa[1]=texture(image,texturePosition);pa[2]=texture(ruleMask,texturePosition);
+    primary_program();frag_output_finalize();
+  }else if(coloredRule){
     vec4 result=vec4(tint.rgb,clamp(texture(image,texturePosition).a+ruleValue,0.0,1.0));
     outputColor=vec4(unpackHalf2x16(packHalf2x16(result.xy)),unpackHalf2x16(packHalf2x16(result.zw)));
   }else if(filterMode==1 && !solid && !glyph){
@@ -514,6 +560,7 @@ void main(){
                             reinterpret_cast<void*>(2 * sizeof(float)));
       glUseProgram(Program);
       glUniform1i(glGetUniformLocation(Program, "image"), 0);
+      glUniform1i(glGetUniformLocation(Program, "ruleMask"), 1);
       Tint = glGetUniformLocation(Program, "tint");
       Solid = glGetUniformLocation(Program, "solid");
       AlphaMode = glGetUniformLocation(Program, "alphaMode");
@@ -521,6 +568,7 @@ void main(){
       FilterValue = glGetUniformLocation(Program, "filterValue");
       Glyph = glGetUniformLocation(Program, "glyph");
       ColoredRule = glGetUniformLocation(Program, "coloredRule");
+      ImageRule = glGetUniformLocation(Program, "imageRule");
       RuleValue = glGetUniformLocation(Program, "ruleValue");
       GlCheck("UI renderer initialization");
     } catch (...) {
@@ -672,12 +720,13 @@ void main(){
   }
   void DrawQuad(const UiSpriteBlit& blit, const BoundTexture& texture,
                 bool solid, bool glyph = false,
-                std::optional<float> coloredRule = {}) {
+                std::optional<float> coloredRule = {},const BoundTexture* ruleMask=nullptr) {
     if (coloredRule && !std::isfinite(*coloredRule))
       throw FormatError("nonfinite rule shader value");
     glUniform1i(Solid, solid ? 1 : 0);
     glUniform1i(Glyph, glyph ? 1 : 0);
-    glUniform1i(ColoredRule, coloredRule.has_value() ? 1 : 0);
+    glUniform1i(ColoredRule, coloredRule.has_value() && !ruleMask ? 1 : 0);
+    glUniform1i(ImageRule, ruleMask ? 1 : 0);
     glUniform1f(RuleValue, coloredRule.value_or(0.0f));
     const auto quad = ResolveUiQuad(blit, texture.Width, texture.Height);
     std::array<float, 24> vertices;
@@ -686,7 +735,10 @@ void main(){
       std::copy(quad[corners[i]].begin(), quad[corners[i]].end(),
                 vertices.begin() + i * 4);
     glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices.data());
-    glBindTexture(GL_TEXTURE_2D, texture.Handle);
+    if(ruleMask) {
+      glActiveTexture(GL_TEXTURE1);glBindTexture(GL_TEXTURE_2D,ruleMask->Handle);
+    }
+    glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D, texture.Handle);
     glUniform4f(Tint, blit.Color[0] / 255.0f, blit.Color[1] / 255.0f,
                 blit.Color[2] / 255.0f, blit.Color[3] / 255.0f);
     glDrawArrays(GL_TRIANGLES, 0, 6);
@@ -2420,14 +2472,26 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
         renderer.Execute(BuildLetterboxBars(state.Letterbox));
       } else if (pass.Kind == SceneDrawKind::Effect) {
         const auto effect = BuildRuleWipeDraw(state.RuleWipe);
-        if (effect.Kind == RuleWipeDrawKind::MaskedImage || effect.Kind == RuleWipeDrawKind::Image)
-          throw UnsupportedCommand("rule-wipe image-background shader/state is not bound");
         if (effect.Kind != RuleWipeDrawKind::None) {
           UiSpriteBlit sprite;
           sprite.Destination = effect.Destination; sprite.Source = effect.Source;
           sprite.Color = effect.Color;
           if (effect.Kind == RuleWipeDrawKind::Solid) {
             renderer.DrawQuad(sprite, {0, 1, 1}, true);
+          } else if(effect.Background) {
+            const auto* pixels=images.Pixels(ImageSlot::Background);
+            if(!pixels || images.Key(ImageSlot::Background)!=effect.Background)
+              throw UnsupportedCommand("rule-wipe background pixels do not match retained resource");
+            sprite.Texture={ProfileTextureSection::SceneImage,int32_t(effect.Background->Section),effect.Background->Id};
+            upload(sprite.Texture,*pixels);
+            if(effect.Kind==RuleWipeDrawKind::MaskedImage) {
+              const auto* mask=images.Pixels(ImageSlot::Rule);
+              if(!mask || images.Key(ImageSlot::Rule)!=effect.Rule)
+                throw UnsupportedCommand("rule-wipe mask pixels do not match active resource");
+              const ProfileTextureKey maskKey{ProfileTextureSection::SceneImage,int32_t(ImageSection::Rule),effect.Rule->Id};
+              upload(maskKey,*mask);
+              renderer.DrawQuad(sprite,renderer.Textures.at(sprite.Texture),false,false,effect.Value,&renderer.Textures.at(maskKey));
+            } else renderer.DrawQuad(sprite,renderer.Textures.at(sprite.Texture),false);
           } else {
             const auto* pixels = images.Pixels(ImageSlot::Rule);
             if (!pixels || images.Key(ImageSlot::Rule) != effect.Rule)
@@ -3468,10 +3532,11 @@ int RunScreenFilterProbe(const std::filesystem::path& fixtureDirectory,
     if (std::filesystem::exists(output)) throw FormatError("choose a fresh filter probe output");
     const auto bytes = SceneRead(fixtureDirectory / "cases.bin");
     PayloadReader reader(bytes);
-    if (reader.U32() != 0x31504653) throw FormatError("invalid filter probe fixture");
+    const auto magic=reader.U32();const bool twoTextures=magic==0x32504653;
+    if (magic != 0x31504653 && !twoTextures) throw FormatError("invalid filter probe fixture");
     const auto count = reader.U32();
     if (!count || count > 256) throw FormatError("filter probe case budget exceeded");
-    reader.CheckCount(count, 20);
+    reader.CheckCount(count, twoTextures?24:20);
     const auto fragmentBytes = SceneRead(fixtureDirectory / "reference.frag");
     const std::string fragment(fragmentBytes.begin(), fragmentBytes.end());
     ViewerWindow window(true);
@@ -3498,21 +3563,26 @@ int RunScreenFilterProbe(const std::filesystem::path& fixtureDirectory,
       const auto pixel = reader.U32(), color = reader.U32(), mode = reader.U32();
       const auto value = std::bit_cast<float>(reader.U32());
       const auto kind = reader.U32();
-      if (kind > 3) throw FormatError("invalid filter probe primitive");
+      const auto maskPixel=twoTextures?reader.U32():0;
+      if (kind > (twoTextures?4u:3u)) throw FormatError("invalid filter probe primitive");
       const ProfileTextureKey key{ProfileTextureSection::MainUi, -1, i};
+      const ProfileTextureKey maskKey{ProfileTextureSection::SharedUi,-1,i};
       const ImagePixels pixels{1, 1, {uint8_t(pixel), uint8_t(pixel >> 8), uint8_t(pixel >> 16), uint8_t(pixel >> 24)}};
+      const ImagePixels maskPixels{1,1,{uint8_t(maskPixel),uint8_t(maskPixel>>8),uint8_t(maskPixel>>16),uint8_t(maskPixel>>24)}};
       UiSpriteBlit draw;
       draw.Texture = key; draw.Destination = {0,0,960,544}; draw.Source = {0,0,1,1};
       draw.Color = {uint8_t(color), uint8_t(color >> 8), uint8_t(color >> 16), uint8_t(color >> 24)};
       const auto sample = [&](UiBlitRenderer& renderer) {
         renderer.Upload(key, pixels);
+        if(kind==4)renderer.Upload(maskKey,maskPixels);
         renderer.Draw({}, 960, 544);
         glViewport(0,0,1,1); glDisable(GL_BLEND);
         renderer.SetFilter(1, 1.0f);  // Also exercise a real reset to Normal.
         renderer.SetFilter(int32_t(mode), value);
-        if (kind == 3) glUniform1i(renderer.AlphaMode, 0);  // Base native GXP family.
+        if (kind >= 3) glUniform1i(renderer.AlphaMode, 0);  // Base native GXP family.
         renderer.DrawQuad(draw, renderer.Textures.at(key), kind == 2, kind == 1,
-                          kind == 3 ? std::optional<float>(value) : std::nullopt);
+                          kind >= 3 ? std::optional<float>(value) : std::nullopt,
+                          kind == 4 ? &renderer.Textures.at(maskKey) : nullptr);
         std::array<float,4> result;
         glReadPixels(0,0,1,1,GL_RGBA,GL_FLOAT,result.data());
         GlCheck("offscreen filter sample");
