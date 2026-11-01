@@ -4,6 +4,7 @@
 #include "resources.h"
 #include "profilearchive.h"
 #include "optionspreview.h"
+#include "scenemessage.h"
 #include "../audio/audiosystem.h"
 #include "../audio/openal/audiobackend.h"
 #include "../audio/openal/openalaudiochannel.h"
@@ -446,6 +447,21 @@ void MusicPlayback::Update(float seconds) {
   impl_->PreviewVoice->Update(seconds);
   impl_->UiSound->Update(seconds);
   AlCheck("BGM frame");
+}
+void MusicPlayback::StopAllChannels() {
+  impl_->Channel->Stop(0);
+  if (impl_->CurrentBgmSerial)
+    impl_->RetiredBgm.push_back(impl_->CurrentBgmSerial);
+  impl_->CurrentBgmSerial = 0;
+  impl_->RetireOutgoingBgm();
+  impl_->BgmFade = {};
+  impl_->BgmFadeFraction = 0;
+  impl_->BgmFadeFrameRemainder = 0;
+  for (auto& channel : impl_->SeChannels) if (channel) channel->Stop(0);
+  impl_->UiSound->Stop(0);
+  for (uint32_t channel = 7; channel <= 12; ++channel)
+    StopOrdinaryVoice(channel);
+  AlCheck("shared audio quiescence");
 }
 namespace {
 void ValidateLiveGain(float gain){
@@ -1269,6 +1285,140 @@ int RunTitleAudioSession(const std::filesystem::path& usrdir,const std::filesyst
   }catch(const std::exception& e){if(created){std::ofstream error(captureDirectory/"error.txt");error<<std::string(e.what()).substr(0,2048)<<'\n';}SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano title audio: %s",e.what());return 1;}
 }
 
+int RunSharedAudioStopSession(const std::filesystem::path& usrdir,
+                             const std::filesystem::path& captureDirectory) {
+  bool created = false;
+  try {
+    CreateCaptureDirectory(usrdir, captureDirectory); created = true;
+    if (!SDL_Init(SDL_INIT_EVENTS)) throw FormatError(SDL_GetError());
+    struct Cleanup { ~Cleanup() { SDL_Quit(); } } cleanup;
+    std::ifstream first(usrdir / "first.dat", std::ios::binary);
+    if (!first) throw FormatError("missing UI sound bank");
+    SystemSoundAssets ui(Bytes{std::istreambuf_iterator<char>(first), {}});
+    ArchiveBgmResources music(usrdir); ArchiveSeResources sounds(usrdir);
+    MusicPlayback playback(music, true, &sounds);
+    PlaybackOrdinaryVoice voice(playback, usrdir, 10, 1.0f);
+    struct Mouth final : OrdinaryMessageMouth {
+      size_t Calls = 0;
+      void Begin(int32_t, const ProfileMouthAnimation&, uint64_t) override { ++Calls; }
+      void End(int32_t) override { ++Calls; }
+    } mouth;
+    SceneMessageVoiceOwner owner{voice, mouth, MakeFreshOrdinaryVoiceQueue(), {}, {}, {}};
+    owner.SecondaryQueue = MakeFreshOrdinaryVoiceQueue();
+    owner.SecondaryQueue->BaseChannel = 9;
+    for (auto* queue : {&owner.Queue, &*owner.SecondaryQueue}) {
+      queue->Catalog = {7490, 7491, 7492};
+      PrepareOrdinaryVoice(*queue, 7490, true, voice);
+    }
+    for (uint32_t channel : {8u, 10u}) voice.Start(channel);
+    for (uint32_t channel : {11u, 12u}) {
+      voice.Prepare(channel, 7490); voice.Start(channel);
+    }
+    playback.BindUiSounds(ui, 0.5f);
+    playback.Submit({GameEventKind::Sound, 2});
+    sounds.Prepare(0);
+    for (int32_t channel = 2; channel <= 5; ++channel) {
+      GameEvent sound{GameEventKind::PlaySe, 0};
+      sound.Se = SePlayRequest{0, channel, 100, false, BgmVolume{100, 50, 0.5f}};
+      playback.Submit(sound);
+    }
+    music.Prepare(0); music.Prepare(1);
+    playback.SetBgmOutputGain(0.375f);
+    playback.Submit({GameEventKind::SetBgmFadeDuration, 0, {}, 213});
+    playback.Submit({GameEventKind::PlayBgmRetainingGain, 0});
+    const auto render = [&](size_t frames) {
+      std::vector<int16_t> pcm(frames * 2); playback.Render(pcm); return pcm;
+    };
+    render(768);
+    playback.Submit({GameEventKind::PlayBgmRetainingGain, 1});
+    std::array<float, 11> gains{};
+    for (uint32_t channel = 2; channel <= 12; ++channel) {
+      playback.SetChannelOutputGain(channel, float(channel) / 16);
+      gains[channel - 2] = playback.ChannelOutputGain(channel);
+    }
+    const auto before = playback.BgmVoices();
+    constexpr uint32_t voiceMask = 0x3fu << 7;
+    if (!before.Current || !before.Outgoing || !playback.BgmFadeState().Active() ||
+        playback.VoiceAttenuationInputs().Busy != voiceMask || !playback.UiSoundPlaying())
+      throw FormatError("shared stop fixture lacks active sources/crossfade");
+    for (size_t channel = 2; channel <= 5; ++channel)
+      if (!playback.SoundPlaying(channel - 2)) throw FormatError("shared stop fixture lacks SE source");
+    const auto prefix = render(768);
+    const auto peak = [](std::span<const int16_t> pcm) {
+      int32_t value = 0;
+      for (auto sample : pcm) value = std::max(value, std::abs(int32_t(sample)));
+      return value;
+    };
+    const auto prefixPeak = peak(prefix);
+    if (prefixPeak <= 8) throw FormatError("shared stop fixture produced no PCM");
+    const auto next = owner.Queue.NextSlot, secondaryNext = owner.SecondaryQueue->NextSlot;
+    if (owner.Queue.Prepared.empty() || owner.SecondaryQueue->Prepared.empty())
+      throw FormatError("shared stop fixture lacks lookahead caches");
+    const auto stop = [&] {
+      for (uint32_t channel = 2; channel <= 12; ++channel)
+        gains[channel - 2] = playback.ChannelOutputGain(channel);
+      playback.StopAllChannels(); InvalidateSceneVoicePreparations(owner);
+    };
+    const auto checkStopped = [&] {
+      if (playback.Playing() || playback.VoiceAttenuationInputs().Busy ||
+          playback.VoiceAttenuationInputs().Prepared || playback.BgmFadeState().Active())
+        throw FormatError("shared audio stop retained active/prepared sources");
+      for (uint32_t channel = 7; channel <= 12; ++channel)
+        if (voice.Ready(channel) || voice.Playing(channel) || voice.Position(channel) != -1)
+          throw FormatError("shared audio stop retained voice ownership");
+      const auto after = playback.BgmVoices();
+      if (after.Current || after.Outgoing || after.FadeOutDuration != 213 ||
+          after.Retired.size() != 2 ||
+          std::count(after.Retired.begin(), after.Retired.end(), before.Current) != 1 ||
+          std::count(after.Retired.begin(), after.Retired.end(), before.Outgoing) != 1 ||
+          playback.BgmOutputGain() != 0.375f)
+        throw FormatError("shared audio stop corrupted BGM retirement/settings");
+      for (uint32_t channel = 2; channel <= 12; ++channel)
+        if (playback.ChannelOutputGain(channel) != gains[channel - 2])
+          throw FormatError("shared audio stop changed output gain on channel " + std::to_string(channel));
+      if (!owner.Queue.Prepared.empty() || !owner.SecondaryQueue->Prepared.empty() ||
+          owner.Queue.NextSlot != next || owner.SecondaryQueue->NextSlot != secondaryNext ||
+          owner.Queue.Catalog != std::vector<int16_t>{7490, 7491, 7492} ||
+          owner.SecondaryQueue->Catalog != owner.Queue.Catalog || mouth.Calls)
+        throw FormatError("shared stop corrupted retained dialogue owner");
+    };
+    stop(); checkStopped(); stop(); checkStopped();
+    playback.Update(0.016f);
+    const auto silence = render(4800);
+    const auto silentPeak = peak(std::span(silence).last(2048));
+    if (silentPeak > 1) throw FormatError("shared stop left audible output");
+    // Prepared-but-not-started handles include the mission and profile aliases.
+    for (uint32_t channel = 7; channel <= 12; ++channel) voice.Prepare(channel, 7490);
+    if (playback.VoiceAttenuationInputs().Prepared != voiceMask)
+      throw FormatError("shared stop fixture lacks prepared voice handles");
+    stop(); checkStopped();
+    playback.PrepareProfileVoice(ui.Load(2).Data, gains[5]);
+    if (!(playback.VoiceAttenuationInputs().Prepared & (1u << 7)))
+      throw FormatError("shared stop fixture lacks profile preparation");
+    stop(); checkStopped();
+    const auto slot = PrepareOrdinaryVoice(owner.Queue, 7491, true, voice);
+    const auto recovered = render(4800);
+    const auto recoveredPeak = peak(recovered);
+    if (!voice.Playing(owner.Queue.BaseChannel + slot) || recoveredPeak <= 8 ||
+        voice.Position(owner.Queue.BaseChannel + slot) < 95)
+      throw FormatError("shared stop did not allow fresh voice preparation");
+    SaveWav(captureDirectory / "recovered-voice.wav", recovered);
+    stop();
+    std::ofstream report(captureDirectory / "summary.json");
+    report << "{\"passed\":true,\"physical_sources\":13,\"prepared_voice_channels\":6,"
+              "\"profile_alias_cleared\":true,\"bgm_retirements\":2,"
+              "\"idempotent\":true,\"settings_preserved\":true,\"cache_allocation_preserved\":true,"
+              "\"prefix_peak\":" << prefixPeak << ",\"silent_tail_peak\":" << silentPeak
+           << ",\"recovered_peak\":" << recoveredPeak
+           << ",\"software_openal_output\":true,\"native_pcm_timing_compared\":false}\n";
+    report.close(); if (!report) throw FormatError("cannot save shared stop report");
+    return 0;
+  } catch (const std::exception& error) {
+    if (created) { std::ofstream out(captureDirectory / "error.txt"); out << error.what() << '\n'; }
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Shared audio stop: %s", error.what());
+    return 1;
+  }
+}
 int RunUiSoundSession(const std::filesystem::path& usrdir,
                       const std::filesystem::path& captureDirectory) {
   bool created = false;

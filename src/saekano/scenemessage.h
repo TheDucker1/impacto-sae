@@ -33,6 +33,9 @@ void StopSceneDialogueNextVoiceSlots(SceneMessageVoiceOwner& owner);
 void StopSceneDialogueVoicesImmediately(SceneMessageVoiceOwner& owner);
 void PrepareSceneMemoryVoice(SceneMessageVoiceOwner& owner, uint32_t channel, Bytes encoded);
 void StopSceneDialogueVoice(SceneMessageVoiceOwner& owner,uint32_t channel);
+// Call after an external shared audio stop has retired all physical handles.
+// Preserve catalog/allocation and actor/mouth state; only handle caches expire.
+void InvalidateSceneVoicePreparations(SceneMessageVoiceOwner& owner);
 struct SceneMessageTextState {
   size_t Command = 0;
   size_t Side = 0;

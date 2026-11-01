@@ -27,6 +27,10 @@ class MusicPlayback {
   void Update(float seconds);
   void Render(std::span<int16_t> stereoPcm);  // Offline 48kHz loopback only.
   bool Playing() const;
+  // Native shared audio utility's immediate all-channel stop. Retire both BGM
+  // sources, cancel active fades and discard prepared voice handles. Preserve
+  // gain settings and attached fade duration; script remembered IDs are external.
+  void StopAllChannels();
   bool SoundPlaying(size_t logicalChannel) const;
   BgmStopFade BgmFadeState() const;
   float BgmOutputGain() const;
@@ -193,6 +197,8 @@ int RunOrdinaryVoiceStopSession(const std::filesystem::path& usrdir,
                                const std::filesystem::path& captureDirectory);
 int RunUiSoundSession(const std::filesystem::path& usrdir,
                       const std::filesystem::path& captureDirectory);
+int RunSharedAudioStopSession(const std::filesystem::path& usrdir,
+                             const std::filesystem::path& captureDirectory);
 int RunTitleAudioSession(const std::filesystem::path& usrdir,
                          const std::filesystem::path& captureDirectory);
 int RunVoiceAttenuationSession(const std::filesystem::path& usrdir,

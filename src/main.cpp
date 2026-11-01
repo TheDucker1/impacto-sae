@@ -317,9 +317,12 @@ int main(int argc, char* argv[]) {
     return Impacto::Saekano::RunSlotReplayAudioSession(argv[2],argv[3]);
   if(argc==4 && std::string_view(argv[1])=="--saekano-options-mixer-session")
     return Saekano::RunOptionsMixerSession(argv[2],argv[3]);
+  if(argc==4 && std::string_view(argv[1])=="--saekano-shared-audio-stop-session")
+    return Saekano::RunSharedAudioStopSession(argv[2],argv[3]);
   if(argc==4 && std::string_view(argv[1])=="--saekano-options-preview-session")
     return Saekano::RunOptionsPreviewSession(argv[2],argv[3]);
   if(argc==4 && std::string_view(argv[1])=="--saekano-movie-info")return Saekano::RunMovieInfoProbe(argv[2],argv[3]);
+  if(argc==4 && std::string_view(argv[1])=="--saekano-movie-host-session")return Saekano::RunMovieHostSession(argv[2],argv[3]);
   if(argc==6 && std::string_view(argv[1])=="--saekano-movie-decode")return Saekano::RunMovieDecodeProbe(argv[2],argv[5],uint32_t(std::stoul(argv[3])),uint32_t(std::stoul(argv[4])));
   if(argc==5 && std::string_view(argv[1])=="--saekano-movie-session")return Saekano::RunMoviePlaybackSession(argv[2],argv[4],uint32_t(std::stoul(argv[3])));
   if(argc>=3 && std::string_view(argv[1])=="--saekano-play"){

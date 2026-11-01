@@ -8,6 +8,7 @@ namespace Impacto::Saekano {
 int RunMovieInfoProbe(const std::filesystem::path& path,const std::filesystem::path& output);
 int RunMovieDecodeProbe(const std::filesystem::path& path,const std::filesystem::path& output,uint32_t videoFrames,uint32_t audioFrames);
 int RunMoviePlaybackSession(const std::filesystem::path& root,const std::filesystem::path& output,uint32_t frames);
+int RunMovieHostSession(const std::filesystem::path& root,const std::filesystem::path& output);
 int RunTitleScene(const std::filesystem::path& usrdir,
                   const std::filesystem::path& progressRoot={},
                   const std::filesystem::path& captureDirectory={},bool capturePointer=false,bool captureOpening=false,uint8_t captureMovie=0,uint8_t captureOptions=0,uint8_t captureContinue=0);

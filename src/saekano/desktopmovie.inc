@@ -12,6 +12,117 @@ static std::string MovieSourceDigest(const AVFrame* frame,int width,int height,i
   constexpr char hex[]="0123456789abcdef";std::string hash;
   for(auto byte:digest){hash+=hex[byte>>4];hash+=hex[byte&15];}return hash;
 }
+int RunMovieHostSession(const std::filesystem::path& root,const std::filesystem::path& output) {
+  bool created = false;
+  try {
+    const auto target = std::filesystem::weakly_canonical(output);
+    const auto source = std::filesystem::canonical(root);
+    for (auto p = target; !p.empty(); p = p.parent_path()) {
+      if (p == source || p == source.parent_path()) throw FormatError("movie host output overlaps data");
+      if (p == p.parent_path()) break;
+    }
+    if (std::filesystem::exists(target)) throw FormatError("choose a fresh movie host output directory");
+    std::filesystem::create_directories(target); created = true;
+    ViewerWindow window(true); SdlCheck(SDL_SetWindowSize(window.Window, 960, 544), "movie host size");
+    PcMovieFrameLayer layer;
+    ArchiveBgmResources music(source); MusicPlayback playback(music, true);
+    PlaybackOrdinaryVoice voices(playback, source, 10, 1);
+    struct Mouth final : OrdinaryMessageMouth {
+      size_t Calls = 0;
+      void Begin(int32_t, const ProfileMouthAnimation&, uint64_t) override { ++Calls; }
+      void End(int32_t) override { ++Calls; }
+    } mouth;
+    SceneMessageVoiceOwner owner{voices, mouth, MakeFreshOrdinaryVoiceQueue(), {}, {}, {}};
+    owner.Queue.Catalog = {7490, 7491};
+    PrepareOrdinaryVoice(owner.Queue, 7490, true, voices);
+    size_t retireCalls = 0;
+    PlaybackScriptMovie movie(source, playback, owner,
+        [&](const AVFrame* frame, int64_t pts) { layer.Present(frame, pts); },
+        [&] { ++retireCalls; layer.Retire(); return !layer.Available; });
+    movie.StopSharedAudio();
+    if (playback.Playing() || !owner.Queue.Prepared.empty() || mouth.Calls)
+      throw FormatError("movie adapter failed shared audio/cache stop");
+    size_t rejected = 0;
+    for (auto name : {u"", u"..", u"../ED1_ERIRI", u"a\\b", u"C:ED1_ERIRI", u"ED1_ERIRI."}) {
+      try { movie.Prepare(name); }
+      catch (const FormatError&) { ++rejected; }
+    }
+    if (rejected != 6) throw FormatError("movie adapter accepted invalid stem");
+    movie.Prepare(u"ED1_ERIRI"); movie.SetVolume(60);
+    const auto waitReady = [&](uint64_t now) {
+      const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+      while (!movie.Ready() && std::chrono::steady_clock::now() < deadline) {
+        movie.Pump(now); SDL_Delay(1);
+      }
+      if (!movie.Ready()) throw FormatError("movie adapter failed decoded readiness");
+    };
+    waitReady(0);
+    if (movie.PlaybackState().Started || movie.PlaybackState().VideoPresented ||
+        movie.PlaybackState().AudioPlayed || movie.RetireFinished() || retireCalls)
+      throw FormatError("movie adapter preroll/retirement gate failed");
+    try { movie.Prepare(u"ED1_ERIRI"); }
+    catch (const FormatError&) { ++rejected; }
+    if (rejected != 7 || !movie.Ready()) throw FormatError("movie replacement corrupted ready source");
+    movie.Start();
+    try { movie.SetVolume(101); }
+    catch (const FormatError&) { ++rejected; }
+    if (rejected != 8 || movie.PlaybackState().Volume != 60)
+      throw FormatError("movie invalid volume changed current gain");
+    uint64_t now = 0; int32_t peak = 0; uint32_t frames = 0;
+    std::ofstream pcm(target / "output.pcm", std::ios::binary);
+    if (!pcm) throw FormatError("cannot write movie host PCM");
+    for (; frames < 240; ++frames) {
+      movie.Pump(now);
+      if (layer.Available) layer.Draw();
+      std::array<int16_t, 1536> samples{}; playback.Update(0.016f); playback.Render(samples);
+      pcm.write(reinterpret_cast<const char*>(samples.data()), sizeof(samples));
+      for (auto sample : samples) peak = std::max(peak, std::abs(int32_t(sample)));
+      SdlCheck(SDL_GL_SwapWindow(window.Window), "movie host swap");
+      now += 16;
+      if (frames >= 31 && peak > 8 && movie.PlaybackState().VideoPresented > 1 &&
+          movie.PlaybackState().AudioPlayed) { ++frames; break; }
+      SDL_Delay(1);
+    }
+    movie.Pump(now);
+    const auto played = movie.PlaybackState();
+    if (!movie.Busy() || !layer.Available || played.VideoPresented < 2 || !played.AudioPlayed || peak <= 8)
+      throw FormatError("movie host prefix lacks real video/audio output");
+    try { movie.Pump(now - 1); }
+    catch (const FormatError&) { ++rejected; }
+    if (rejected != 9 || !movie.Busy()) throw FormatError("movie clock rejection changed active owner");
+    movie.Stop();
+    if (movie.Busy() || !layer.Available || movie.PlaybackState().Prepared)
+      throw FormatError("movie stop did not separate device and surface ownership");
+    if (!movie.RetireFinished() || layer.Available || retireCalls != 1 ||
+        !movie.RetireFinished() || retireCalls != 1)
+      throw FormatError("movie retirement failed or repeated surface release");
+    // Cancellation during preroll must also release the worker/device/queues.
+    movie.Prepare(u"ED1_ERIRI"); waitReady(now); movie.Stop();
+    if (!movie.RetireFinished() || retireCalls != 2 || movie.PlaybackState().PendingAudio ||
+        movie.PlaybackState().PendingVideo || movie.Ready() || layer.Available)
+      throw FormatError("movie preroll cancellation retained resources");
+    const auto silentPeak = [&] {
+      std::array<int16_t, 9600> samples{}; playback.Render(samples);
+      int32_t value = 0;
+      for (auto sample : std::span(samples).last(2048)) value = std::max(value, std::abs(int32_t(sample)));
+      return value;
+    }();
+    if (silentPeak > 1) throw FormatError("movie retirement left audible output");
+    pcm.close(); if (!pcm) throw FormatError("cannot save movie host PCM");
+    std::ofstream report(target / "summary.json");
+    report << "{\"passed\":true,\"asset\":\"ED1_ERIRI.usm\",\"frames\":" << frames
+           << ",\"video_presented\":" << played.VideoPresented << ",\"audio_played\":" << played.AudioPlayed
+           << ",\"pcm_peak\":" << peak << ",\"silent_tail_peak\":" << silentPeak
+           << ",\"surface_retirements\":" << retireCalls << ",\"invalid_rejections\":" << rejected
+           << ",\"ready_gate\":true,\"stop_retire_separate\":true,\"preroll_cancel\":true,"
+              "\"vm_integration\":false,\"full_eof\":false,\"manual_acceptance\":false}\n";
+    report.close(); if (!report) throw FormatError("cannot save movie host report");
+    return 0;
+  } catch (const std::exception& error) {
+    if (created) { std::ofstream out(output / "error.txt"); out << error.what() << '\n'; }
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Movie host adapter: %s", error.what()); return 1;
+  }
+}
 int RunMoviePlaybackSession(const std::filesystem::path& root,const std::filesystem::path& output,uint32_t requestedFrames){
   bool created=false;
   try{

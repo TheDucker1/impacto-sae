@@ -56,6 +56,7 @@
 #include "../io/physicalfilestream.h"
 #include "../renderer/opengl/yuvframe.h"
 #include "movieplayback.h"
+#include "scriptmovieplayback.h"
 
 #include <SDL3/SDL.h>
 extern "C" {
