@@ -36,15 +36,16 @@ texture(Cb,texturePosition).r,texture(Cr,texturePosition).r,1.0)*conversion*tint
     Planes.SubmitStrided(frame->data[0],frame->linesize[0],frame->data[1],frame->linesize[1],frame->data[2],frame->linesize[2]);
     Pts=pts;++Uploads;GlCheck("movie YUV plane upload");
   }
-  void Draw(){
+  void Draw(std::array<int32_t,4> destination={0,0,960,544},
+      std::array<uint8_t,4> color={255,255,255,255}){
     if(!Available)return;
     GLint program=0,vao=0,buffer=0;glGetIntegerv(GL_CURRENT_PROGRAM,&program);glGetIntegerv(GL_VERTEX_ARRAY_BINDING,&vao);glGetIntegerv(GL_ARRAY_BUFFER_BINDING,&buffer);
     glUseProgram(Renderer.Program);glBindVertexArray(Renderer.Vao);glBindBuffer(GL_ARRAY_BUFFER,Renderer.Buffer);
     glDisable(GL_DEPTH_TEST);glDisable(GL_STENCIL_TEST);glEnable(GL_BLEND);glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
     const GLuint ids[]={Planes.LumaId,Planes.CbId,Planes.CrId};const char* names[]={"Luma","Cb","Cr"};
     for(int i=0;i<3;++i){glActiveTexture(GL_TEXTURE0+i);glBindTexture(GL_TEXTURE_2D,ids[i]);glUniform1i(glGetUniformLocation(Renderer.Program,names[i]),i);}
-    glActiveTexture(GL_TEXTURE0);UiSpriteBlit sprite;sprite.Destination={0,0,960,544};sprite.Source={0,0,int32_t(Planes.Width),int32_t(Planes.Height)};
-    sprite.Color={255,255,255,255};Renderer.DrawQuad(sprite,{Planes.LumaId,uint32_t(Planes.Width),uint32_t(Planes.Height)},false);
+    glActiveTexture(GL_TEXTURE0);UiSpriteBlit sprite;sprite.Destination=destination;sprite.Source={0,0,int32_t(Planes.Width),int32_t(Planes.Height)};
+    sprite.Color=color;Renderer.DrawQuad(sprite,{Planes.LumaId,uint32_t(Planes.Width),uint32_t(Planes.Height)},false);
     glUseProgram(GLuint(program));glBindVertexArray(GLuint(vao));glBindBuffer(GL_ARRAY_BUFFER,GLuint(buffer));GlCheck("movie fullscreen drawing");
   }
   void Retire(){if(Available){Planes.Release();Available=false;}Pts=-1;}

@@ -6,7 +6,7 @@
 struct AVFrame;
 namespace Impacto::Saekano {
 struct MoviePlaybackState {
-  bool Prepared=false,Started=false,Finished=false,VideoEof=false,AudioEof=false;
+  bool Prepared=false,Started=false,Finished=false,VideoEof=false,AudioEof=false,Paused=false;
   uint64_t VideoDecoded=0,VideoPresented=0,AudioDecoded=0,AudioQueued=0,AudioPlayed=0;
   uint64_t PendingAudio=0,PendingVideo=0,MaxPendingAudio=0,MaxPendingVideo=0;
   int64_t PositionUs=0,FramePtsUs=-1,AudioLimit=-1;
@@ -23,6 +23,10 @@ class MoviePlayback {
   bool Ready()const;
   void Start(uint64_t now);
   void SetVolume(int32_t percent);
+  // Pause preserves the output position and presented frame. Restart prepares
+  // the same source from zero; readiness/Start remain explicit asynchronous gates.
+  void SetPaused(bool paused,uint64_t now);
+  void Restart();
   void Stop();
   const MoviePlaybackState& State()const;
  private:

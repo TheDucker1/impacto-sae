@@ -222,7 +222,7 @@ int RunMovieHostSession(const std::filesystem::path& root,const std::filesystem:
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Movie host adapter: %s", error.what()); return 1;
   }
 }
-int RunMoviePlaybackSession(const std::filesystem::path& root,const std::filesystem::path& output,uint32_t requestedFrames){
+int RunMoviePlaybackSession(const std::filesystem::path& root,const std::filesystem::path& output,uint32_t requestedFrames,bool controls){
   bool created=false;
   try{
     if(requestedFrames>600)throw FormatError("movie session prefix exceeds10s; zero selects explicit EOF");
@@ -235,10 +235,15 @@ int RunMoviePlaybackSession(const std::filesystem::path& root,const std::filesys
     UiBlitRenderer background;PcMovieFrameLayer layer;ArchiveBgmResources music(root);MusicPlayback playback(music,true);
     MoviePlayback movie;std::ofstream frames(target/"frames.jsonl"),video(target/"video.jsonl"),pcm(target/"output.pcm",std::ios::binary);
     if(!frames || !video || !pcm)throw FormatError("cannot create movie output session files");
-    size_t planeChecks=0;
+    size_t planeChecks=0;std::string firstFrame;bool restarted=false;
     movie.Present=[&](const AVFrame* frame,int64_t pts){
       layer.Present(frame,pts);video<<"{\"pts_us\":"<<pts<<",\"upload\":"<<layer.Uploads;
-      if(layer.Uploads<=2){
+      if(controls && pts==0){
+        int bytes=0;const auto hash=MovieSourceDigest(frame,frame->width,frame->height,bytes);
+        if(firstFrame.empty())firstFrame=hash;
+        else if(!restarted || hash!=firstFrame)throw FormatError("movie restart did not return to the original first frame");
+      }
+      if(!controls && layer.Uploads<=2){
         int bytes=0;const auto hash=MovieSourceDigest(frame,frame->width,frame->height,bytes);
         video<<",\"source_md5\":\""<<hash<<"\"";
         const GLuint ids[]={layer.Planes.LumaId,layer.Planes.CbId,layer.Planes.CrId};GLint alignment=0;glGetIntegerv(GL_PACK_ALIGNMENT,&alignment);glPixelStorei(GL_PACK_ALIGNMENT,1);
@@ -253,26 +258,57 @@ int RunMoviePlaybackSession(const std::filesystem::path& root,const std::filesys
       }
       video<<"}\n";
     };
-    movie.Prepare(root/"OP1.usm");
+    auto moviePath=root/"OP1.usm";std::array<int32_t,4> destination{0,0,960,544};
+    if(controls){
+      const auto environment=ExtrasScreenEnvironment::DecodeThroughMovies(SceneRead(root/"env/env_omake.dat"));
+      if(environment.Movies.empty())throw FormatError("Extras movie catalogue is empty");
+      moviePath=root/environment.Movies.front().Name;
+      destination=ResolveUiSprite({},environment.Sprites.at(0xd9e8)).Destination;
+    }
+    movie.Prepare(moviePath);
     for(size_t attempt=0;!movie.Ready() && attempt<10000;++attempt){movie.Update(0);SDL_Delay(1);}
     if(!movie.Ready() || movie.State().AudioPlayed || movie.State().VideoPresented)throw FormatError("movie decoded preroll did not remain stopped/ready");
     movie.Start(0);uint64_t rendered=0;uint32_t frame=0;
     const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(60);
-    const auto draw=[&]{background.Draw({},960,544);if(movie.State().Started && !movie.State().Finished)layer.Draw();};
+    const auto draw=[&]{background.Draw({},960,544);if(movie.State().Started && !movie.State().Finished)layer.Draw(destination);};
+    std::optional<MoviePlaybackState> paused;
     for(;requestedFrames?frame<requestedFrames:!movie.State().Finished;++frame){
       if(frame>=7000 || std::chrono::steady_clock::now()>deadline)throw FormatError("movie device output session budget exhausted");
-      if(requestedFrames>16){if(frame==16)movie.SetVolume(50);if(frame==32)movie.SetVolume(0);if(frame==48)movie.SetVolume(100);}
-      movie.Update(uint64_t(frame)*16);draw();
+      const auto now=uint64_t(frame)*16;
+      if(controls){
+        if(frame==12){movie.SetPaused(true,now);paused=movie.State();}
+        if(frame==20)movie.SetPaused(false,now);
+        if(frame==28){
+          if(!paused || movie.State().AudioPlayed<=paused->AudioPlayed || movie.State().VideoPresented<=paused->VideoPresented)
+            throw FormatError("movie resume did not advance actual audio/video");
+          movie.Restart();layer.Retire();restarted=true;
+          if(movie.State().Started || movie.State().Paused || movie.State().AudioPlayed || movie.State().VideoPresented)
+            throw FormatError("movie restart retained the previous output timeline");
+          for(size_t attempt=0;!movie.Ready() && attempt<10000;++attempt){movie.Update(now);SDL_Delay(1);}
+          if(!movie.Ready())throw FormatError("movie restart did not reach real decoded readiness");
+          movie.Start(now);
+        }
+      }else if(requestedFrames>16){if(frame==16)movie.SetVolume(50);if(frame==32)movie.SetVolume(0);if(frame==48)movie.SetVolume(100);}
+      movie.Update(now);
+      if(controls && frame>=12 && frame<20){
+        const auto& current=movie.State();
+        if(!paused || !current.Paused || current.PositionUs!=paused->PositionUs || current.AudioPlayed!=paused->AudioPlayed ||
+            current.VideoPresented!=paused->VideoPresented || current.FramePtsUs!=paused->FramePtsUs)
+          throw FormatError("paused movie advanced its output clock or frame");
+      }
+      draw();
       std::array<int16_t,1536> samples{};playback.Update(0.016f);playback.Render(samples);
       pcm.write(reinterpret_cast<const char*>(samples.data()),sizeof(samples));rendered+=768;
       const auto& s=movie.State();frames<<"{\"frame\":"<<frame<<",\"position_us\":"<<s.PositionUs<<",\"video_pts_us\":"<<s.FramePtsUs
         <<",\"video_presented\":"<<s.VideoPresented<<",\"audio_played\":"<<s.AudioPlayed<<",\"pending_audio\":"<<s.PendingAudio<<",\"pending_video\":"<<s.PendingVideo
-        <<",\"volume\":"<<s.Volume<<",\"finished\":"<<s.Finished<<"}\n";
-      if(frame==15 || frame==63)Capture(target/("frame-"+std::to_string(frame)+".bmp"),960,544);
+        <<",\"volume\":"<<s.Volume<<",\"paused\":"<<s.Paused<<",\"finished\":"<<s.Finished<<"}\n";
+      if(!controls && (frame==15 || frame==63))Capture(target/("frame-"+std::to_string(frame)+".bmp"),960,544);
       SdlCheck(SDL_GL_SwapWindow(window.Window),"movie session swap");
     }
-    movie.Update(uint64_t(frame)*16);draw();if(!movie.State().Finished)Capture(target/"frame-final.bmp",960,544);
-    const auto state=movie.State();if(planeChecks!=6 || !state.VideoPresented || !state.AudioPlayed)throw FormatError("movie session did not present actual video/audio");
+    movie.Update(uint64_t(frame)*16);draw();if(!controls && !movie.State().Finished)Capture(target/"frame-final.bmp",960,544);
+    const auto state=movie.State();if((!controls && planeChecks!=6) || !state.VideoPresented || !state.AudioPlayed)
+      throw FormatError("movie session did not present actual video/audio");
+    if(controls && (!paused || !restarted || firstFrame.empty() || state.Paused))throw FormatError("movie controls witness did not finish");
     if(!requestedFrames && (!state.Finished || !state.AudioEof || !state.VideoEof || state.AudioPlayed!=uint64_t(state.AudioLimit)))
       throw FormatError("movie device EOF did not drain actual frame/audio queues");
     movie.Stop();layer.Retire();if(movie.State().Prepared || layer.Available)throw FormatError("movie output did not retire");
@@ -280,7 +316,7 @@ int RunMoviePlaybackSession(const std::filesystem::path& root,const std::filesys
     std::ofstream report(target/"session.json");report<<"{\"passed\":true,\"full_eof\":"<<(requestedFrames==0)<<",\"rendered_frames\":"<<rendered
       <<",\"audio_played\":"<<state.AudioPlayed<<",\"audio_limit\":"<<state.AudioLimit<<",\"video_presented\":"<<state.VideoPresented
       <<",\"position_us\":"<<state.PositionUs<<",\"gpu_plane_checks\":"<<planeChecks<<",\"max_pending_video\":"<<state.MaxPendingVideo
-      <<",\"max_pending_audio\":"<<state.MaxPendingAudio<<",\"retired\":true,\"manual_acceptance\":false}\n";
+      <<",\"max_pending_audio\":"<<state.MaxPendingAudio<<",\"controls\":"<<controls<<",\"retired\":true,\"manual_acceptance\":false}\n";
     report.close();if(!report)throw FormatError("cannot save movie output summary");return 0;
   }catch(const std::exception& error){
     if(created){std::ofstream f(output/"error.txt");f<<std::string(error.what()).substr(0,2048)<<'\n';}

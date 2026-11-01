@@ -1,6 +1,7 @@
 #pragma once
 
 #include "uisprite.h"
+#include <map>
 
 namespace Impacto::Saekano {
 struct AlbumEnvironment {
@@ -48,4 +49,24 @@ struct AlbumConfiguration {
 };
 AlbumConfiguration LoadAlbumConfiguration(Bytes firstDat,
                                           std::span<const uint8_t> environment);
+// The counted CG section precedes movie data in env_omake. Retain it for the
+// album owner instead of skipping a fixed byte count to reach movie records.
+// Keys identify native configuration fields, not serialized file offsets.
+struct ExtrasScreenEnvironment {
+  struct Caption {std::array<int32_t,4> Words{};std::u16string Text;};
+  struct Movie {std::u16string Name,Title;};
+  AlbumEnvironment Common;
+  std::map<uint16_t,uint32_t> Scalars;
+  std::map<uint16_t,std::array<int32_t,2>> Points;
+  std::map<uint16_t,std::array<int32_t,4>> Rectangles;
+  std::map<uint16_t,UiSpriteDefinition> Sprites;
+  std::map<uint16_t,std::u16string> Strings;
+  std::map<uint16_t,std::vector<UiSpriteDefinition>> SpriteTables;
+  std::vector<std::array<int32_t,4>> AlbumRectangles;
+  std::vector<Caption> AlbumCaptions;
+  std::vector<Movie> Movies;
+  size_t PrefixBytes=0;
+  // Reader801d1522..1e0a, through movie preview animation period dad0.
+  static ExtrasScreenEnvironment DecodeThroughMovies(std::span<const uint8_t> bytes);
+};
 }  // namespace Impacto::Saekano

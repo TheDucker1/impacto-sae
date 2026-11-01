@@ -30,13 +30,15 @@ struct MoviePlayback::Impl {
   std::optional<uint64_t> TailAt;
   int64_t TailPosition=0,LastFrameEnd=0,FramePeriod=0;
   bool HasAudio=false;
+  std::filesystem::path Path;
+  std::optional<uint64_t> PausedAt;
   ~Impl(){Close();}
   void Close(){
     if(Source){alSourceStop(Source);alSourcei(Source,AL_BUFFER,0);alDeleteSources(1,&Source);Source=0;}
     if(Buffers[0]){alDeleteBuffers(ALsizei(Buffers.size()),Buffers.data());Buffers={};}
     if(Decoder){Decoder->Stop();Decoder.reset();}
     swr_free(&Convert);Video.clear();PcmQueue.clear();Queued.clear();Free.clear();
-    State.Prepared=false;State.Started=false;State.PendingAudio=State.PendingVideo=0;
+    State.Prepared=false;State.Started=false;State.Paused=false;PausedAt.reset();State.PendingAudio=State.PendingVideo=0;
   }
   void Reap(){
     if(!Source)return;
@@ -61,7 +63,7 @@ struct MoviePlayback::Impl {
       const auto id=Free.front();Free.pop_front();alBufferData(id,AL_FORMAT_STEREO16,pcm.data(),ALsizei(pcm.size()*2),48000);
       alSourceQueueBuffers(Source,1,&id);Queued.push_back({id,frames});State.PendingAudio-=frames;State.AudioQueued+=frames;
     }
-    if(State.Started && !Queued.empty()){
+    if(State.Started && !State.Paused && !Queued.empty()){
       ALint status=0;alGetSourcei(Source,AL_SOURCE_STATE,&status);if(status!=AL_PLAYING)alSourcePlay(Source);
     }
     CheckMovieAl();
@@ -113,6 +115,7 @@ MoviePlayback::MoviePlayback():impl_(std::make_unique<Impl>()){}
 MoviePlayback::~MoviePlayback()=default;
 void MoviePlayback::Prepare(const std::filesystem::path& path){
   auto& s=*impl_;const auto volume=s.State.Volume;s.Close();s.State={};s.State.Volume=volume;s.PlayedBase=s.Converted=0;s.TailAt.reset();s.LastFrameEnd=0;
+  s.Path=path;
   s.Decoder=std::make_unique<Video::FFmpegPlayer>();s.Decoder->InitDecodeOnly(true);Io::Stream* file=nullptr;
   if(Io::PhysicalFileStream::Create(path.string(),&file)!=IoError_OK)throw FormatError("cannot open movie");
   s.Decoder->Play(file,false,false);if(!s.Decoder->IsPlaying || !s.Decoder->VideoStream)throw FormatError("movie decoder unavailable");
@@ -140,10 +143,33 @@ void MoviePlayback::SetVolume(int32_t percent){
   if(percent<0 || percent>100)throw FormatError("movie volume outside0..100");impl_->State.Volume=percent;
   if(impl_->Source){alSourcef(impl_->Source,AL_GAIN,float(percent)/100);CheckMovieAl();}
 }
+void MoviePlayback::SetPaused(bool paused,uint64_t now){
+  auto& s=*impl_;
+  if(!s.State.Prepared || !s.State.Started || s.State.Finished)
+    throw FormatError("movie pause requires active playback");
+  if(s.State.Paused==paused)return;
+  if(paused){
+    Update(now);
+    // Update can finish a movie at the boundary; there is then no live source
+    // to pause. Keep the actual EOF result rather than resurrecting playback.
+    if(s.State.Finished)return;
+    if(s.Source){alSourcePause(s.Source);CheckMovieAl();}
+    s.PausedAt=now;s.State.Paused=true;
+  }else {
+    if(!s.PausedAt || now<*s.PausedAt)throw FormatError("movie resume precedes pause");
+    const auto elapsed=now-*s.PausedAt;
+    s.StartedAt+=elapsed;if(s.TailAt)*s.TailAt+=elapsed;
+    s.State.Paused=false;s.PausedAt.reset();if(s.HasAudio)s.Fill();
+  }
+}
+void MoviePlayback::Restart(){
+  if(impl_->Path.empty())throw FormatError("movie restart has no source");
+  const auto path=impl_->Path;Prepare(path);
+}
 void MoviePlayback::Update(uint64_t now){
   auto& s=*impl_;if(!s.State.Prepared || s.State.Finished)return;
   s.Reap();s.Pump();if(s.HasAudio)s.Fill();
-  if(!s.State.Started)return;
+  if(!s.State.Started || s.State.Paused)return;
   int64_t position=s.HasAudio?av_rescale(int64_t(s.State.AudioPlayed),1000000,48000):int64_t(now-s.StartedAt)*1000;
   if(s.HasAudio && s.State.AudioEof && !s.State.PendingAudio && s.Queued.empty()){
     if(!s.TailAt){s.TailAt=now;s.TailPosition=position;}position=s.TailPosition+int64_t(now-*s.TailAt)*1000;

@@ -102,6 +102,49 @@ AlbumEnvironment AlbumEnvironment::Decode(std::span<const uint8_t> bytes) {
   result.PrefixBytes=bytes.size()-reader.Remaining();
   return result;
 }
+ExtrasScreenEnvironment ExtrasScreenEnvironment::DecodeThroughMovies(std::span<const uint8_t> bytes){
+  ExtrasScreenEnvironment e;e.Common=AlbumEnvironment::Decode(bytes);
+  PayloadReader r(bytes.subspan(e.Common.PrefixBytes));
+  const auto table=[&](size_t stride,auto read){
+    const auto n=r.U32();r.CheckCount(n,stride);
+    std::vector<decltype(read())> result;result.reserve(n);
+    for(uint32_t i=0;i<n;++i)result.push_back(read());return result;
+  };
+  const auto pointValue=[&]{return std::array<int32_t,2>{r.I32(),r.I32()};};
+  const auto rectValue=[&]{return std::array<int32_t,4>{r.I32(),r.I32(),r.I32(),r.I32()};};
+  const auto spriteValue=[&]{return UiSpriteDefinition::ReadLegacy(r);};
+  const auto scalar=[&](uint16_t at){e.Scalars.emplace(at,r.U32());};
+  const auto point=[&](uint16_t at){e.Points.emplace(at,pointValue());};
+  const auto rect=[&](uint16_t at){e.Rectangles.emplace(at,rectValue());};
+  const auto sprite=[&](uint16_t at){e.Sprites.emplace(at,spriteValue());};
+  const auto string=[&](uint16_t at){e.Strings.emplace(at,r.String());};
+  const auto sprites=[&](uint16_t at){e.SpriteTables.emplace(at,table(34,spriteValue));};
+  sprites(0xd228);scalar(0xd238);rect(0xd23c);
+  sprite(0xd24c);sprite(0xd270);sprite(0xd294);point(0xd2b8);point(0xd2c0);
+  scalar(0xd2c8);scalar(0xd2cc);sprite(0xd2d0);scalar(0xd2f4);rect(0xd2f8);
+  point(0xd308);scalar(0xd310);point(0xd314);sprite(0xd31c);point(0xd340);
+  sprite(0xd348);point(0xd36c);sprite(0xd374);sprite(0xd398);point(0xd3bc);point(0xd3c4);
+  string(0xd3cc);point(0xd404);scalar(0xd40c);point(0xd410);scalar(0xd418);sprite(0xd41c);
+  string(0xd440);scalar(0xd478);sprite(0xd47c);scalar(0xd4a0);sprite(0xd4a4);
+  scalar(0xd4c8);sprite(0xd4cc);sprite(0xd4f0);sprite(0xd514);scalar(0xd538);
+  sprite(0xd53c);sprite(0xd560);point(0xd584);sprite(0xd58c);sprite(0xd5b0);
+  sprite(0xd5d4);sprite(0xd5f8);point(0xd61c);sprite(0xd624);
+  sprites(0xd648);sprites(0xd658);sprites(0xd668);rect(0xd678);rect(0xd688);
+  point(0xd698);scalar(0xd6a0);scalar(0xd6a4);sprite(0xd6a8);scalar(0xd6cc);scalar(0xd6d0);
+  sprite(0xd6d4);sprite(0xd6f8);e.AlbumRectangles=table(16,rectValue);
+  point(0xd72c);scalar(0xd734);scalar(0xd738);point(0xd73c);scalar(0xd744);
+  sprite(0xd748);point(0xd76c);scalar(0xd774);point(0xd778);point(0xd780);scalar(0xd788);
+  e.AlbumCaptions=table(20,[&]{Caption c;c.Words=rectValue();c.Text=r.String();return c;});
+  string(0xd79c);string(0xd7d4);string(0xd80c);scalar(0xd844);string(0xd848);
+  scalar(0xd880);scalar(0xd884);scalar(0xd888);
+  e.Movies=table(8,[&]{Movie m;m.Name=r.String();m.Title=r.String();return m;});
+  string(0xd89c);sprite(0xd8d4);scalar(0xd8f8);sprite(0xd8fc);sprite(0xd920);sprite(0xd944);
+  rect(0xd968);point(0xd978);scalar(0xd980);rect(0xd984);rect(0xd994);scalar(0xd9a4);
+  point(0xd9a8);point(0xd9b0);scalar(0xd9b8);scalar(0xd9bc);sprite(0xd9c0);scalar(0xd9e4);
+  sprite(0xd9e8);sprite(0xda0c);sprite(0xda30);sprite(0xda54);point(0xda78);scalar(0xda80);
+  sprite(0xda84);sprite(0xdaa8);scalar(0xdacc);scalar(0xdad0);
+  e.PrefixBytes=bytes.size()-r.Remaining();return e;
+}
 std::vector<AlbumEntry> DecodeAlbumEntries(std::span<const uint8_t> bytes,
                                              uint32_t imageColumns) {
   if (imageColumns > 20)
