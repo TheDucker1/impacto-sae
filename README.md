@@ -24,6 +24,12 @@ PC ordinary dialogue controls: Enter/gamepad East confirms; Space/gamepad West r
 unfinished text or toggles the completed dialogue window; Escape/gamepad Start
 opens the scenario menu. [Visibility behavior and verification](doc/saekano/MESSAGE_VISIBILITY.md).
 
+Build/package and normal launch instructions are in
+[PC_PLAYABLE_BUILD.md](doc/saekano/PC_PLAYABLE_BUILD.md). The PC build script
+defaults to the cached graphical/headless targets without running tests or
+reinstalling dependencies. Packaged launch uses external original data and an
+explicit writable PC save directory.
+
 On the documented Windows Build Tools installation, build and test its standalone
 C++ core with `./tools/saekano/build.ps1`. This does not require the graphical
 application's dependencies. See [the VM bridge documentation](doc/saekano/VM_PROTOCOL.md)
