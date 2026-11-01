@@ -70,6 +70,7 @@ class VmBackend {
   virtual ApproachMissionAudio* MissionVoices() { return nullptr; }
   virtual const ApproachMissionEnvironment* MissionConfig() const { return nullptr; }
   virtual const ApproachSelectionEnvironment* SelectionConfig() const { return nullptr; }
+  virtual const SharedSelectionEnvironment* OrdinaryChoiceConfig() const { return nullptr; }
   virtual const ApproachResultEnvironment* ApproachResultConfig() const { return nullptr; }
   virtual ApproachResultHost* ResultHost() { return nullptr; }
   virtual BgmResources* Music() { return nullptr; }
@@ -131,6 +132,7 @@ class VirtualMachine {
   const QuakeAnimation* CurrentQuake() const;
   const ChapterTitleAnimation* CurrentChapter() const;
   std::span<const ApproachEntry> CurrentApproachEntries() const;
+  const ChoiceMenu* CurrentOrdinaryChoice() const;
   const ProfileMode* CurrentProfile() const { return profile_.get(); }
   VmEvent Step(uint64_t now, const CommandInput& input = {});
   void UpdateSkipAuto(SkipAutoState& policy, const SkipAutoInput& input,
@@ -163,6 +165,7 @@ class VirtualMachine {
     CompletedCommand Routing;
     std::optional<MessageCommand> Message;
     std::optional<std::vector<ApproachEntry>> ApproachEntries;
+    std::optional<ChoiceMenu> OrdinaryMenu;
     std::optional<PlayBgmCommand> PlayBgm;
     std::optional<PlaySeCommand> PlaySe;
     std::optional<StopSeCommand> StopSe;

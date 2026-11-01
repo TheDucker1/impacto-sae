@@ -22,7 +22,8 @@ enum class SceneDrawKind : uint32_t {
   FreeImage,
   Fill,
   AnimationGroup,
-  ApproachSelection
+  ApproachSelection,
+  OrdinaryChoice
 };
 struct SceneDrawPass {
   SceneDrawKind Kind;
@@ -32,6 +33,7 @@ struct SceneDrawPass {
 struct SceneQueueInputs {
   bool ModeVisible = false;          // manager+14a5c
   bool ApproachSelectionVisible = false; // incomplete3f6 callback, bucket18
+  bool OrdinaryChoiceVisible = false; // ordinary65 callback, bucket18
   bool ForegroundLetterbox = false;  // manager+1c60
   int32_t EffectPlacement = 0;       // manager+1bfc; only 1 moves it forward
   bool MessageHidden = false;        // manager+1525

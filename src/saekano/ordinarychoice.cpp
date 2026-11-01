@@ -1,6 +1,8 @@
 #include "ordinarychoice.h"
 #include "formats.h"
+#include "commands.h"
 #include <bit>
+#include <cmath>
 
 namespace Impacto::Saekano {
 namespace {
@@ -95,5 +97,51 @@ bool UpdateOrdinaryChoice(OrdinaryChoiceState& s, const SharedSelectionEnvironme
 std::optional<size_t> CompletedOrdinaryChoice(const OrdinaryChoiceState& s) {
   if (!s.Started || s.Phase != 14 || s.Selected < 0) return {};
   return size_t(s.Selected);
+}
+std::vector<std::array<int32_t,4>> OrdinaryChoiceHitRegions(
+    const SharedSelectionEnvironment& e, const OrdinaryChoiceState& s) {
+  const auto& points = Points(e, s.Opacity.size());
+  std::vector<std::array<int32_t,4>> result;
+  for (size_t i=0;i<s.Opacity.size();++i)
+    result.push_back({points[i][0],points[i][1]+(int32_t(i)==s.Selected?s.Slide.Current:0),
+                      e.Sprites[0].Width,e.Sprites[0].Height});
+  return result;
+}
+std::vector<OrdinaryChoiceDraw> BuildOrdinaryChoiceDraws(
+    const SharedSelectionEnvironment& e, const OrdinaryChoiceState& s,
+    std::span<const ChoiceEntry> entries, std::span<const uint8_t> history,
+    int32_t utilityFontSize,
+    const std::function<int32_t(const std::u16string&,int32_t)>& measure) {
+  std::vector<OrdinaryChoiceDraw> result;
+  if(!s.Started || !s.Visible)return result;
+  if(entries.size()!=s.Opacity.size() || (!history.empty() && history.size()<entries.size()) || !measure)
+    throw FormatError("ordinary choice draw inputs are incomplete");
+  const auto& points=Points(e,entries.size());
+  const float scaled=float(utilityFontSize)*e.TextScale;
+  if(!std::isfinite(scaled) || scaled<0 || scaled>1024)throw FormatError("invalid ordinary choice font size");
+  const int32_t size=int32_t(scaled);
+  const auto add=[](int32_t a,int32_t b){return std::bit_cast<int32_t>(uint32_t(a)+uint32_t(b));};
+  for(size_t i=0;i<entries.size();++i){
+    const bool selected=int32_t(i)==s.Selected;
+    const auto alpha=uint8_t(s.Opacity[i].Current);
+    auto card=e.Sprites[selected?0:1];card.Alignment=0;
+    card.X=points[i][0];card.Y=add(points[i][1],selected?s.Slide.Current:0);
+    card.Color={255,255,255,alpha};
+    OrdinaryChoiceDraw draw;
+    draw.Sprite=ResolveUiSprite({ProfileTextureSection::MainUi,-1,selected?18u:19u},card);
+    result.push_back(draw);
+    if(selected){
+      auto marker=e.Sprites[2];marker.Alignment=0;
+      marker.X=add(points[i][0],marker.X);marker.Y=add(add(points[i][1],marker.Y),s.Slide.Current);
+      marker.Color[3]=alpha;
+      draw.Sprite=ResolveUiSprite({ProfileTextureSection::MainUi,-1,20},marker);result.push_back(draw);
+    }
+    draw={};draw.IsText=true;draw.Text=entries[i].Label;draw.FontSize=size;
+    draw.Position={add(add(points[i][0],e.LayoutWords[4]),-measure(draw.Text,size)/2),
+                    add(add(points[i][1],e.LayoutWords[5]),s.Slide.Current)};
+    draw.Color=e.TextColors[!history.empty() && history[i]?1:0];draw.Color[3]=alpha;
+    result.push_back(std::move(draw));
+  }
+  return result;
 }
 }

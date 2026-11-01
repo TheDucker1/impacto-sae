@@ -1055,7 +1055,7 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
                       bool captureWaitingInput = false,bool captureConfirmInput = false,int32_t captureMenuInput = 0,
                       const std::filesystem::path& capturePlan = {},
                       const std::filesystem::path& progressRoot = {},const NativeSlotData* slotProgress=nullptr,
-                      const NativePendingSlotLoad* load=nullptr) {
+                      const NativePendingSlotLoad* load=nullptr,uint8_t captureOrdinaryChoice=0) {
   const bool capture = !captureDirectory.empty();
   const bool captureEnding=captureMenuInput==16;
   const bool captureParticles=captureMenuInput==4;
@@ -1200,6 +1200,7 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
   backend.MissionVoiceBank=&missionVoice;
   backend.MissionSettings=ApproachMissionEnvironment::Decode(SceneRead(root/"env/env_approach.dat"));
   backend.SelectionSettings=ApproachSelectionEnvironment::Decode(SceneRead(root/"env/env_approach.dat"));
+  backend.OrdinaryChoiceSettings=selectionShared;
   backend.ApproachConfig = ApproachGaugeEnvironment::Decode(SceneRead(root / "env/env_approach.dat"));
   backend.MusicResources = &music;
   backend.SeArchives = &sounds;
@@ -1416,13 +1417,40 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
   std::optional<std::pair<int32_t,size_t>> previousBattleUi;
   std::map<uint16_t, bool> actorEligibility;
   WidgetInputHistory menuPointer;
+  WidgetInputHistory ordinaryPointer;
+  std::vector<WidgetEventHistory> ordinaryRows;
+  std::pair<int32_t,int32_t> ordinaryIdentity{-1,-1};
   std::vector<WidgetEventHistory> menuParents,menuChildren,menuArrows;
   std::pair<int32_t,int32_t> menuIdentity{-1,-1};
   int32_t menuChildParent=-1;
+  bool loadedMessageAdvanced=false;
+  uint8_t ordinaryCaptureStage=0;
+  std::optional<std::pair<int32_t,int32_t>> previousOrdinaryState;
   const uint32_t frameBudget = (captureChapter || captureProfile)?220000:(captureParticles || captureResult)?100000:(captureFromCommand ? (captureBranch?40000:20000) : 2000);
   for (uint32_t frame = 0; !quit && (!capture || frame < frameBudget); ++frame) {
     const uint64_t now =
         capture ? uint64_t(frame) * 16 : SDL_GetTicks() - epoch;
+    if(captureOrdinaryChoice){
+      const auto key=[&](SDL_Keycode code){for(const auto type:{SDL_EVENT_KEY_DOWN,SDL_EVENT_KEY_UP}){
+        SDL_Event e{};e.type=type;e.key.windowID=SDL_GetWindowID(window.Window);e.key.key=code;e.key.down=type==SDL_EVENT_KEY_DOWN;
+        SdlCheck(SDL_PushEvent(&e),"ordinary choice capture key");}};
+      if(!loadedMessageAdvanced && vm->State().CurrentCommandIndex==load->Context.ResumeCommand && backend.CursorVisible()){
+        key(SDLK_RETURN);loadedMessageAdvanced=true;
+      }
+      const auto& choice=vm->State().OrdinaryChoice;
+      if(choice.Visible && choice.Phase==4){
+        if(captureOrdinaryChoice==1){
+          if(ordinaryCaptureStage==0){key(SDLK_DOWN);ordinaryCaptureStage=1;}
+          else if(ordinaryCaptureStage==1 && choice.Selected==0){key(SDLK_RETURN);ordinaryCaptureStage=2;}
+        }else if(ordinaryCaptureStage<2){
+          const auto box=OrdinaryChoiceHitRegions(selectionShared,choice).at(1);
+          SDL_Event e{};e.type=ordinaryCaptureStage?SDL_EVENT_MOUSE_BUTTON_UP:SDL_EVENT_MOUSE_BUTTON_DOWN;
+          e.button.windowID=SDL_GetWindowID(window.Window);e.button.button=SDL_BUTTON_LEFT;e.button.down=ordinaryCaptureStage==0;
+          e.button.x=float(box[0]+box[2]/2);e.button.y=float(box[1]+box[3]/2);
+          SdlCheck(SDL_PushEvent(&e),"ordinary choice capture pointer");++ordinaryCaptureStage;
+        }
+      }
+    }
     particleClock=now;
     messageCursor.Update(now);
     CommandInput input;
@@ -1629,7 +1657,7 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
       }
       if (event.type == SDL_EVENT_QUIT ||
           (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE &&
-           !vm->State().ApproachSelection.Visible))
+           !vm->State().ApproachSelection.Visible && !vm->State().OrdinaryChoice.Visible))
         quit = true;
       if(vm->CurrentProfile()){profilePresenter.Handle(event,input.Profile);continue;}
       if(battleHost->State().Enabled && battleHost->Phase()==4) {
@@ -1648,6 +1676,18 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
         input.Approach.Previous|=event.key.key==SDLK_UP;
         input.Approach.Next|=event.key.key==SDLK_DOWN;
         input.Approach.Back|=event.key.key==SDLK_ESCAPE || event.key.key==SDLK_BACKSPACE;
+      }
+      if(vm->State().OrdinaryChoice.Visible){
+        if(event.type==SDL_EVENT_KEY_DOWN && !event.key.repeat){
+          input.Ordinary.Previous|=event.key.key==SDLK_UP;
+          input.Ordinary.Next|=event.key.key==SDLK_DOWN;
+          input.Ordinary.Accept|=event.key.key==SDLK_RETURN;
+        }
+        if(event.type==SDL_EVENT_GAMEPAD_BUTTON_DOWN){
+          input.Ordinary.Previous|=event.gbutton.button==SDL_GAMEPAD_BUTTON_DPAD_UP;
+          input.Ordinary.Next|=event.gbutton.button==SDL_GAMEPAD_BUTTON_DPAD_DOWN;
+          input.Ordinary.Accept|=event.gbutton.button==SDL_GAMEPAD_BUTTON_EAST;
+        }
       }
       if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
           event.key.key == SDLK_RETURN)
@@ -1681,6 +1721,7 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
         sceneInput.CancelPointer();
         battleHost->CancelPointer();battleFaces=0;
         menuPointer={};menuParents.clear();menuChildren.clear();menuArrows.clear();menuIdentity={-1,-1};
+        ordinaryPointer={};ordinaryRows.clear();ordinaryIdentity={-1,-1};
       }
     }
     if (quit) break;
@@ -1769,11 +1810,28 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
         }
       } else if(menuState.Phase==7)input.Approach.ChildReleased=released(menuChildren,regions.Children);
     } else {menuIdentity={-1,-1};menuChildParent=-1;}
+    const auto& ordinary=vm->State().OrdinaryChoice;
+    if(ordinary.Visible){
+      const auto identity=std::pair(vm->State().ScriptFileId,vm->State().CurrentCommandIndex);
+      if(identity!=ordinaryIdentity){
+        ordinaryIdentity=identity;ordinaryPointer={};ordinaryRows.clear();
+        for(size_t i=0;i<ordinary.Opacity.size();++i)ordinaryRows.emplace_back(inputEnvironment.HoldFrames);
+        sceneInput.CancelPointer();
+      }
+      ordinaryPointer.BeginFrame(pointerSnapshot);
+      const auto regions=OrdinaryChoiceHitRegions(selectionShared,ordinary);
+      for(size_t i=0;i<ordinaryRows.size();++i){
+        auto& row=ordinaryRows[i];row.Update(SampleWidgetContact(regions[i],ordinaryPointer.Current[0],
+            ordinaryPointer.Previous[0],row.TrackedId,ordinaryPointer.Velocity(0)));
+        ordinaryPointer.Publish(row.Flags);
+        if(ordinary.Phase==4 && !input.Ordinary.Released && (row.Flags&8))input.Ordinary.Released=i;
+      }
+    }else{ordinaryIdentity={-1,-1};ordinaryRows.clear();}
     resultPointer.BeginFrame(pointerSnapshot);
     resultTouch.Update(SampleWidgetContact({0,0,960,544},resultPointer.Current[0],resultPointer.Previous[0],
         resultTouch.TrackedId,resultPointer.Velocity(0)));
     resultPointer.Publish(resultTouch.Flags);
-    const bool ordinaryRelease=!menuState.Visible && sceneInput.UpdatePrimary();
+    const bool ordinaryRelease=!menuState.Visible && !ordinary.Visible && sceneInput.UpdatePrimary();
     const bool resultInput=vm->Opcode()==0x3f8 || vm->Opcode()==0x3f9;
     const bool pointerAdvance=resultInput ? resultTouch.Enabled && (resultTouch.Flags&8) : ordinaryRelease;
     input.Advance = input.Advance || pointerAdvance;
@@ -1813,6 +1871,21 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
       if(!battleFrame || *battleFrame!=now){battleHost->BeginFrame(now,pointerSnapshot,battleFaces);battleFrame=now;}
       const bool acceptedInput=input.Advance;
       const auto step = vm->Step(now, input);
+      if(captureOrdinaryChoice && step.Opcode==0x65){
+        const auto& choice=vm->State().OrdinaryChoice;const auto status=std::pair(choice.Phase,choice.Selected);
+        if(previousOrdinaryState!=status){
+          events<<"{\"kind\":\"ordinary_choice_state\",\"now\":"<<now<<",\"phase\":"<<choice.Phase<<",\"selected\":"<<choice.Selected<<"}\n";
+          previousOrdinaryState=status;
+        }
+        if(step.Boundary==VmBoundary::CommandCompletedBeforeDispatch){
+          const auto selected=CompletedOrdinaryChoice(choice);const auto* menu=vm->CurrentOrdinaryChoice();
+          if(!selected || !menu || *selected!=(captureOrdinaryChoice==1?0u:1u))throw FormatError("ordinary choice capture selected another entry");
+          const auto* history=FindChoiceHistory(registeredHistory,step.Script,uint32_t(step.Command));
+          if(!history || *selected>=history->Flags.size() || !history->Flags[*selected])throw FormatError("ordinary choice history did not commit");
+          events<<"{\"kind\":\"ordinary_choice_committed\",\"script\":"<<step.Script<<",\"command\":"<<step.Command
+            <<",\"ordinal\":"<<*selected<<",\"destination\":"<<menu->Entries[*selected].Destination<<",\"history_marked\":true}\n";
+        }
+      }
       if(captureSelection && step.Script==343 && (captureBattleResult || step.Command==56) && step.Opcode==0x3f2) {
         if(!captureBattleResult)captureActive=true;const auto& selection=battleHost->State();const auto sample=std::pair(selection.Phase,selection.Ordinal);
         if(previousBattleUi!=sample || vm->State().BattleSelection.Completed) {
@@ -2138,7 +2211,7 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
     renderer.SetFilter(*state.ScreenFilter.Mode, *state.ScreenFilter.Intensity);
     const auto* activeMessage = backend.CurrentMessage();
     const bool approach=state.ApproachMode.Enabled.value_or(false);
-    if (!endingState.Started && !activeMessage && !approach && !state.BattleVersus.Visible && !state.BattleResult.Visible && !state.TitleDisplay.value_or(false)) {
+    if (!endingState.Started && !activeMessage && !approach && !state.OrdinaryChoice.Visible && !state.BattleVersus.Visible && !state.BattleResult.Visible && !state.TitleDisplay.value_or(false)) {
       UiSpriteBlit white;
       white.Destination = {0, 0, 960, 544};
       white.Color = {255, 255, 255, 255};
@@ -2179,6 +2252,7 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
     gates.ForegroundLetterbox=state.Letterbox.Foreground;
     gates.SplitMessage=state.BattleEntry.Enabled;
     gates.ApproachSelectionVisible=state.ApproachSelection.Visible;
+    gates.OrdinaryChoiceVisible=state.OrdinaryChoice.Visible;
     gates.EffectPlacement = state.RuleWipe.Parameter;
     for (size_t c = 0; c < 2; ++c)
       for (size_t i = 0; i < 4; ++i) {
@@ -2252,6 +2326,23 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
             renderer.DrawQuad(sprite, renderer.Textures.at(sprite.Texture), false, false, effect.Value);
           }
           spriteDraws.push_back(sprite);
+        }
+      } else if(pass.Kind==SceneDrawKind::OrdinaryChoice) {
+        renderer.SetFilter(0,0);glUniform1i(renderer.AlphaMode,1);
+        const auto* menu=vm->CurrentOrdinaryChoice();
+        if(!menu || !state.ReadColorEnabled)throw FormatError("ordinary choice draw owner is missing");
+        std::vector<uint8_t> history(menu->Entries.size());
+        if(*state.ReadColorEnabled && !historySettings.SuppressReadHistory){
+          if(const auto* row=FindChoiceHistory(registeredHistory,state.ScriptFileId,uint32_t(state.CurrentCommandIndex))){
+            if(row->Flags.size()<history.size())throw FormatError("ordinary choice history is truncated");
+            std::copy_n(row->Flags.begin(),history.size(),history.begin());
+          }
+        }
+        for(const auto& draw:BuildOrdinaryChoiceDraws(selectionShared,state.OrdinaryChoice,menu->Entries,history,utility.Size,
+            [&](const auto& text,int32_t size){return int32_t(MeasurePvfText(font.Cached(),text,uint32_t(size),font.NominalSize()));})){
+          if(draw.IsText){fontTextures.DrawString(renderer,font,draw.Text,draw.Position[0],draw.Position[1],uint32_t(draw.FontSize),draw.Color);
+            textDraws.push_back({draw.Text,draw.Position,uint32_t(draw.FontSize),draw.Color});}
+          else{uploadMain(draw.Sprite.Texture.Entry);drawSprite(draw.Sprite);spriteDraws.push_back(draw.Sprite);}
         }
       } else if(pass.Kind==SceneDrawKind::ApproachSelection) {
         particleFragment.SetBlendMode(1);
@@ -2427,6 +2518,8 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
                             std::to_string(skipAuto.Auto) + ':' + std::to_string(autoKeyHeld);
     if (captureVoiced) signature = std::to_string(message->Command) + ':' +
         std::to_string(message->Reveal.Revealed) + ':' + std::to_string(message->VoiceGate.Phase);
+    if(state.OrdinaryChoice.Visible){signature+=":choice:"+std::to_string(state.OrdinaryChoice.Phase)+':'+std::to_string(state.OrdinaryChoice.Selected)+':'+std::to_string(state.OrdinaryChoice.Slide.Current/16);
+      for(const auto& entryTween:state.OrdinaryChoice.Opacity)signature+=':'+std::to_string(entryTween.Current/32);}
     if(endingState.Started)signature+=':'+std::to_string(endingState.Phase)+':'+std::to_string(endingHost.Modal.Phase)+':'+std::to_string(endingHost.Modal.Opacity.Current/25)+':'+std::to_string(saveHost?saveHost->Modal.Phase:0)+':'+std::to_string(saveHost?saveHost->Modal.Opacity.Current/25:0);
     signature += ':' + std::to_string(state.RuleWipe.Active) + ':' +
         std::to_string(state.RuleWipe.Auxiliary) + ':' + std::to_string(state.RuleWipe.Progress.value_or(0) / 25);
@@ -2500,6 +2593,8 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
              << ",\"message_command\":" << message->Command
              << ",\"message_present\":" << (activeMessage?"true":"false")
              << ",\"approach_enabled\":" << (approach?"true":"false")
+             << ",\"ordinary_choice\":[" << state.OrdinaryChoice.Phase << ',' << state.OrdinaryChoice.Selected << ','
+             << state.OrdinaryChoice.Slide.Current << ',' << state.OrdinaryChoice.Visible << ']'
              << ",\"approach_mission\":[" << state.ApproachMission.Visible << ',' << state.ApproachMission.Stage
              << ',' << state.ApproachMission.PendingStage.value_or(-1) << ',' << state.ApproachMission.Mission << ']'
              << ",\"mission_voice_position_ms\":" << playback.MissionVoicePosition()
@@ -2530,11 +2625,11 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
              << (*state.ReadColorEnabled ? "true" : "false")
              << ",\"random_seed\":" << seed
              << ",\"random_draws\":" << state.Random.Draws()
-             << ",\"playback_host_reused\":true,\"fresh_unread\":true,"
-                "\"primary_pointer_bound\":true,\"synthetic_pointer_capture\":"
+             << ",\"playback_host_reused\":true,\"fresh_unread\":" << (load?"false,":"true,")
+             << "\"primary_pointer_bound\":true,\"synthetic_pointer_capture\":"
              << (!captureAuto ? "true," : "false,")
              << "\"prelude_rendered\":false,\"auto_key_bound\":true,\"widget_mode\":\"fresh_controls\","
-                "\"unbound_passes\":[\"restored_read_history\",\"widget_long_hold_"
+                "\"unbound_passes\":[\"widget_long_hold_"
                 "visual\","
                 "\"letterbox\",\"animation_"
                 "groups\",\"other_particle_groups\"],\"auto_state\":[" << skipAuto.Auto << ','
@@ -4879,9 +4974,9 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
             if(continueStage==34)mouse(0,70,520);
             if(continueStage==35)mouse(2,70,520);
           }
-          else if(captureContinue==3 && continueStage==8)key(SDLK_RETURN);
+          else if(captureContinue>=3 && continueStage==8)key(SDLK_RETURN);
         }
-        if(captureContinue==3 && title.Continue() && title.Continue()->Question().Visible &&
+        if(captureContinue>=3 && title.Continue() && title.Continue()->Question().Visible &&
             title.Continue()->Question().Phase==3){
           if(title.Continue()->State.OperationPhase==1 && title.Continue()->Question().Selected!=1)key(SDLK_RIGHT);
           else key(SDLK_RETURN);
@@ -5017,7 +5112,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     }
     if(capture){
       trace.close();pcm.close();if(!trace || !pcm)throw FormatError("cannot save title trace/PCM");
-      if(captureContinue && captureContinue!=3){
+      if(captureContinue && captureContinue<3){
         const auto stored=ReadProgressStore(progressRoot);
         if(quit || title.RequestedScene || title.ContinueEntries!=1 || title.ContinueReturns!=1 || title.ContinueResult!=2 || !continueOpenImage || !title.ContinueDraws || !title.ContinueCards ||
            !stored || stored->Generation!=session.Generation || stored->Slots.Encode()!=initialSlotBytes || session.Slots.Encode()!=initialSlotBytes)
@@ -5029,7 +5124,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
           <<",\"escape_cancels\":"<<(captureContinue==1)<<",\"pointer_back\":"<<(captureContinue==2)
           <<",\"slots_unchanged\":true,\"save_generation_unchanged\":true,\"occupied_resume\":false,\"manual_acceptance\":false}\n";
         if(!report)throw FormatError("cannot save Continue report");
-      }else if(captureContinue==3){
+      }else if(captureContinue>=3){
         const auto stored=ReadProgressStore(progressRoot);
         if(quit || title.RequestedScene!=2 || !title.PendingLoad || title.ContinueResult!=3 || !stored ||
            stored->Generation!=session.Generation || stored->Slots.Encode()!=initialSlotBytes || session.Slots.Encode()!=initialSlotBytes)
@@ -5068,13 +5163,13 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
       report<<"{\"passed\":true,\"textures\":0,\"ui_playing\":false,\"voice_playing\":false}\n";
       report.close();if(!report)throw FormatError("cannot save title retirement report");
     }
-    if(quit || captureOptions || (captureContinue && captureContinue!=3))return 0;
+    if(quit || captureOptions || (captureContinue && captureContinue<3))return 0;
     if(title.RequestedScene!=2)throw UnsupportedCommand("unknown PC title scene request");
     if(capture)std::filesystem::create_directory(captureDirectory/"entry");
     return RunScenarioScene(window,renderer,textures,font,resources,playback,music,sounds,std::move(*owner),nullptr,
-      usrdir,capture?captureDirectory/"entry":std::filesystem::path{},captureOpening || captureContinue==3,false,captureContinue==3,
-      captureContinue==3?std::optional<size_t>(size_t(title.PendingLoad->Context.ResumeCommand)):std::nullopt,{},{},captureContinue==3,false,
-      capture?(captureContinue==3?0:captureOpening?18:17):0,{},progressRoot,&session.Slots,title.PendingLoad.get());
+      usrdir,capture?captureDirectory/"entry":std::filesystem::path{},captureOpening || captureContinue>=3,false,captureContinue>=3,
+      captureContinue>=3?std::optional<size_t>(captureContinue==4?149:captureContinue==5?297:size_t(title.PendingLoad->Context.ResumeCommand)):std::nullopt,{},{},captureContinue>=3,false,
+      capture?(captureContinue>=3?0:captureOpening?18:17):0,{},progressRoot,&session.Slots,title.PendingLoad.get(),captureContinue>=4?captureContinue-3:0);
   }catch(const std::exception& error){
     if(created){std::ofstream out(captureDirectory/"error.txt");out<<std::string(error.what()).substr(0,2048)<<'\n';}
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano title: %s",error.what());return 1;

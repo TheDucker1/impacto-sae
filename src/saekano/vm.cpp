@@ -28,6 +28,11 @@ const ChapterTitleAnimation* VirtualMachine::CurrentChapter() const {
   if (Opcode() != 0x3ec) return nullptr;
   return &commands_.at(size_t(state_.CurrentCommandIndex)).ChapterAnimation;
 }
+const ChoiceMenu* VirtualMachine::CurrentOrdinaryChoice() const {
+  if (Opcode() != 0x65) return nullptr;
+  const auto& menu = commands_.at(size_t(state_.CurrentCommandIndex)).OrdinaryMenu;
+  return menu ? &*menu : nullptr;
+}
 void VmBackend::StartPresentation(size_t, uint16_t, std::span<const uint8_t>, bool, uint64_t) {
   throw UnsupportedCommand("presentation backend does not implement this command");
 }
@@ -127,6 +132,8 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     if (opcode == 0x64) {
       command.Message = DecodeMessage(script_->Payload(i));
       command.Routing = {command.Message->Route != 0, command.Message->Lane};
+    } else if(opcode==0x65) {
+      command.OrdinaryMenu=DecodeChoice(script_->Payload(i),false);
     } else if(opcode==0x3f6) {
       command.ApproachEntries=DecodeApproach(script_->Payload(i));
     } else if (opcode == 0x3ec) {
@@ -229,6 +236,7 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     state_.WindowOpenness = {};
     state_.WindowTypes = {};
     state_.Live2d = {};
+    state_.OrdinaryChoice = {};
     state_.MouthControl=MakeFreshOrdinaryMouthControl();
     if (auto* models = backend_.Models()) models->Reset();
     state_.ApproachGauge = 0;
@@ -575,6 +583,8 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
   } else if (opcode == 0x65 && !lane) {
     command.SavedDay = uint8_t(state_.DayEnabled);
     state_.DayEnabled = 0;
+    if (const auto* environment = backend_.OrdinaryChoiceConfig())
+      StartOrdinaryChoice(state_.OrdinaryChoice, command.OrdinaryMenu->Entries.size(), *environment, now);
   } else if ((opcode == 0x66 || opcode == 0x1fb || opcode == 0x3ea) && !lane) {
     CompleteCommand(state_, opcode, script_->Payload(index), {});
     if (opcode == 0x66) {messageKeywords_[0].clear();backend_.ClearMessage(0);}
@@ -836,7 +846,13 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
   if (backend_.Supports(opcode)) return backend_.UpdatePresentation(index, false, input.Route, now);
   if (opcode == 0x12e) return true;
   auto commitInput = input;
-  if (opcode == 0x65 || opcode == 0x3f6) {
+  if (opcode == 0x65 && backend_.OrdinaryChoiceConfig()) {
+    if (input.Choice) throw FormatError("ordinary choice host owns the selected ordinal");
+    const bool done = UpdateOrdinaryChoice(state_.OrdinaryChoice, *backend_.OrdinaryChoiceConfig(), input.Ordinary, now);
+    for (const auto sound : state_.OrdinaryChoice.Sounds) state_.PendingEvents.push_back({GameEventKind::Sound, sound});
+    if (!done) return false;
+    commitInput.Choice = CompletedOrdinaryChoice(state_.OrdinaryChoice);
+  } else if (opcode == 0x65 || opcode == 0x3f6) {
     if (!input.Choice) return false;
   } else if (opcode == 0x3f2) {
     if (input.Choice) command.SelectedOrdinal = *input.Choice;
@@ -960,7 +976,7 @@ VmEvent VirtualMachine::Step(uint64_t now, const CommandInput& input) {
     }
     else {
       const auto& selection=state_.ApproachSelection;
-      boundary_ = (Opcode() == 0x65 || Opcode() == 0x3f2 ||
+      boundary_ = ((Opcode() == 0x65 && (!backend_.OrdinaryChoiceConfig() || state_.OrdinaryChoice.Phase==4)) || Opcode() == 0x3f2 ||
                    (Opcode()==0x3f6 && !selection.PendingPhase && (selection.Phase==4 || selection.Phase==7)) ||
                    (Opcode()==0x3f7 && state_.ApproachMission.Stage==2) ||
                    (Opcode()==0x3f8 && state_.ApproachResult.Phase==5 && !state_.ApproachResult.PendingPhase) ||

@@ -2,6 +2,7 @@
 #include "gauge.h"
 #include "uisprite.h"
 #include <optional>
+#include <functional>
 
 namespace Impacto::Saekano {
 struct OrdinaryChoiceInput {
@@ -24,4 +25,20 @@ bool UpdateOrdinaryChoice(OrdinaryChoiceState& state,
                            const SharedSelectionEnvironment& environment,
                            const OrdinaryChoiceInput& input, uint64_t now);
 std::optional<size_t> CompletedOrdinaryChoice(const OrdinaryChoiceState& state);
+struct ChoiceEntry;
+struct OrdinaryChoiceDraw {
+  bool IsText = false;
+  UiSpriteBlit Sprite;
+  std::u16string Text;
+  std::array<int32_t,2> Position{};
+  int32_t FontSize = 0;
+  std::array<uint8_t,4> Color{};
+};
+std::vector<std::array<int32_t,4>> OrdinaryChoiceHitRegions(
+    const SharedSelectionEnvironment& environment, const OrdinaryChoiceState& state);
+std::vector<OrdinaryChoiceDraw> BuildOrdinaryChoiceDraws(
+    const SharedSelectionEnvironment& environment, const OrdinaryChoiceState& state,
+    std::span<const ChoiceEntry> entries, std::span<const uint8_t> readHistory,
+    int32_t utilityFontSize,
+    const std::function<int32_t(const std::u16string&,int32_t)>& measure);
 }

@@ -18,6 +18,7 @@
 #include "approachentry.h"
 #include "approachmission.h"
 #include "approachselection.h"
+#include "ordinarychoice.h"
 #include "approachresult.h"
 #include "mouthcontrol.h"
 #include "battleentry.h"
@@ -88,6 +89,7 @@ struct SemanticState {
   std::array<uint32_t, 2> WindowOpenness{};
   std::array<uint32_t, 2> WindowTypes{};
   Live2dState Live2d;
+  OrdinaryChoiceState OrdinaryChoice;
   std::optional<OrdinaryMouthControl> MouthControl; // C1c4c..1c57; omitted from portable restores.
   BattleGaugeState Battle;
   BattleEntryState BattleEntry;
@@ -185,6 +187,7 @@ struct CommandInput {
   bool BattleResultAuxiliary = false;
   ProfileSelectionInput Profile;
   ApproachSelectionInput Approach;
+  OrdinaryChoiceInput Ordinary;
 };
 
 struct MessageCommand {
