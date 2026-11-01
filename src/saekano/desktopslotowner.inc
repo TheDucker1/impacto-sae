@@ -14,7 +14,8 @@ class PcSlotOwner final:public SlotControllerServices {
   PcSlotOwner(SemanticState& owner,GameResources& resources,UiBlitRenderer& renderer,
       FontTextures& textures,PcFontFace& font,PlaybackTitleAudio& audio,
       const std::filesystem::path& root,const std::filesystem::path& saveRoot,NativeSlotData& slots,
-      std::span<const int32_t> repeats,uint32_t hold,uint64_t now)
+      std::span<const int32_t> repeats,uint32_t hold,uint64_t now,
+      int32_t mode=1,std::function<NativeSlotRecord()> workingRecord={})
       :Now(now),owner_(owner),renderer_(renderer),audio_(audio),slots_(slots),
        env_(SlotEnvironment::Decode(SceneRead(root/"env/env_saveload.dat"))),
        markerEnv_(NewMarkerEnvironment::Decode(SceneRead(root/"env/env_global.dat"))),
@@ -30,13 +31,15 @@ class PcSlotOwner final:public SlotControllerServices {
        widgets_(env_,hold),widgetServices_(widgets_,[this](int32_t id){UiSound(id);}),
        thumbnails_(renderer,slots.Records),
        help_(SlotButtonHelpEnvironment::Decode(SceneRead(root/"env/env_help_mgr.dat"))),
-       helpStyle_(ButtonHelpStyle::Decode(SceneRead(root/"env/env_global.dat"))),hold_(hold){
+       helpStyle_(ButtonHelpStyle::Decode(SceneRead(root/"env/env_global.dat"))),hold_(hold),
+       workingRecord_(std::move(workingRecord)){
     if(slots_.Records.size()!=60)throw FormatError("Continue needs all sixty native records");
     for(const auto& [key,texture]:renderer_.Textures){(void)texture;priorTextures_.insert(key);}
     const auto selected=RequireSystem().Word60318;
     if(selected>=60)throw FormatError("saved slot selection is outside native records");
     StartSlotBrowser(Browser,env_.BrowserSettings(),repeats,int32_t(selected),now);
-    StartSlotController(State,1,env_.Scalars.at(0xc),now);
+    if(mode==0 && !workingRecord_)throw FormatError("scenario Save needs a working-record owner");
+    StartSlotController(State,mode,env_.Scalars.at(0xc),now);
   }
   ~PcSlotOwner(){
     for(auto it=renderer_.Textures.begin();it!=renderer_.Textures.end();){
@@ -99,8 +102,66 @@ class PcSlotOwner final:public SlotControllerServices {
     if(PendingLoad)throw FormatError("Continue staged a second slot load");
     PendingLoad=StageNativeSlotLoad(slots_,size_t(Browser.Rows.Selected));
   }
-  void BeginSlotSave()override{throw UnsupportedCommand("title Continue cannot create a scenario slot");}
-  bool UpdateSlotSave()override{throw UnsupportedCommand("title Continue has no scenario save worker");}
+  void BeginSlotSave()override {
+    if(!workingRecord_ || State.Mode!=0)throw FormatError("slot Save has no scenario owner");
+    slotSavePhase_=0;saveBackup_.reset();save_.Begin(2,Now);
+  }
+  bool UpdateSlotSave()override {
+    // Original5c562. Existing services own paired I/O and worker dialogs;
+    // this owner handles confirmation, record replacement and rollback.
+    if(slotSavePhase_==0) {
+      if(SelectedProtected()) {
+        OpenSaveQuestion(0x7f8,0);slotSavePhase_=5;
+      }else {
+        saveBackup_=Selected();
+        OpenSaveQuestion(SelectedOccupied()?0x600:0x5c8,1);slotSavePhase_=1;
+      }
+    }
+    if(slotSavePhase_==1) {
+      const auto q=UpdateDialog();
+      if(!q.Visible) {
+        RetireDialog();
+        if(q.Selection!=1 || q.Cancelled){saveBackup_.reset();return true;}
+        if(!owner_.TitleSession)throw FormatError("slot Save has no title-session aliases");
+        const auto stamp=std::time(nullptr);std::tm local{};
+#ifdef _WIN32
+        if(localtime_s(&local,&stamp)!=0)throw FormatError("slot Save clock is unavailable");
+#else
+        if(!localtime_r(&stamp,&local))throw FormatError("slot Save clock is unavailable");
+#endif
+        owner_.TitleSession->Words={local.tm_year+1900,local.tm_mon+1,local.tm_mday,
+                                   local.tm_hour,local.tm_min,local.tm_sec};
+        auto working=workingRecord_();
+        if(!working.Bytes2b6[2])throw FormatError("slot Save working record is unoccupied");
+        for(size_t i=0;i<slots_.Records.size();++i)oldNewFlags_[i]=slots_.Records[i].Bytes2b6[0];
+        oldSlotSelection_=RequireSystem().Word60318;
+        const auto index=size_t(Browser.Rows.Selected);
+        // Serialized byte0 is NEW; byte2 is occupancy. Never clear occupancy.
+        working.Bytes2b6[0]=1;
+        for(auto& record:slots_.Records)record.Bytes2b6[0]=0;
+        owner_.TitleSession->Flags[2]=1;
+        slots_.Records[index]=std::move(working);
+        RequireSystem().Word60318=uint32_t(index);
+        thumbnails_.Replace(uint32_t(index),slots_.Records[index].Thumbnail);
+        slotSavePhase_=2;
+      }
+    }
+    if(slotSavePhase_==2) {
+      const auto poll=UpdateSystemSave();
+      if(!poll.Busy) {
+        if(!poll.Accepted) {
+          const auto index=size_t(Browser.Rows.Selected);
+          slots_.Records[index]=std::move(*saveBackup_);
+          for(size_t i=0;i<slots_.Records.size();++i)slots_.Records[i].Bytes2b6[0]=oldNewFlags_[i];
+          RequireSystem().Word60318=oldSlotSelection_;
+          thumbnails_.Replace(uint32_t(index),slots_.Records[index].Thumbnail);
+        }
+        saveBackup_.reset();return true;
+      }
+    }
+    if(slotSavePhase_==5 && !UpdateDialog().Visible){RetireDialog();return true;}
+    return false;
+  }
   void BeginSystemSave()override{save_.Begin(2,Now);}
   SlotWritePoll UpdateSystemSave()override{
     save_.Input=ModalInput;save_.Input.CollectActivations=[this]{return saveContacts_.Collect(save_.Modal,shared_.Environment,hold_,Now);};
@@ -148,6 +209,12 @@ class PcSlotOwner final:public SlotControllerServices {
   }
   bool QuestionVisible()const{return question_.Visible;}
  private:
+  void OpenSaveQuestion(uint16_t text,size_t group) {
+    prompt_=env_.Strings.at(text);questionGroup_=group;
+    const auto count=shared_.Environment.ButtonGroups.at(group).size();
+    layout_=shared_.Layout(prompt_,count);
+    Saekano::BeginDialog(question_,layout_,count,0,true,true,Now);questionOwned_=true;++DialogBegins;
+  }
   NativeSystemSave& RequireSystem(){if(!owner_.SystemProgress)throw FormatError("Continue system owner is missing");return *owner_.SystemProgress;}
   const NativeSlotRecord& Selected()const{return slots_.Records.at(size_t(Browser.Rows.Selected));}
   SemanticState& owner_;UiBlitRenderer& renderer_;PlaybackTitleAudio& audio_;NativeSlotData& slots_;
@@ -159,4 +226,7 @@ class PcSlotOwner final:public SlotControllerServices {
   std::u16string prompt_;DialogContentLayout layout_;
   PcDialogContacts questionContacts_,saveContacts_;std::set<ProfileTextureKey> priorTextures_;
   int32_t browserResult_=3;bool collectBrowserSounds_=false;std::vector<int32_t> browserSounds_;
+  std::function<NativeSlotRecord()> workingRecord_;
+  int32_t slotSavePhase_=0;std::optional<NativeSlotRecord> saveBackup_;
+  std::array<uint8_t,NativeSlotData::SlotCount> oldNewFlags_{};uint32_t oldSlotSelection_=0;
 };

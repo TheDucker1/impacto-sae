@@ -75,6 +75,7 @@ extern "C" {
 #include <string>
 #include <map>
 #include <cmath>
+#include <ctime>
 
 namespace Impacto::Saekano {
 namespace {
@@ -721,6 +722,21 @@ class PcSlotThumbnails {
   PcSlotThumbnails& operator=(const PcSlotThumbnails&)=delete;
   ~PcSlotThumbnails(){Release();}
   size_t Size()const{return keys_.size();}
+  void Replace(uint32_t slot,const std::optional<SlotThumbnail>& thumbnail) {
+    const ProfileTextureKey key{ProfileTextureSection::SlotThumbnail,-1,slot};
+    const auto owned=std::find(keys_.begin(),keys_.end(),key);
+    if(owned!=keys_.end()) {
+      if(const auto it=renderer_.Textures.find(key);it!=renderer_.Textures.end()) {
+        glDeleteTextures(1,&it->second.Handle);renderer_.Textures.erase(it);
+      }
+      keys_.erase(owned);
+    }
+    if(thumbnail) {
+      keys_.push_back(key);
+      try{renderer_.UploadSlotThumbnail(slot,*thumbnail);}
+      catch(...){keys_.pop_back();throw;}
+    }
+  }
  private:
   void Release(){
     for(const auto& key:keys_)if(const auto it=renderer_.Textures.find(key);it!=renderer_.Textures.end()){
