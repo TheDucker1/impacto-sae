@@ -385,11 +385,18 @@ void MusicPlayback::Submit(const GameEvent& event) {
     if (!std::isfinite(gain) || gain < 0 || gain > 1)
       throw UnsupportedCommand("SE output gain outside authored settings range");
     auto stream = std::make_unique<HcaPlaybackStream>(*impl_->Sounds, request.Track);
-    // The final service refresh writes the same SE gain to backend2..5.
+    // Normal ScriptPlaySe's final service refresh writes gain to backend2..5.
     // BGM is recomputed from unchanged service percentages, preserving its
     // applied gain here. The voice consumer remains separate. Remember is
-    // never a looping flag.
-    for (auto& channel : impl_->SeChannels) channel->SetVolume(gain);
+    // never a looping flag. Saved replay omits that refresh and retains716's
+    // shifted four-channel gain writes instead.
+    if (request.RefreshServiceVolume) {
+      for (auto& channel : impl_->SeChannels) channel->SetVolume(gain);
+    } else {
+      for (uint32_t channel = uint32_t(request.Channel);
+           channel < uint32_t(request.Channel) + 4; ++channel)
+        SetChannelOutputGain(channel, gain);
+    }
     impl_->SeChannels[size_t(request.Channel - 2)]->Play(std::move(stream),
         impl_->Sounds->Info(request.Track).Loop, 0);
   } else if (event.Kind == GameEventKind::Sound) {
@@ -1092,6 +1099,42 @@ int RunVoiceAttenuationSession(const std::filesystem::path& usrdir,const std::fi
     report.close();if(!report)throw FormatError("cannot save attenuation report");return 0;
   }catch(const std::exception& e){if(created){std::ofstream error(captureDirectory/"error.txt");error<<std::string(e.what()).substr(0,2048);}
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Voice attenuation: %s",e.what());return 1;}
+}
+int RunSlotReplayAudioSession(const std::filesystem::path& usrdir,const std::filesystem::path& captureDirectory){
+  bool created=false;
+  try{
+    CreateCaptureDirectory(usrdir,captureDirectory);created=true;
+    if(!SDL_Init(SDL_INIT_EVENTS))throw FormatError(SDL_GetError());
+    struct Cleanup{~Cleanup(){SDL_Quit();}} cleanup;
+    ArchiveBgmResources music(usrdir);ArchiveSeResources sounds(usrdir);
+    MusicPlayback playback(music,true,&sounds);
+    music.Prepare(8);sounds.Prepare(0);
+    GameEvent bgm{GameEventKind::PlayBgm,8};bgm.Bgm=BgmRequest(8,80,100,music.Coefficient());playback.Submit(bgm);
+    std::vector<int16_t> pcm;
+    for(int32_t logical=0;logical<4;++logical){
+      std::array<float,11> before{};
+      for(uint32_t channel=2;channel<=12;++channel){const float gain=float(channel)/16;playback.SetChannelOutputGain(channel,gain);before[channel-2]=gain;}
+      SePlayRequest request;request.Track=0;request.Channel=logical+2;request.CommandVolume=60;request.Remember=true;
+      request.Volume=SeVolume(80,60,sounds.Coefficient());request.RefreshServiceVolume=false;
+      GameEvent se{GameEventKind::PlaySe,0};se.Se=request;playback.Submit(se);
+      for(uint32_t channel=2;channel<=12;++channel){
+        const auto expected=channel>=uint32_t(logical+2) && channel<uint32_t(logical+6)?request.Volume->Gain:before[channel-2];
+        if(playback.ChannelOutputGain(channel)!=expected)throw FormatError("saved SE replay touched the wrong physical gain");
+      }
+      if(!playback.SoundPlaying(size_t(logical)))throw FormatError("saved SE replay did not start its target");
+      std::vector<int16_t> block(4800*2);playback.Render(block);pcm.insert(pcm.end(),block.begin(),block.end());
+      playback.Submit({GameEventKind::StopSe,logical+2});
+    }
+    if(playback.BgmOutputGain()!=0.4f)throw FormatError("saved SE replay changed BGM gain");
+    int32_t peak=0;for(auto sample:pcm)peak=std::max(peak,std::abs(int32_t(sample)));
+    if(peak<=8)throw FormatError("saved audio replay is silent");
+    SaveWav(captureDirectory/"replay.wav",pcm);
+    std::ofstream report(captureDirectory/"summary.json");
+    report<<"{\"passed\":true,\"logical_channels\":4,\"gain_comparisons\":44,\"audio_frames\":"<<pcm.size()/2<<",\"pcm_peak\":"<<peak
+      <<",\"bgm_track\":8,\"se_track\":0,\"bgm_gain\":0.4,\"se_gain\":0.48,\"existing_hca_decoder\":true,\"software_openal_output\":true,\"full_pc_resume_bound\":false}\n";
+    report.close();if(!report)throw FormatError("cannot save slot replay audio report");return 0;
+  }catch(const std::exception& e){if(created){std::ofstream error(captureDirectory/"error.txt");error<<std::string(e.what()).substr(0,2048);}
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Slot replay audio: %s",e.what());return 1;}
 }
 int RunOptionsMixerSession(const std::filesystem::path& usrdir,const std::filesystem::path& captureDirectory){
   bool created=false;

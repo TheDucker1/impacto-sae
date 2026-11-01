@@ -2,6 +2,7 @@
 
 #include "nativesave.h"
 #include "slotdata.h"
+#include "slotbrowser.h"
 #include <memory>
 
 namespace Impacto::Saekano {
@@ -40,4 +41,22 @@ void BeginNativeRuleWipeRestore(SemanticState& state,
                                 NativeRuleWipeRestore& restore);
 bool PollNativeRuleWipeRestore(const SceneImageDriver& images,
                                NativeRuleWipeRestore& restore);
+// Scene-menu Load stops BGM using its current attached fade, then SE2/3.
+// Remembered manager fields and persistent history are not changed.
+void QueueNativeSlotLoadStops(SemanticState& state);
+struct NativeSlotDeferredStart {
+  int32_t Phase = 1;
+  std::optional<int32_t> PendingPhase;
+  SlotFrameChannel Channel{255, 255, 0, 12, 0};
+  bool CommandStartIssued = false;
+};
+class BgmResources;
+class SeResources;
+// Call once per manager update after FILE_READY. True grants exactly one
+// command Start, on update12. Playback events publish only on the first update;
+// resource failure leaves the gate and pending event stream unchanged.
+bool StepNativeSlotDeferredStart(SemanticState& state,
+                                 NativeSlotDeferredStart& restore,
+                                 bool resourcesReady,
+                                 BgmResources* music, SeResources* sounds);
 }

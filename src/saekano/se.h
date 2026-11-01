@@ -14,6 +14,9 @@ struct SePlayRequest {
   int32_t Track = 0, Channel = 0, CommandVolume = 0;
   bool Remember = false;
   std::optional<BgmVolume> Volume;
+  // Normal ScriptPlaySe refreshes service volumes afterwards. Deferred saved
+  // replay calls only716, affecting four channels from Channel through+3.
+  bool RefreshServiceVolume = true;
 };
 // SE uses F32 multiplication/division before VCVT, unlike BGM's signed integer
 // product/division. Both backend results are unsigned integer percentages.

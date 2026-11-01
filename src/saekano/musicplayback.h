@@ -199,6 +199,8 @@ int RunVoiceAttenuationSession(const std::filesystem::path& usrdir,
                                const std::filesystem::path& captureDirectory);
 int RunOptionsMixerSession(const std::filesystem::path& usrdir,
                            const std::filesystem::path& captureDirectory);
+int RunSlotReplayAudioSession(const std::filesystem::path& usrdir,
+                              const std::filesystem::path& captureDirectory);
 int RunOptionsPreviewSession(const std::filesystem::path& usrdir,
                              const std::filesystem::path& captureDirectory);
 int RunProfileServiceSession(

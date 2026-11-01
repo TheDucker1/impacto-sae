@@ -170,4 +170,65 @@ bool PollNativeRuleWipeRestore(const SceneImageDriver& images,
   restore.Ready = true;
   return true;
 }
+void QueueNativeSlotLoadStops(SemanticState& state) {
+  state.PendingEvents.push_back({GameEventKind::StopBgmWithCurrentFade, 0});
+  state.PendingEvents.push_back({GameEventKind::StopSe, 2});
+  state.PendingEvents.push_back({GameEventKind::StopSe, 3});
+}
+bool StepNativeSlotDeferredStart(SemanticState& state,
+                                 NativeSlotDeferredStart& restore,
+                                 bool resourcesReady,
+                                 BgmResources* music, SeResources* sounds) {
+  if (!resourcesReady) return false;
+  auto next = restore;
+  if (next.PendingPhase) {
+    next.Phase = *next.PendingPhase;
+    next.PendingPhase.reset();
+  }
+  if (next.Phase == 1) {
+    if (!state.BgmTrack || !state.SeTrack)
+      throw UnsupportedCommand("saved audio track state is incomplete");
+    std::vector<GameEvent> events;
+    if (*state.BgmTrack >= 0) {
+      if (!music || !state.BgmMasterVolume || !state.BgmCommandVolume)
+        throw UnsupportedCommand("saved BGM replay needs original media and live volume");
+      auto request = BgmRequest(*state.BgmTrack, *state.BgmMasterVolume,
+                                *state.BgmCommandVolume, music->Coefficient());
+      music->Prepare(*state.BgmTrack);
+      events.push_back({GameEventKind::PlayBgm, request.Track, {},
+                        request.CommandVolume, request});
+    }
+    if (*state.SeTrack >= 0) {
+      if (!sounds || !state.SeMasterVolume || !state.SeCommandVolume || !state.SeChannel)
+        throw UnsupportedCommand("saved SE replay needs original media and live volume");
+      if (*state.SeChannel < 0 || *state.SeChannel > 3)
+        throw FormatError("saved SE channel is outside native SE slots");
+      SePlayRequest request;
+      request.Track = *state.SeTrack; request.Channel = *state.SeChannel + 2;
+      request.CommandVolume = *state.SeCommandVolume; request.Remember = true;
+      request.Volume = SeVolume(*state.SeMasterVolume, request.CommandVolume,
+                                 sounds->Coefficient());
+      request.RefreshServiceVolume = false;
+      sounds->Prepare(request.Track);
+      events.push_back({GameEventKind::PlaySe, request.Track, {},
+                        request.CommandVolume, {}, request});
+    }
+    // Direct service replay does not execute ScriptPlayBgm/Se, update played
+    // histories, or overwrite remembered context values.
+    state.PendingEvents.insert(state.PendingEvents.end(), events.begin(), events.end());
+    next.Channel.Start(255, 0, 12);
+    next.Phase = 2;
+  }
+  bool start = false;
+  if (next.Phase == 2) {
+    next.Channel.Tick();
+    if (next.Channel.Elapsed == next.Channel.Frames) {
+      next.PendingPhase = 0;
+      next.CommandStartIssued = true;
+      start = true;
+    }
+  }
+  restore = std::move(next);
+  return start;
+}
 }
