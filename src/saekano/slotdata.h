@@ -25,6 +25,9 @@ struct NativeSlotRecord {
   std::array<uint32_t,12> Words1bac{};
   uint8_t ThumbnailPresent=0;
   std::optional<SlotThumbnail> Thumbnail;
+  // Exact single-record stream used by native backlog deep copies; no file pad.
+  static NativeSlotRecord Decode(std::span<const uint8_t> bytes);
+  Bytes Encode() const;
 };
 struct NativeSlotData {
   static constexpr size_t FileBytes=0x708000,SlotCount=60;
