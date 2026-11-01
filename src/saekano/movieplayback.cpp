@@ -137,7 +137,8 @@ void MoviePlayback::Prepare(const std::filesystem::path& path){
 }
 bool MoviePlayback::Ready()const{const auto& s=*impl_;return s.State.Prepared && !s.State.Started && !s.Video.empty() && (!s.HasAudio || !s.Queued.empty());}
 void MoviePlayback::Start(uint64_t now){
-  if(!Ready())throw FormatError("movie start before decoded preroll");auto& s=*impl_;s.State.Started=true;s.StartedAt=now;s.Fill();
+  if(!Ready())throw FormatError("movie start before decoded preroll");auto& s=*impl_;s.State.Started=true;s.StartedAt=now;
+  if(s.State.Paused)s.PausedAt=now;s.Fill();
 }
 void MoviePlayback::SetVolume(int32_t percent){
   if(percent<0 || percent>100)throw FormatError("movie volume outside0..100");impl_->State.Volume=percent;
@@ -145,20 +146,20 @@ void MoviePlayback::SetVolume(int32_t percent){
 }
 void MoviePlayback::SetPaused(bool paused,uint64_t now){
   auto& s=*impl_;
-  if(!s.State.Prepared || !s.State.Started || s.State.Finished)
-    throw FormatError("movie pause requires active playback");
+  if(!s.State.Prepared || s.State.Finished)
+    throw FormatError("movie pause requires a prepared source");
   if(s.State.Paused==paused)return;
   if(paused){
-    Update(now);
+    if(s.State.Started)Update(now);
     // Update can finish a movie at the boundary; there is then no live source
     // to pause. Keep the actual EOF result rather than resurrecting playback.
     if(s.State.Finished)return;
-    if(s.Source){alSourcePause(s.Source);CheckMovieAl();}
+    if(s.Source && s.State.Started){alSourcePause(s.Source);CheckMovieAl();}
     s.PausedAt=now;s.State.Paused=true;
   }else {
     if(!s.PausedAt || now<*s.PausedAt)throw FormatError("movie resume precedes pause");
     const auto elapsed=now-*s.PausedAt;
-    s.StartedAt+=elapsed;if(s.TailAt)*s.TailAt+=elapsed;
+    if(s.State.Started)s.StartedAt+=elapsed;if(s.TailAt)*s.TailAt+=elapsed;
     s.State.Paused=false;s.PausedAt.reset();if(s.HasAudio)s.Fill();
   }
 }

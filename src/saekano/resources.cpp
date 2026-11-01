@@ -83,7 +83,7 @@ Bytes InflateGzip(std::span<const uint8_t> input, size_t outputLimit) {
 }
 
 struct GameResources::FrontendAssets {
-  std::optional<GpdaArchive> TitleUi,SystemUi,SystemVoices;
+  std::optional<GpdaArchive> TitleUi,SystemUi,SystemVoices,MovieThumbnails;
 };
 GameResources::GameResources(Bytes resourceDat)
     : GameResources(GpdaArchive(std::move(resourceDat))) {}
@@ -93,6 +93,13 @@ GameResources::GameResources(const GpdaArchive& root)
   if (root.Entries().size() > 1) mainUi_.emplace(ResourceSection(root, 1));
   if(root.Entries().size()>16)battleUi_.emplace(ResourceSection(root,16));
   auto frontend=std::make_shared<FrontendAssets>();
+  if(root.Entries().size()>2){
+    const auto extras=ResourceSection(root,2);
+    if(extras.Entries().size()>1){
+      const GpdaArchive movies(RawEntry(extras,1));
+      if(movies.Entries().size()>1)frontend->MovieThumbnails.emplace(RawEntry(movies,1));
+    }
+  }
   if(root.Entries().size()>15)frontend->TitleUi.emplace(ResourceSection(root,15));
   if(root.Entries().size()>13)frontend->SystemUi.emplace(ResourceSection(root,13));
   if (root.Entries().size() > 14) {
@@ -136,6 +143,7 @@ ResourceAsset GameResources::LoadBattleResultVoice(size_t entry) const {
 }
 size_t GameResources::TitleTextureCount()const{return frontend_->TitleUi?frontend_->TitleUi->Entries().size():0;}
 size_t GameResources::SystemTextureCount()const{return frontend_->SystemUi?frontend_->SystemUi->Entries().size():0;}
+size_t GameResources::ExtrasMovieThumbnailCount()const{return frontend_->MovieThumbnails?frontend_->MovieThumbnails->Entries().size():0;}
 size_t GameResources::SystemVoiceBankCount()const{return frontend_->SystemVoices?frontend_->SystemVoices->Entries().size():0;}
 size_t GameResources::SystemVoiceCount(size_t bank)const{
   if(bank>=SystemVoiceBankCount())throw FormatError("system voice bank outside original archive");
@@ -228,6 +236,8 @@ ProfileMenuAsset GameResources::LoadProfileTexture(ProfileTextureKey key) const 
     return load(*frontend_->TitleUi);
   if(key.Section==ProfileTextureSection::SystemUi && frontend_->SystemUi)
     return load(*frontend_->SystemUi);
+  if(key.Section==ProfileTextureSection::ExtrasMovieThumbnail && frontend_->MovieThumbnails)
+    return load(*frontend_->MovieThumbnails);
   throw FormatError("profile texture section is unavailable");
 }
 std::vector<ResourceAsset> GameResources::LoadApproachTextures(size_t id) const {

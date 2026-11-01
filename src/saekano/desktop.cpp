@@ -6,6 +6,7 @@
 #include "slotwidgets.h"
 #include "slotcards.h"
 #include "slotdraw.h"
+#include "slotviewport.h"
 #include "newmarker.h"
 #include "desktop.h"
 
@@ -25,6 +26,7 @@
 #include "musicplayback.h"
 #include "album.h"
 #include "extras.h"
+#include "extrasmovie.h"
 #include "scenemessage.h"
 #include "messagedraw.h"
 #include "battledialogue.h"
@@ -1113,6 +1115,7 @@ struct SceneDialogLayer {
 #include "desktopsystemmenu.inc"
 #include "desktopbacklog.inc"
 #include "desktopextras.inc"
+#include "desktopextrasmovie.inc"
 #include "desktoptitle.inc"
 #include "desktopprofile.inc"
 

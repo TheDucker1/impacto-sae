@@ -37,6 +37,13 @@ struct ExtrasButtonHelpEnvironment {
   // env_help_mgr: cb28 rectangle and caa8 items, after the save/load rows.
   static ExtrasButtonHelpEnvironment Decode(std::span<const uint8_t> bytes);
 };
+struct ExtrasChildButtonHelpEnvironment {
+  std::array<std::array<int32_t,4>,2> AlbumRectangles;
+  std::array<std::vector<std::vector<ButtonHelpItem>>,2> AlbumRows;
+  std::vector<std::vector<ButtonHelpItem>> MovieRows;
+  size_t PrefixBytes=0;
+  static ExtrasChildButtonHelpEnvironment Decode(std::span<const uint8_t> bytes);
+};
 // Shared37a16/37c04 row layout/drawing. Options uses alignment5 and opacity1.
 std::vector<UiTextBlit> BuildButtonHelp(std::span<const ButtonHelpItem> items,
     std::array<int32_t,4> rectangle,const ButtonHelpStyle& style,const GsfFont& font,
