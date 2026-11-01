@@ -1,3 +1,23 @@
+// SDL devices publish the same game actions; owners retain their own priority.
+struct PcActionInput {
+  bool Left=false,Right=false,Up=false,Down=false,Accept=false,Cancel=false;
+  explicit PcActionInput(const SDL_Event& event) {
+    if(event.type==SDL_EVENT_KEY_DOWN && !event.key.repeat) {
+      const auto key=event.key.key;
+      Left=key==SDLK_LEFT;Right=key==SDLK_RIGHT;Up=key==SDLK_UP;Down=key==SDLK_DOWN;
+      Accept=key==SDLK_RETURN || key==SDLK_SPACE;
+      Cancel=key==SDLK_ESCAPE || key==SDLK_BACKSPACE;
+    } else if(event.type==SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+      const auto button=event.gbutton.button;
+      Left=button==SDL_GAMEPAD_BUTTON_DPAD_LEFT;Right=button==SDL_GAMEPAD_BUTTON_DPAD_RIGHT;
+      Up=button==SDL_GAMEPAD_BUTTON_DPAD_UP;Down=button==SDL_GAMEPAD_BUTTON_DPAD_DOWN;
+      Accept=button==SDL_GAMEPAD_BUTTON_EAST;Cancel=button==SDL_GAMEPAD_BUTTON_SOUTH;
+    }
+  }
+  void Apply(DialogInput& input)const {
+    input.Left|=Left;input.Right|=Right;input.Accept|=Accept;input.Cancel|=Cancel;
+  }
+};
 // Concrete rectangle contacts, collected only when UpdateDialog reaches the
 // native pointer branch. Geometry is latched by drawing, as native2a4/324 are.
 class PcDialogContacts {

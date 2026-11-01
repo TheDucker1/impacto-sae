@@ -127,9 +127,28 @@ void ApplyParticleFragmentState(const ParticleFragmentState& state, GLuint progr
 struct ViewerWindow {
   SDL_Window* Window = nullptr;
   SDL_GLContext Context = nullptr;
+  inline static std::map<SDL_JoystickID,SDL_Gamepad*> Gamepads;
+  static void OpenGamepad(SDL_JoystickID id) {
+    if(Gamepads.contains(id))return;
+    if(auto* pad=SDL_OpenGamepad(id))Gamepads.emplace(id,pad);
+    else SDL_LogWarn(SDL_LOG_CATEGORY_INPUT,"Cannot open gamepad: %s",SDL_GetError());
+  }
+  static bool PollEvent(SDL_Event* event) {
+    if(!SDL_PollEvent(event))return false;
+    if(event->type==SDL_EVENT_GAMEPAD_ADDED)OpenGamepad(event->gdevice.which);
+    if(event->type==SDL_EVENT_GAMEPAD_REMOVED) {
+      const auto found=Gamepads.find(event->gdevice.which);
+      if(found!=Gamepads.end()){SDL_CloseGamepad(found->second);Gamepads.erase(found);}
+    }
+    return true;
+  }
   explicit ViewerWindow(bool hidden, bool stencil = false) {
-    SdlCheck(SDL_Init(SDL_INIT_VIDEO), "SDL initialization");
+    SdlCheck(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD), "SDL initialization");
     try {
+      int count=0;
+      auto* ids=SDL_GetGamepads(&count);
+      for(int i=0;i<count;++i)OpenGamepad(ids[i]);
+      SDL_free(ids);
       SdlCheck(SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3),
                "GL major version");
       SdlCheck(SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3),
@@ -163,6 +182,7 @@ struct ViewerWindow {
     }
   }
   void Cleanup() {
+    for(const auto& [id,pad]:Gamepads){(void)id;SDL_CloseGamepad(pad);}Gamepads.clear();
     if (Context) SDL_GL_DestroyContext(Context);
     if (Window) SDL_DestroyWindow(Window);
     SDL_Quit();
@@ -1471,6 +1491,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       DialogEnvironment::Decode(SceneRead(root/"env/env_dialog.dat")),SceneRead(root/"first.dat"));
   const auto endingPrompt=EndingEnvironment::Decode(SceneRead(root/"env/env_script.dat")).SystemSavePrompt;
   const auto endingLayout=endingLayer.Layout(endingPrompt,endingLayer.Environment.ButtonGroups.at(1).size());
+  PcDialogContacts endingContacts,endingSaveContacts;
   struct ReadOnlySave final:EndingSaveServices {
     void Begin(int32_t,uint64_t)override{throw UnsupportedCommand("writable ending save requires a complete progress store");}
     EndingSaveStatus Update(uint64_t)override{throw UnsupportedCommand("read-only scene has no save worker");}
@@ -1786,8 +1807,21 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       }
     }
     }
-    while (SDL_PollEvent(&event)) {
+    while (ViewerWindow::PollEvent(&event)) {
       if(modalOwned()){handleModalEvent(event);continue;}
+      // Collect platform contacts before modal/profile owners consume events.
+      if((event.type==SDL_EVENT_MOUSE_BUTTON_DOWN || event.type==SDL_EVENT_MOUSE_BUTTON_UP) &&
+          event.button.button==SDL_BUTTON_LEFT) {
+        pointerDown=event.type==SDL_EVENT_MOUSE_BUTTON_DOWN;
+        pointerPosition={event.button.x,event.button.y};
+      }
+      if(event.type==SDL_EVENT_MOUSE_MOTION)pointerPosition={event.motion.x,event.motion.y};
+      if(event.type==SDL_EVENT_WINDOW_FOCUS_LOST) {
+        pointerDown=false;profilePresenter.CancelPointer();
+        endingContacts.CancelPointer();endingSaveContacts.CancelPointer();
+      }
+      if(event.type==SDL_EVENT_QUIT){quit=true;continue;}
+      if(vm->CurrentProfile()){profilePresenter.Handle(event,input.Profile);continue;}
       if(replayScript &&
           ((event.type==SDL_EVENT_KEY_DOWN && event.key.key==SDLK_ESCAPE && !event.key.repeat) ||
            event.type==SDL_EVENT_GAMEPAD_BUTTON_DOWN && event.gbutton.button==SDL_GAMEPAD_BUTTON_START)){
@@ -1800,24 +1834,13 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
         requestSystemMenu=true;wakeTextPressed=true;continue;
       }
       if(endingState.Started) {
-        if(event.type==SDL_EVENT_KEY_DOWN && !event.key.repeat) {
-          modalInput.Left|=event.key.key==SDLK_LEFT;modalInput.Right|=event.key.key==SDLK_RIGHT;
-          modalInput.Accept|=event.key.key==SDLK_RETURN || event.key.key==SDLK_SPACE;
-          modalInput.Cancel|=event.key.key==SDLK_ESCAPE || event.key.key==SDLK_BACKSPACE;
-        }
-        if(event.type==SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
-          modalInput.Left|=event.gbutton.button==SDL_GAMEPAD_BUTTON_DPAD_LEFT;
-          modalInput.Right|=event.gbutton.button==SDL_GAMEPAD_BUTTON_DPAD_RIGHT;
-          modalInput.Accept|=event.gbutton.button==SDL_GAMEPAD_BUTTON_EAST;
-          modalInput.Cancel|=event.gbutton.button==SDL_GAMEPAD_BUTTON_SOUTH;
-        }
+        PcActionInput(event).Apply(modalInput);
         if(event.type==SDL_EVENT_KEY_DOWN || event.type==SDL_EVENT_KEY_UP || event.type==SDL_EVENT_GAMEPAD_BUTTON_DOWN)continue;
       }
       if (event.type == SDL_EVENT_QUIT ||
           (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE &&
            !vm->State().ApproachSelection.Visible && !vm->State().OrdinaryChoice.Visible))
         quit = true;
-      if(vm->CurrentProfile()){profilePresenter.Handle(event,input.Profile);continue;}
       if(battleHost->State().Enabled && battleHost->Phase()==4) {
         if(event.type==SDL_EVENT_KEY_DOWN && !event.key.repeat) {
           if(event.key.key==SDLK_1)battleFaces|=1;
@@ -1878,14 +1901,6 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
             !event.key.repeat)
           policyInput.SkipPressed = true;
       }
-      if ((event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
-           event.type == SDL_EVENT_MOUSE_BUTTON_UP) &&
-          event.button.button == SDL_BUTTON_LEFT) {
-        pointerDown = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
-        pointerPosition = {event.button.x, event.button.y};
-      }
-      if (event.type == SDL_EVENT_MOUSE_MOTION)
-        pointerPosition = {event.motion.x, event.motion.y};
       if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
         hideTextPressed=wakeTextPressed=false;
         pointerDown = false;
@@ -1900,6 +1915,15 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       }
     }
     if (quit) break;
+    if(pointerDown) {
+      int logicalWidth=0,logicalHeight=0;
+      SdlCheck(SDL_GetWindowSize(window.Window,&logicalWidth,&logicalHeight),"pointer viewport size");
+      if(logicalWidth>0 && logicalHeight>0) {
+        const float x=pointerPosition[0]*960.0f/float(logicalWidth),y=pointerPosition[1]*544.0f/float(logicalHeight);
+        if(x>=INT16_MIN && x<=INT16_MAX && y>=INT16_MIN && y<=INT16_MAX)
+          pointerSnapshot[0]=WidgetTouch{0,{int16_t(x),int16_t(y)}};
+      }
+    }
     input.RevealOnly=hideTextPressed;
     if(replayScript && requestSystemMenu){replayInterrupt=true;requestSystemMenu=false;}
     if(modalOwned()) {
@@ -1909,13 +1933,19 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       continue;
     }
     if(endingState.Started) {
-      if(saveHost && saveHost->State().Started)saveHost->Input=modalInput;
-      else endingHost.Input=modalInput;
+      endingContacts.BeginFrame(pointerSnapshot);endingSaveContacts.BeginFrame(pointerSnapshot);
+      if(saveHost && saveHost->State().Started) {
+        saveHost->Input=modalInput;
+        saveHost->Input.CollectActivations=[&]{return endingSaveContacts.Collect(saveHost->Modal,endingLayer.Environment,inputEnvironment.HoldFrames,now);};
+      } else {
+        endingHost.Input=modalInput;
+        endingHost.Input.CollectActivations=[&]{return endingContacts.Collect(endingHost.Modal,endingLayer.Environment,inputEnvironment.HoldFrames,now);};
+      }
       updateEnding(now);
     }
     // Current read tables include commands completed earlier in this session.
     // Policy consumes prior widget samples before this frame's updates.
-    if(vm->CurrentProfile())profilePresenter.BeforeStep(input.Profile,now);
+    if(vm->CurrentProfile())profilePresenter.BeforeStep(*vm->CurrentProfile(),input.Profile,pointerSnapshot,now);
     if(!vm->CurrentProfile() && !endingState.Started) {
     policyInput.AutoHeld = autoKeyHeld;
     policyInput.SkipHeld = skipKeysHeld[0] || skipKeysHeld[1];
@@ -1949,15 +1979,6 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       events << "{\"kind\":\"auto_policy\",\"frame\":" << frame
              << ",\"now\":" << now << ",\"pressed\":" << policyInput.AutoPressed
              << ",\"held\":" << autoKeyHeld << ",\"auto\":" << skipAuto.Auto << "}\n";
-    if (pointerDown) {
-      int logicalWidth = 0, logicalHeight = 0;
-      SdlCheck(SDL_GetWindowSize(window.Window, &logicalWidth, &logicalHeight),
-               "pointer viewport size");
-      const float x = pointerPosition[0] * 960.0f / float(logicalWidth),
-                  y = pointerPosition[1] * 544.0f / float(logicalHeight);
-      if (x >= INT16_MIN && x <= INT16_MAX && y >= INT16_MIN && y <= INT16_MAX)
-        pointerSnapshot[0] = WidgetTouch{0, {int16_t(x), int16_t(y)}};
-    }
     sceneInput.BeginFrame(pointerSnapshot);
     const auto& menuState=vm->State().ApproachSelection;
     if(menuState.Visible) {
@@ -2811,8 +2832,10 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       if(sceneViewport[2]>0 && sceneViewport[3]>0)sceneThumbnail.Publish(sceneViewport);
     }
     if(endingState.Started) {
-      if(endingHost.Modal.Visible)endingLayer.Draw(endingHost.Modal,endingHost.Prompt(),endingLayout,1);
-      if(saveHost && saveHost->Modal.Visible)endingLayer.Draw(saveHost->Modal,saveHost->Prompt(),saveHost->Layout(),0);
+      if(endingHost.Modal.Visible){endingLayer.Draw(endingHost.Modal,endingHost.Prompt(),endingLayout,1);
+        endingContacts.Latch(endingHost.Modal,endingLayout,endingLayer.Environment);}
+      if(saveHost && saveHost->Modal.Visible){endingLayer.Draw(saveHost->Modal,saveHost->Prompt(),saveHost->Layout(),0);
+        endingSaveContacts.Latch(saveHost->Modal,saveHost->Layout(),endingLayer.Environment);}
     }
     if(replayQuestion.Visible){
       endingLayer.Draw(replayQuestion,replayQuestionPrompt,replayQuestionLayout,1,{255,255,255,90});
@@ -4034,7 +4057,7 @@ int RunFontSample(const std::filesystem::path& usrdir,
     bool quit = false;
     while (!quit) {
       SDL_Event event;
-      while (SDL_PollEvent(&event))
+      while (ViewerWindow::PollEvent(&event))
         if (event.type == SDL_EVENT_QUIT ||
             (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE))
           quit = true;
@@ -4095,7 +4118,7 @@ int RunModelViewer(const std::filesystem::path& resourceDat,
         SDL_SetWindowTitle(window.Window, title.c_str());
       }
       SDL_Event event;
-      while (SDL_PollEvent(&event)) {
+      while (ViewerWindow::PollEvent(&event)) {
         if (event.type == SDL_EVENT_QUIT) quit = true;
         if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
           if (event.key.key == SDLK_ESCAPE) quit = true;
@@ -4195,7 +4218,7 @@ int RunModelScenes(const std::filesystem::path& resourceDat,
         epoch = SDL_GetTicks();
       }
       SDL_Event event;
-      while (SDL_PollEvent(&event)) {
+      while (ViewerWindow::PollEvent(&event)) {
         if (event.type == SDL_EVENT_QUIT) quit = true;
         if (event.type != SDL_EVENT_KEY_DOWN || event.key.repeat) continue;
         if (event.key.key == SDLK_ESCAPE) quit = true;
@@ -4527,7 +4550,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
       SDL_Event event;
       ProfileSelectionInput input;
       DialogInput modalInput;
-      while (SDL_PollEvent(&event)) {
+      while (ViewerWindow::PollEvent(&event)) {
         if (event.type == SDL_EVENT_QUIT ||
             (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE))
           quit = true;
@@ -5452,7 +5475,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
         if(captureExtras)extrasCapture.Tick(title,*owner,playback,*extrasCaptureEnv,now,key);
       }
       SDL_Event event{};
-      while(SDL_PollEvent(&event)){
+      while(ViewerWindow::PollEvent(&event)){
         if(event.type==SDL_EVENT_QUIT || (event.type==SDL_EVENT_KEY_DOWN && event.key.key==SDLK_ESCAPE && !title.Config() && !title.Continue() && !title.Extras()))quit=true;
         if(event.type==SDL_EVENT_KEY_DOWN || event.type==SDL_EVENT_KEY_UP){
           const bool down=event.type==SDL_EVENT_KEY_DOWN;

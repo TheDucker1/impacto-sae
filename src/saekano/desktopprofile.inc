@@ -26,32 +26,77 @@ class SceneProfilePresenter {
     if(dialogEnvironment_.ButtonGroups.size()<=1)throw FormatError("missing profile confirmation buttons");
     dialogLayout_=BuildDialogContentLayout(dialogEnvironment_,{480,272},promptLayout_.Height,
         dialogEnvironment_.ButtonGroups[1].size(),utility_.Size);
+    hold_=WidgetInputEnvironment::DecodeUtility(SceneRead(root/"env/env_game_utility.dat")).HoldFrames;
+    const auto rectangle=[&](std::array<int32_t,4> area){UiSpriteDefinition shape;
+      shape.X=area[0];shape.Y=area[1];shape.Width=area[2];shape.Height=area[3];return shape;};
+    const auto add=[&](UiSpriteDefinition shape){widgets_.emplace_back(shape,ProfileTextureKey{},1.0f,true,hold_);};
+    add(rectangle(settings.Portrait.Area));
+    for(const auto& shape:settings.Navigation.Sprites)add(shape);
+    for(const auto& area:settings.EventButtons)add(rectangle(area));
+    auto selected=settings.ItemFrames.Sprite;
+    selected.X=settings.ItemFrames.Positions.at(3)[0];selected.Y=settings.ItemFrames.Positions.at(3)[1];add(selected);
+    add(rectangle({0,0,960,544}));
   }
   const ProfileEnvironment settings;
   const ModeResultEnvironment shared;
   void Begin() {
     dialog_={};dialogBound_=false;cursor_={};resultLaidOut_=responseLaidOut_=false;
+    CancelPointer();
     for(const auto& texture:services_.MenuTextures())renderer_.Upload(texture.Key,texture.Pixels);
   }
   void Handle(const SDL_Event& event,ProfileSelectionInput& input) {
-    if(event.type!=SDL_EVENT_KEY_DOWN || event.key.repeat)return;
-    const auto key=event.key.key;
+    const PcActionInput action(event);
     if(dialog_.Visible) {
-      modal_.Left|=key==SDLK_LEFT;modal_.Right|=key==SDLK_RIGHT;
-      modal_.Accept|=key==SDLK_RETURN;modal_.Cancel|=key==SDLK_BACKSPACE;
+      action.Apply(modal_);
     } else {
-      if(key==SDLK_LEFT)input.CharacterDirection=true;
-      if(key==SDLK_RIGHT)input.CharacterDirection=false;
-      if(key==SDLK_UP)input.EventDirection=true;
-      if(key==SDLK_DOWN)input.EventDirection=false;
-      input.Accept|=key==SDLK_RETURN;input.Cancel|=key==SDLK_BACKSPACE;
+      if(action.Left)input.CharacterDirection=false;
+      if(action.Right)input.CharacterDirection=true;
+      if(action.Up)input.EventDirection=true;
+      if(action.Down)input.EventDirection=false;
+      input.Accept|=action.Accept;input.Cancel|=action.Cancel;
     }
   }
-  void BeforeStep(ProfileSelectionInput& input,uint64_t now) {
+  void CancelPointer() {
+    pointer_={};dialogContacts_.CancelPointer();
+    for(auto& widget:widgets_){widget.Input=WidgetEventHistory(hold_);}
+  }
+  void BeforeStep(const ProfileMode& mode,ProfileSelectionInput& input,
+      const WidgetInputHistory::Snapshot& snapshot,uint64_t now) {
+    pointer_.BeginFrame(snapshot);dialogContacts_.BeginFrame(snapshot);
     if(dialog_.Visible) {
+      modal_.CollectActivations=[&]{return dialogContacts_.Collect(dialog_,dialogEnvironment_,hold_,now);};
       UpdateDialog(dialog_,modal_,now);
       for(const auto sound:dialog_.UiSounds)playback_.Submit({GameEventKind::Sound,sound});
       if(!dialog_.Visible)input.Confirmation=dialog_.Result==1;
+    } else {
+      const auto update=[&](size_t index,std::array<int32_t,2> offset=std::array<int32_t,2>{}) {
+        auto& widget=widgets_.at(index);
+        widget.Update(offset,SampleWidgetContact(widget.HitRectangle(offset),pointer_.Current[0],
+            pointer_.Previous[0],widget.Input.TrackedId,pointer_.Velocity(0)),now);
+        pointer_.Publish(widget.Input.Flags);return widget.Input.Flags;
+      };
+      if(mode.CurrentStage()==ProfileMode::Stage::Selection && !mode.Selection().PendingPhase) {
+        const auto phase=mode.Selection().Phase;
+        if(phase==5 || phase==6) {
+          const auto portrait=update(0);
+          if(phase==5) {
+            const auto left=update(1,{mode.Navigation().Offsets[0],0});
+            const auto right=update(2,{mode.Navigation().Offsets[1],0});
+            if(portrait&uint16_t(WidgetQuery::Flick))input.CharacterDirection=widgets_[0].Input.Velocity[0]>0;
+            else if(!input.CharacterDirection && (left&8))input.CharacterDirection=false;
+            else if(!input.CharacterDirection && (right&8))input.CharacterDirection=true;
+            else input.Accept|=(portrait&8)!=0;
+          } else {
+            const auto previous=update(3),next=update(4),selected=update(5);
+            if(!input.EventDirection && (previous&8))input.EventDirection=true;
+            else if(!input.EventDirection && (next&8))input.EventDirection=false;
+            input.Accept|=(selected&8)!=0;input.Cancel|=(portrait&8)!=0;
+          }
+        }
+      } else if((mode.CurrentStage()==ProfileMode::Stage::Result && mode.Phase()==12) ||
+                (mode.CurrentStage()==ProfileMode::Stage::Response && mode.Phase()==17)) {
+        input.Accept|=(update(6)&8)!=0;
+      }
     }
     modal_={};
   }
@@ -70,7 +115,7 @@ class SceneProfilePresenter {
     const auto& selection=mode.Selection();
     if(dialog_.Visible)return dialog_.Phase==3?SDLK_RETURN:0;
     if(mode.CurrentStage()==ProfileMode::Stage::Selection && !selection.PendingPhase) {
-      if(selection.Phase==5)return selection.Ordinal==target[0]?SDLK_RETURN:SDLK_LEFT;
+      if(selection.Phase==5)return selection.Ordinal==target[0]?SDLK_RETURN:SDLK_RIGHT;
       if(selection.Phase==6) {
         if(selection.Ordinal!=target[0])throw FormatError("profile ordinal differs from capture plan");
         return selection.Selectors.at(selection.Ordinal)==target[1]?SDLK_RETURN:SDLK_UP;
@@ -138,6 +183,7 @@ class SceneProfilePresenter {
             dialog_.Selected,dialog_.FocusEnabled,progress,utility_.Size,font_.Cached(),font_.NominalSize())) {
           for(const auto& b:button.Background)Sprite(b);Text(button.Label);
         }
+        dialogContacts_.Latch(dialog_,dialogLayout_,dialogEnvironment_);
       }
     }
     if(response) {
@@ -219,6 +265,8 @@ class SceneProfilePresenter {
   MessageCursorEnvironment messageCursor_;SharedUiAssets sharedUi_;
   PlainTextLayout promptLayout_,resultLayout_,responseLayout_;DialogContentLayout dialogLayout_;
   DialogState dialog_;DialogInput modal_;ProfileCursorMotion cursor_;
+  uint32_t hold_=0;WidgetInputHistory pointer_;PcDialogContacts dialogContacts_;
+  std::vector<BattleCardSprite> widgets_;
   bool dialogBound_=false,resultLaidOut_=false,responseLaidOut_=false;
   std::vector<UiSpriteBlit> sprites_;std::vector<UiRenderCommand> commands_;std::vector<UiTextBlit> text_;
 };

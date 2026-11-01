@@ -22,6 +22,7 @@ struct ProfileEnvironment {
   float ArrowTravel = 0;
   int32_t ArrowDuration = 0;
   ProfileArrowEnvironment Arrows;
+  std::array<std::array<int32_t,4>,2> EventButtons{};
   ProfilePortraitEnvironment Portrait;
   ProfileHudEnvironment Hud;
   ProfileNavigationEnvironment Navigation;

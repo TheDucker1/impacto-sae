@@ -93,8 +93,8 @@ class SessionScript final : public ScriptSource {
         Bytes payload; Word(payload, 500); Word(payload, 0);
         record(0x2c0, payload);
       };
-      auto stop = [&](uint32_t channel) {
-        Bytes payload; Word(payload, channel); Word(payload, 0);
+      auto stop = [&](uint32_t channel,uint32_t fade) {
+        Bytes payload; Word(payload, channel); Word(payload, fade);
         record(0x25b, payload);
       };
       wait();
@@ -102,7 +102,7 @@ class SessionScript final : public ScriptSource {
       const uint32_t other = (*soundChannel + 1) % 4;
       for (auto value : {0u, track, other, 50u, 0u, 0u}) Word(play, value);
       record(0x25a, play);
-      wait(); stop(*soundChannel); wait(); stop(other);
+      wait(); stop(*soundChannel,500); wait(); stop(other,0);
       Data.resize(Data.size() + 28);
       return;
     } else {
@@ -184,6 +184,22 @@ struct MusicPlayback::Impl {
   uint32_t BgmFadeOutDuration=500;
   std::vector<uint64_t> RetiredBgm;
   std::array<std::unique_ptr<Audio::OpenAL::OpenALAudioChannel>,4> SeChannels;
+  std::array<BgmStopFade,4> SeFades;
+  std::array<float,4> SeGains{1,1,1,1};
+  void SetSeGain(size_t slot,float gain) {
+    SeGains[slot]=gain;
+    SeChannels[slot]->SetVolume(gain*(SeFades[slot].Active()?SeFades[slot].Weight:1.0f));
+  }
+  void StopSe(size_t slot,int32_t duration) {
+    if(duration<0)throw UnsupportedCommand("negative SE fade duration is not bound");
+    auto& fade=SeFades[slot];
+    auto& output=SeChannels[slot];
+    if(output->GetState()==Audio::ACS_Stopped || fade.Request(duration)) {
+      output->Stop(0);fade={};return;
+    }
+    fade.Tick(0);fade.Tick(0); // Existing source is ready; arm at service time0.
+    output->SetVolume(SeGains[slot]*fade.Weight);
+  }
   std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> ProfileVoice;
   std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> SecondaryVoice;
   std::array<std::unique_ptr<Audio::OpenAL::OpenALAudioChannel>,2> AlternateVoices;
@@ -226,8 +242,8 @@ struct MusicPlayback::Impl {
   // stops the old token; Start retires that tail before playing the new token.
   std::array<BgmStopFade, 6> VoiceFades;
   std::array<float, 6> VoiceGains{1, 1, 1, 1, 1, 1};
-  double VoiceFadeFraction = 0;
-  uint32_t VoiceFadeFrameRemainder = 0;
+  double ChannelFadeFraction = 0;
+  uint32_t ChannelFadeFrameRemainder = 0;
   void StopVoice(size_t slot, bool prepared) {
     auto& output = OrdinaryOutput(slot);
     auto& fade = VoiceFades[slot];
@@ -252,7 +268,14 @@ struct MusicPlayback::Impl {
     output->SetVolume(VoiceGains[slot]);
     output->Play(std::move(stream), false, 0);
   }
-  void AdvanceVoiceFades(uint32_t milliseconds) {
+  void AdvanceChannelFades(uint32_t milliseconds) {
+    for(size_t slot=0;slot<SeFades.size();++slot) {
+      auto& fade=SeFades[slot];
+      if(!fade.Active())continue;
+      fade.Tick(milliseconds);
+      SeChannels[slot]->SetVolume(SeGains[slot]*fade.Weight);
+      if(!fade.Active())SeChannels[slot]->Stop(0);
+    }
     for (size_t slot = 0; slot < VoiceFades.size(); ++slot) {
       auto& fade = VoiceFades[slot];
       if (!fade.Active()) continue;
@@ -439,13 +462,18 @@ void MusicPlayback::Submit(const GameEvent& event) {
     // never a looping flag. Saved replay omits that refresh and retains716's
     // shifted four-channel gain writes instead.
     if (request.RefreshServiceVolume) {
-      for (auto& channel : impl_->SeChannels) channel->SetVolume(gain);
+      for (size_t slot=0;slot<impl_->SeChannels.size();++slot) impl_->SetSeGain(slot,gain);
     } else {
       for (uint32_t channel = uint32_t(request.Channel);
            channel < uint32_t(request.Channel) + 4; ++channel)
         SetChannelOutputGain(channel, gain);
     }
-    impl_->SeChannels[size_t(request.Channel - 2)]->Play(std::move(stream),
+    const auto slot=size_t(request.Channel-2);
+    // Native Prepare stops the previous token; Start retires its outgoing
+    // tail before the new playback. No second source is needed for SE.
+    impl_->SeFades[slot]={};
+    impl_->SeChannels[slot]->SetVolume(impl_->SeGains[slot]);
+    impl_->SeChannels[slot]->Play(std::move(stream),
         impl_->Sounds->Info(request.Track).Loop, 0);
   } else if (event.Kind == GameEventKind::Sound) {
     if (!impl_->UiSounds)
@@ -461,9 +489,7 @@ void MusicPlayback::Submit(const GameEvent& event) {
   } else if (event.Kind == GameEventKind::StopSe) {
     if (!impl_->Sounds || event.Id < 2 || event.Id > 5)
       throw UnsupportedCommand("SE stop outside the four native SE channels");
-    if (event.Parameter != 0)
-      throw UnsupportedCommand("native SE fade-time conversion is not verified");
-    impl_->SeChannels[size_t(event.Id - 2)]->Stop(0);
+    impl_->StopSe(size_t(event.Id-2),event.Parameter);
   } else if (event.Kind == GameEventKind::StopChannel) {
     if (event.Parameter || (event.Id < 7 || event.Id > 10))
       throw UnsupportedCommand(
@@ -479,10 +505,10 @@ void MusicPlayback::Update(float seconds) {
   if (!std::isfinite(seconds) || seconds < 0)
     throw FormatError("invalid audio update interval");
   if (!impl_->RenderSamples) {
-    impl_->VoiceFadeFraction += double(seconds) * 1000.0;
-    const double whole = std::floor(impl_->VoiceFadeFraction);
-    impl_->VoiceFadeFraction -= whole;
-    impl_->AdvanceVoiceFades(uint32_t(std::min(whole, 67.0)));
+    impl_->ChannelFadeFraction += double(seconds) * 1000.0;
+    const double whole = std::floor(impl_->ChannelFadeFraction);
+    impl_->ChannelFadeFraction -= whole;
+    impl_->AdvanceChannelFades(uint32_t(std::min(whole, 67.0)));
   }
   if (impl_->BgmFade.Active() && !impl_->RenderSamples) {
     impl_->BgmFadeFraction += double(seconds) * 1000.0;
@@ -532,6 +558,7 @@ void MusicPlayback::StopAllChannels() {
   impl_->BgmFadeFraction = 0;
   impl_->BgmFadeFrameRemainder = 0;
   for (auto& channel : impl_->SeChannels) if (channel) channel->Stop(0);
+  impl_->SeFades={};
   impl_->UiSound->Stop(0);
   for (uint32_t channel = 7; channel <= 12; ++channel)
     StopOrdinaryVoice(channel);
@@ -541,8 +568,8 @@ void MusicPlayback::StopAllChannels() {
     impl_->OrdinaryOutput(slot)->Stop(0);
     impl_->VoiceFades[slot] = {};
   }
-  impl_->VoiceFadeFraction = 0;
-  impl_->VoiceFadeFrameRemainder = 0;
+  impl_->ChannelFadeFraction = 0;
+  impl_->ChannelFadeFrameRemainder = 0;
   impl_->HasOrdinaryVoice.fill(false);
   impl_->HasProfileVoice = impl_->HasMissionVoice = false;
   AlCheck("shared audio quiescence");
@@ -563,7 +590,7 @@ void MusicPlayback::SetChannelOutputGain(uint32_t channel,float gain){
   if(channel<2 || channel>12)throw FormatError("live channel gain outside native2..12");
   if(channel<6){
     if(!impl_->SeChannels.at(channel-2))throw UnsupportedCommand("live SE gain has no bound channel");
-    impl_->SeChannels.at(channel-2)->SetVolume(gain);
+    impl_->SetSeGain(channel-2,gain);
   }
   else if(channel==6){impl_->UiSoundGain=gain;impl_->UiSound->SetVolume(gain);}
   else impl_->SetVoiceGain(channel-7, gain);
@@ -573,7 +600,7 @@ float MusicPlayback::ChannelOutputGain(uint32_t channel)const{
   if(channel<2 || channel>12)throw FormatError("live channel gain query outside native2..12");
   if(channel<6){
     if(!impl_->SeChannels.at(channel-2))throw UnsupportedCommand("live SE gain query has no bound channel");
-    return impl_->SeChannels.at(channel-2)->GetVolume();
+    return impl_->SeGains.at(channel-2);
   }
   if(channel==6)return impl_->UiSound->GetVolume();
   return impl_->VoiceGains[channel-7];
@@ -926,9 +953,9 @@ void MusicPlayback::Render(std::span<int16_t> output) {
   size_t frame = 0;
   while (frame < output.size() / 2) {
     const auto count = std::min<size_t>(480, output.size() / 2 - frame);
-    impl_->VoiceFadeFrameRemainder += uint32_t(count);
-    impl_->AdvanceVoiceFades(impl_->VoiceFadeFrameRemainder / 48);
-    impl_->VoiceFadeFrameRemainder %= 48;
+    impl_->ChannelFadeFrameRemainder += uint32_t(count);
+    impl_->AdvanceChannelFades(impl_->ChannelFadeFrameRemainder / 48);
+    impl_->ChannelFadeFrameRemainder %= 48;
     if (impl_->BgmFade.Active()) {
       impl_->BgmFadeFrameRemainder += uint32_t(count);
       impl_->AdvanceBgmFade(impl_->BgmFadeFrameRemainder / 48);
@@ -1804,7 +1831,7 @@ int RunMusicSession(const std::filesystem::path& usrdir, uint32_t track,
     VirtualMachine vm(scripts, backend, state);
     std::vector<int16_t> samples;
     uint32_t playRequests = 0, stopRequests = 0, completed = 0, gain = 0;
-    bool otherPlayingAtFirstStop = false;
+    bool otherPlayingAtFirstStop = false,firstSeStillRetiring=false;
     const auto epoch = SDL_GetTicks();
     bool ended = false;
     for (uint64_t frame = 0; frame < 240 && !ended; ++frame) {
@@ -1822,6 +1849,8 @@ int RunMusicSession(const std::filesystem::path& usrdir, uint32_t track,
           } else if (request.Kind == GameEventKind::StopBgm || request.Kind == GameEventKind::StopSe) {
             if (soundChannel && stopRequests == 0)
               otherPlayingAtFirstStop = playback.SoundPlaying((*soundChannel + 1) % 4);
+            if(soundChannel && stopRequests==1)
+              firstSeStillRetiring=playback.SoundPlaying(*soundChannel);
             ++stopRequests;
           }
         }
@@ -1847,6 +1876,16 @@ int RunMusicSession(const std::filesystem::path& usrdir, uint32_t track,
           if (event.type == SDL_EVENT_QUIT) return 0;
       }
     }
+    // Script completion precedes physical retirement: fade duration plus the
+    // native500ms silent tail. Exercise both authored500 and zero through VM.
+    if(soundChannel) {
+      if(!otherPlayingAtFirstStop || !firstSeStillRetiring)
+        throw FormatError("SE stop cut a source or affected the other channel");
+      for(size_t tick=0;tick<65 && playback.Playing();++tick) {
+        if(capture){const auto offset=samples.size();samples.resize(offset+1600);playback.Render(std::span(samples).subspan(offset));}
+        else {playback.Update(1.0f/60);SDL_Delay(16);}
+      }
+    }
     if (!ended || playback.Playing() || playRequests != (soundChannel ? 2u : 1u) ||
         stopRequests != (soundChannel ? 2u : 1u) || completed != (soundChannel ? 7u : 3u))
       throw FormatError(
@@ -1866,6 +1905,7 @@ int RunMusicSession(const std::filesystem::path& usrdir, uint32_t track,
       }
       report << "],\"stopped\":true";
       if (soundChannel) report << ",\"sound_channel\":" << *soundChannel
+          << ",\"stop_fade_ms\":500,\"silent_retirement_ms\":500,\"first_se_retiring_at_second_stop\":true"
           << ",\"other_playing_at_first_stop\":" << (otherPlayingAtFirstStop ? "true" : "false")
           << ",\"remembered_track\":" << *vm.State().SeTrack
           << ",\"remembered_channel\":" << *vm.State().SeChannel;

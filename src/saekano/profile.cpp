@@ -184,7 +184,8 @@ ProfileEnvironment ProfileEnvironment::Decode(std::span<const uint8_t> bytes) {
   result.ArrowDuration = cursor.Signed();  // e988
   for (auto& sprite : result.Arrows.Upper) sprite = cursor.Sprite();
   for (auto& sprite : result.Arrows.Lower) sprite = cursor.Sprite();
-  cursor.Skip(2 * 16);
+  for(auto& rectangle:result.EventButtons)
+    for(auto& value:rectangle)value=cursor.Signed(); // ea1c/ea2c, widgets550/578.
   result.ItemFrames.Sprite = cursor.Sprite();  // ea3c
   const auto itemPositions = cursor.Count(8);
   for (uint32_t i = 0; i < itemPositions; ++i)
