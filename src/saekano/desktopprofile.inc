@@ -27,6 +27,8 @@ class SceneProfilePresenter {
     dialogLayout_=BuildDialogContentLayout(dialogEnvironment_,{480,272},promptLayout_.Height,
         dialogEnvironment_.ButtonGroups[1].size(),utility_.Size);
     hold_=WidgetInputEnvironment::DecodeUtility(SceneRead(root/"env/env_game_utility.dat")).HoldFrames;
+    repeats_=AudioEnvironment::Decode(SceneRead(root/"env/env_game_utility.dat")).OpaqueTable;
+    ValidateOptionsRepeatIntervals(repeats_);
     const auto rectangle=[&](std::array<int32_t,4> area){UiSpriteDefinition shape;
       shape.X=area[0];shape.Y=area[1];shape.Width=area[2];shape.Height=area[3];return shape;};
     const auto add=[&](UiSpriteDefinition shape){widgets_.emplace_back(shape,ProfileTextureKey{},1.0f,true,hold_);};
@@ -45,19 +47,30 @@ class SceneProfilePresenter {
     for(const auto& texture:services_.MenuTextures())renderer_.Upload(texture.Key,texture.Pixels);
   }
   void Handle(const SDL_Event& event,ProfileSelectionInput& input) {
+    if(event.type==SDL_EVENT_KEY_DOWN || event.type==SDL_EVENT_KEY_UP) {
+      for(size_t i=0;i<2;++i)if(event.key.key==(i==0?SDLK_UP:SDLK_DOWN)) {
+        keyHeld_[i]=event.type==SDL_EVENT_KEY_DOWN;
+        pressed_[i]|=keyHeld_[i] && !event.key.repeat;
+      }
+    }
+    if(event.type==SDL_EVENT_GAMEPAD_BUTTON_DOWN || event.type==SDL_EVENT_GAMEPAD_BUTTON_UP) {
+      for(size_t i=0;i<2;++i)if(event.gbutton.button==(i==0?SDL_GAMEPAD_BUTTON_DPAD_UP:SDL_GAMEPAD_BUTTON_DPAD_DOWN)) {
+        padHeld_[i]=event.type==SDL_EVENT_GAMEPAD_BUTTON_DOWN;pressed_[i]|=padHeld_[i];
+      }
+    }
+    if(event.type==SDL_EVENT_GAMEPAD_REMOVED)padHeld_={};
     const PcActionInput action(event);
     if(dialog_.Visible) {
       action.Apply(modal_);
     } else {
       if(action.Left)input.CharacterDirection=false;
       if(action.Right)input.CharacterDirection=true;
-      if(action.Up)input.EventDirection=true;
-      if(action.Down)input.EventDirection=false;
       input.Accept|=action.Accept;input.Cancel|=action.Cancel;
     }
   }
   void CancelPointer() {
     pointer_={};dialogContacts_.CancelPointer();
+    keyHeld_=padHeld_=pressed_={};repeatCounters_={};
     for(auto& widget:widgets_){widget.Input=WidgetEventHistory(hold_);}
   }
   void BeforeStep(const ProfileMode& mode,ProfileSelectionInput& input,
@@ -75,8 +88,8 @@ class SceneProfilePresenter {
             pointer_.Previous[0],widget.Input.TrackedId,pointer_.Velocity(0)),now);
         pointer_.Publish(widget.Input.Flags);return widget.Input.Flags;
       };
-      if(mode.CurrentStage()==ProfileMode::Stage::Selection && !mode.Selection().PendingPhase) {
-        const auto phase=mode.Selection().Phase;
+      if(mode.CurrentStage()==ProfileMode::Stage::Selection) {
+        const auto phase=mode.Selection().PendingPhase.value_or(mode.Selection().Phase);
         if(phase==5 || phase==6) {
           const auto portrait=update(0);
           if(phase==5) {
@@ -87,6 +100,20 @@ class SceneProfilePresenter {
             else if(!input.CharacterDirection && (right&8))input.CharacterDirection=true;
             else input.Accept|=(portrait&8)!=0;
           } else {
+            // Native8018ed28: both vertical counters advance independently,
+            // only on phase6 updates. Profile sets continuous/wrap; phase7
+            // carousel animation suspends this owner, rather than its clock
+            // using SDL's platform-dependent key-repeat events.
+            auto& counters=repeatCounters_.at(mode.Selection().Ordinal);
+            std::array<bool,2> active{};
+            for(size_t i=0;i<2;++i) {
+              if(pressed_[i]){counters[i]=0;active[i]=true;}
+              else if(!keyHeld_[i] && !padHeld_[i])counters[i]=0;
+              else {counters[i]=std::bit_cast<int32_t>(uint32_t(counters[i])+1);
+                active[i]=OptionsRepeatDeadline(counters[i],repeats_);}
+            }
+            if(active[0])input.EventDirection=true;
+            else if(active[1])input.EventDirection=false;
             const auto previous=update(3),next=update(4),selected=update(5);
             if(!input.EventDirection && (previous&8))input.EventDirection=true;
             else if(!input.EventDirection && (next&8))input.EventDirection=false;
@@ -99,6 +126,7 @@ class SceneProfilePresenter {
       }
     }
     modal_={};
+    pressed_={};
   }
   void AfterStep(const ProfileMode& mode,uint64_t now) {
     if(mode.Selection().ConfirmationOpen && !dialogBound_) {
@@ -266,6 +294,9 @@ class SceneProfilePresenter {
   PlainTextLayout promptLayout_,resultLayout_,responseLayout_;DialogContentLayout dialogLayout_;
   DialogState dialog_;DialogInput modal_;ProfileCursorMotion cursor_;
   uint32_t hold_=0;WidgetInputHistory pointer_;PcDialogContacts dialogContacts_;
+  std::vector<int32_t> repeats_;
+  std::array<std::array<int32_t,2>,4> repeatCounters_{};
+  std::array<bool,2> keyHeld_{},padHeld_{},pressed_{};
   std::vector<BattleCardSprite> widgets_;
   bool dialogBound_=false,resultLaidOut_=false,responseLaidOut_=false;
   std::vector<UiSpriteBlit> sprites_;std::vector<UiRenderCommand> commands_;std::vector<UiTextBlit> text_;

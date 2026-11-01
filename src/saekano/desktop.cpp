@@ -43,6 +43,7 @@
 #include "titleaudio.h"
 #include "optionspagedraw.h"
 #include "optionswidgets.h"
+#include "optionsrepeat.h"
 #include "optionsdialog.h"
 #include "systemmenu.h"
 #include "backlogscreen.h"
