@@ -1158,6 +1158,7 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
   ArchiveApproachResultHost resultHost(resources,missionVoice,skipAuto,format,timing,
       resultVisual,font.Cached(),metrics,uint32_t(utility.Size),font.NominalSize());
   SceneMessageBackend backend(format, timing, *owner.TextSpeed, owner.AutoSpeed);
+  backend.GlobalUiSettings = GlobalUiEnvironment::Decode(SceneRead(root / "env/env_global.dat"));
   backend.BacklogSettings = BacklogTextEnvironment::Decode(SceneRead(root/"env/env_backlog.dat"));
   PlaybackProfileVoice profileVoice(playback,voiceSettings.Volume,1.0f);
   ArchiveProfileServices profileServices(resources,ScriptNameIndex::FromFirstArchive(SceneRead(root/"first.dat")),
@@ -1256,9 +1257,18 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
   std::unique_ptr<ArchiveBattleResultHost> battleResultHost;
   std::optional<uint64_t> battleFrame;
   std::unique_ptr<SceneMessageVoiceOwner> voiceOwner;
+  PcMovieFrameLayer scenarioMovieFrame;
+  std::unique_ptr<PlaybackScriptMovie> scenarioMovie;
   int32_t voiceScript = -1;
   const auto bindScriptVoices = [&] {
     if (voiceScript == vm->State().ScriptFileId) return;
+    backend.MovieOutput = nullptr;
+    if (scenarioMovie) {
+      scenarioMovie->Stop();
+      if (!scenarioMovie->RetireFinished())
+        throw UnsupportedCommand("scenario movie resources still retiring during file replacement");
+      scenarioMovie.reset();
+    }
     backend.BattleSelectionConsumerHost=nullptr;battleHost.reset();battleFrame.reset();
     backend.BattleResultConsumerHost=nullptr;battleResultHost.reset();
     // File load creates a fresh manager RNG. The headless route supplies this
@@ -1276,6 +1286,10 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
     voiceOwner->SecondaryQueue->BaseChannel=9; // Native manager binding, distinct from constructor default7.
     voiceOwner->SecondaryQueue->Catalog=std::move(catalogs[1]);
     backend.BindVoiceOwner(*voiceOwner);
+    scenarioMovie = std::make_unique<PlaybackScriptMovie>(root, playback, *voiceOwner,
+        [&](const AVFrame* frame, int64_t pts) { scenarioMovieFrame.Present(frame, pts); },
+        [&] { scenarioMovieFrame.Retire(); return !scenarioMovieFrame.Available; });
+    backend.MovieOutput = scenarioMovie.get();
     voiceScript = vm->State().ScriptFileId;
     battleHost=std::make_unique<ArchiveBattleSelectionHost>(*backend.BattleSelectionSettings,dialogueVisual.Bubble,
         inputEnvironment.HoldFrames,selectionShared,visual,format,font.Cached(),metrics,uint32_t(utility.Size),font.NominalSize(),
@@ -1694,6 +1708,9 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
       if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
           event.key.key == SDLK_RETURN)
         input.Advance = true;
+      if (vm->MovieActive() && event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN &&
+          event.gbutton.button == SDL_GAMEPAD_BUTTON_EAST)
+        input.Advance = true;
       if ((event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) &&
           event.key.key == SDLK_A) {
         autoKeyHeld = event.type == SDL_EVENT_KEY_DOWN;
@@ -1834,7 +1851,7 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
         resultTouch.TrackedId,resultPointer.Velocity(0)));
     resultPointer.Publish(resultTouch.Flags);
     const bool ordinaryRelease=!menuState.Visible && !ordinary.Visible && sceneInput.UpdatePrimary();
-    const bool resultInput=vm->Opcode()==0x3f8 || vm->Opcode()==0x3f9;
+    const bool resultInput=vm->Opcode()==0x3f8 || vm->Opcode()==0x3f9 || vm->MovieActive();
     const bool pointerAdvance=resultInput ? resultTouch.Enabled && (resultTouch.Flags&8) : ordinaryRelease;
     input.Advance = input.Advance || pointerAdvance;
     if (capture && captureActive) {
@@ -1869,6 +1886,7 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
     battleAssets.Pump();
     if(!endingState.Started)for (size_t work = 0; work < 256; ++work) {
       bindScriptVoices();
+      scenarioMovie->Pump(now);
       syncMouths();
       if(!battleFrame || *battleFrame!=now){battleHost->BeginFrame(now,pointerSnapshot,battleFaces);battleFrame=now;}
       const bool acceptedInput=input.Advance;
@@ -2213,7 +2231,7 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
     renderer.SetFilter(*state.ScreenFilter.Mode, *state.ScreenFilter.Intensity);
     const auto* activeMessage = backend.CurrentMessage();
     const bool approach=state.ApproachMode.Enabled.value_or(false);
-    if (!endingState.Started && !activeMessage && !approach && !state.OrdinaryChoice.Visible && !state.BattleVersus.Visible && !state.BattleResult.Visible && !state.TitleDisplay.value_or(false)) {
+    if (!endingState.Started && !vm->MovieActive() && !activeMessage && !approach && !state.OrdinaryChoice.Visible && !state.BattleVersus.Visible && !state.BattleResult.Visible && !state.TitleDisplay.value_or(false)) {
       UiSpriteBlit white;
       white.Destination = {0, 0, 960, 544};
       white.Color = {255, 255, 255, 255};
@@ -2251,6 +2269,7 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
       layout=splitLayouts[message->Side];layoutCommand=message->Command;laidOut=true;
     }
     SceneQueueInputs gates;
+    gates.MessageHidden = vm->MovieActive();
     gates.ForegroundLetterbox=state.Letterbox.Foreground;
     gates.SplitMessage=state.BattleEntry.Enabled;
     gates.ApproachSelectionVisible=state.ApproachSelection.Visible;
@@ -2503,6 +2522,9 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
       if(d.IsText){fontTextures.DrawString(renderer,font,d.Text.Text,d.Text.Position[0],d.Text.Position[1],d.Text.Size,d.Text.Color);textDraws.push_back(d.Text);}
       else {uploadBattleUi(d.Sprite.Texture.Entry);drawSprite(d.Sprite);spriteDraws.push_back(d.Sprite);}
     }
+    // Native HUD tail80077076: movie surface after ordinary HUD, before white.
+    if (vm->MovieActive() && scenarioMovie->Busy() && scenarioMovieFrame.Available)
+      scenarioMovieFrame.Draw();
     // Native HUD tail8007708c draws white after queued presentation/HUD.
     if (const auto fade = BuildScreenFade(*state.ScreenFade)) {
       glUniform1i(renderer.AlphaMode, 1);

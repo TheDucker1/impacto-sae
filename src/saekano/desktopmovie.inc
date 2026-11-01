@@ -12,6 +12,105 @@ static std::string MovieSourceDigest(const AVFrame* frame,int width,int height,i
   constexpr char hex[]="0123456789abcdef";std::string hash;
   for(auto byte:digest){hash+=hex[byte>>4];hash+=hex[byte&15];}return hash;
 }
+int RunMovieVmSession(const std::filesystem::path& root, int32_t scriptId, uint32_t command,
+                     const std::filesystem::path& output) {
+  bool created = false;
+  try {
+    const auto source = std::filesystem::canonical(root);
+    const auto target = std::filesystem::weakly_canonical(output);
+    for (auto p = target; !p.empty(); p = p.parent_path()) {
+      if (p == source || p == source.parent_path()) throw FormatError("movie VM output overlaps data");
+      if (p == p.parent_path()) break;
+    }
+    if (std::filesystem::exists(target)) throw FormatError("choose a fresh movie VM output directory");
+    GameResources resources(SceneRead(source / "resource.dat"));
+    const ScriptObject script(resources.Load(scriptId));
+    if (command >= script.Records().size() || script.Records()[command].Opcode != 0x2c2)
+      throw FormatError("movie VM witness requires an authored movie record");
+    const auto authored = ScriptMovieCommand::Decode(script.Payload(command));
+    if (!authored.AllowInputSkip) throw FormatError("bounded movie VM witness requires authored input skip");
+    std::filesystem::create_directories(target); created = true;
+    if (!SDL_Init(SDL_INIT_EVENTS)) throw FormatError(SDL_GetError());
+    struct Cleanup { ~Cleanup() { SDL_Quit(); } } cleanup;
+    ArchiveBgmResources music(source); MusicPlayback playback(music, true);
+    PlaybackOrdinaryVoice voices(playback, source, 10, 1);
+    struct Mouth final : OrdinaryMessageMouth {
+      void Begin(int32_t, const ProfileMouthAnimation&, uint64_t) override {}
+      void End(int32_t) override {}
+    } mouth;
+    SceneMessageVoiceOwner voiceOwner{voices, mouth, MakeFreshOrdinaryVoiceQueue(), {}, {}, {}};
+    struct Frames {
+      AVFrame* Last = nullptr; uint64_t Count = 0;
+      ~Frames() { Retire(); }
+      void Retire() { av_frame_free(&Last); }
+      void Present(const AVFrame* frame) {
+        if (!frame || frame->width <= 0 || frame->height <= 0 || !frame->data[0])
+          throw FormatError("movie VM received invalid decoded frame");
+        auto* retained = av_frame_clone(frame);
+        if (!retained) throw FormatError("movie VM cannot retain decoded frame");
+        Retire(); Last = retained; ++Count;
+      }
+    } frames;
+    PlaybackScriptMovie movie(source, playback, voiceOwner,
+        [&](const AVFrame* frame, int64_t) { frames.Present(frame); },
+        [&] { frames.Retire(); return frames.Last == nullptr; });
+    HeadlessBackend backend; backend.MovieOutput = &movie;
+    backend.GlobalUiSettings = GlobalUiEnvironment::Decode(SceneRead(source / "env/env_global.dat"));
+    // Explicit module-entry inputs, not a captured later state or a story prefix.
+    SemanticState owner; owner.ScriptFileId = scriptId; owner.CurrentCommandIndex = int32_t(command);
+    owner.ScreenFade = 255; owner.SystemProgress.emplace(); owner.SystemProgress->Bytes6022c[7] = 10;
+    owner.BgmTrack = 8; owner.SeTrack = 9;
+    VirtualMachine vm(resources, backend, std::move(owner));
+    std::ofstream trace(target / "frames.jsonl"), pcm(target / "output.pcm", std::ios::binary);
+    if (!trace || !pcm) throw FormatError("cannot create movie VM trace");
+    bool accepted = false, completed = false; uint64_t now = 0; int32_t peak = 0;
+    uint32_t updates = 0; MoviePlaybackState playing;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+    for (; updates < 600 && std::chrono::steady_clock::now() < deadline; ++updates) {
+      playback.Update(0.016f); movie.Pump(now);
+      CommandInput input;
+      if (!accepted && vm.CurrentMovie() && vm.CurrentMovie()->PlaybackStarted && frames.Count >= 6) {
+        input.Advance = true; accepted = true; playing = movie.PlaybackState();
+      }
+      const auto event = vm.Step(now, input);
+      const auto* state = vm.CurrentMovie();
+      trace << "{\"now\":" << now << ",\"boundary\":" << int(event.Boundary)
+            << ",\"phase\":" << (state ? state->Phase : -1) << ",\"movie_active\":" << vm.MovieActive()
+            << ",\"fade\":" << vm.State().ScreenFade.value_or(-1) << ",\"accept\":" << input.Advance
+            << ",\"video_presented\":" << movie.PlaybackState().VideoPresented
+            << ",\"audio_played\":" << movie.PlaybackState().AudioPlayed << "}\n";
+      std::array<int16_t, 1536> samples{}; playback.Render(samples);
+      pcm.write(reinterpret_cast<const char*>(samples.data()), sizeof(samples));
+      for (auto sample : samples) peak = std::max(peak, std::abs(int32_t(sample)));
+      if (event.Boundary == VmBoundary::CommandCompletedBeforeDispatch) { completed = true; break; }
+      now += 16; SDL_Delay(1);
+    }
+    if (!completed || !accepted || frames.Last || frames.Count < 6 || !playing.AudioPlayed || peak <= 8 ||
+        vm.MovieActive() || vm.State().ScreenFade != 255 || movie.PlaybackState().Prepared ||
+        vm.State().BgmTrack != 8 || vm.State().SeTrack != 9)
+      throw FormatError("movie VM witness did not complete real media/input/retirement interaction");
+    const auto successor = vm.Step(now + 16);
+    if (command + 1 < script.Records().size() &&
+        (successor.Boundary != VmBoundary::BeforeStart || vm.State().CurrentCommandIndex != int32_t(command + 1)))
+      throw FormatError("movie VM did not dispatch its original successor before Start");
+    std::array<int16_t, 9600> silent{}; playback.Render(silent); int32_t silentPeak = 0;
+    for (auto sample : std::span(silent).last(2048)) silentPeak = std::max(silentPeak, std::abs(int32_t(sample)));
+    if (silentPeak > 1) throw FormatError("movie VM retirement left audible output");
+    trace.close(); pcm.close(); if (!trace || !pcm) throw FormatError("cannot save movie VM trace");
+    std::ofstream report(target / "summary.json");
+    report << "{\"passed\":true,\"script\":" << scriptId << ",\"command\":" << command
+           << ",\"successor\":" << vm.State().CurrentCommandIndex << ",\"successor_opcode\":" << vm.Opcode()
+           << ",\"fade_duration\":" << backend.GlobalUiSettings->FadeDuration << ",\"updates\":" << updates + 1
+           << ",\"elapsed_ms\":" << now << ",\"video_frames\":" << frames.Count << ",\"pcm_peak\":" << peak
+           << ",\"silent_tail_peak\":" << silentPeak << ",\"entry_context\":\"constructed\","
+              "\"explicit_skip\":true,\"resources_retired\":true,\"headless_actual_media\":true,"
+              "\"gpu_rendering\":false,\"full_route\":false,\"native_scene_comparison\":false}\n";
+    report.close(); if (!report) throw FormatError("cannot save movie VM summary"); return 0;
+  } catch (const std::exception& error) {
+    if (created) { std::ofstream out(output / "error.txt"); out << error.what() << '\n'; }
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Movie VM witness: %s", error.what()); return 1;
+  }
+}
 int RunMovieHostSession(const std::filesystem::path& root,const std::filesystem::path& output) {
   bool created = false;
   try {

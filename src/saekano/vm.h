@@ -5,6 +5,8 @@
 #include "slotrestore.h"
 #include "messagesnapshot.h"
 #include "workingcontext.h"
+#include "scriptmovie.h"
+#include "globalui.h"
 
 #include <memory>
 
@@ -82,6 +84,8 @@ class VmBackend {
   virtual ApproachResultHost* ResultHost() { return nullptr; }
   virtual BgmResources* Music() { return nullptr; }
   virtual SeResources* SoundEffects() { return nullptr; }
+  virtual ScriptMovieServices* Movies() { return nullptr; }
+  virtual const GlobalUiEnvironment* GlobalUiConfig() const { return nullptr; }
   virtual const BattleGaugeEnvironment* BattleEnvironment() const { return nullptr; }
   virtual const ApproachGaugeEnvironment* ApproachEnvironment() const { return nullptr; }
   virtual const ChapterEnvironment* ChapterConfig() const { return nullptr; }
@@ -143,6 +147,8 @@ class VirtualMachine {
   uint16_t Opcode() const;
   const QuakeAnimation* CurrentQuake() const;
   const ChapterTitleAnimation* CurrentChapter() const;
+  const ScriptMovieState* CurrentMovie() const;
+  bool MovieActive() const { const auto* movie = CurrentMovie(); return movie && movie->MovieActive; }
   std::span<const ApproachEntry> CurrentApproachEntries() const;
   const ChoiceMenu* CurrentOrdinaryChoice() const;
   const ProfileMode* CurrentProfile() const { return profile_.get(); }
@@ -198,6 +204,8 @@ class VirtualMachine {
     QuakeAnimation QuakeRuntime;
     std::optional<ScreenFadeCommand> ScreenFade;
     ScreenFadeAnimation FadeAnimation;
+    std::optional<ScriptMovieCommand> Movie;
+    ScriptMovieState MovieState;
     std::optional<ScreenFilterCommand> ScreenFilter;
     ScreenFilterAnimation FilterAnimation;
     std::optional<DrawImageCommand> DrawImage;

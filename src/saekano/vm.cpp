@@ -28,6 +28,11 @@ const ChapterTitleAnimation* VirtualMachine::CurrentChapter() const {
   if (Opcode() != 0x3ec) return nullptr;
   return &commands_.at(size_t(state_.CurrentCommandIndex)).ChapterAnimation;
 }
+const ScriptMovieState* VirtualMachine::CurrentMovie() const {
+  if (Opcode() != 0x2c2) return nullptr;
+  const auto& state = commands_.at(size_t(state_.CurrentCommandIndex)).MovieState;
+  return state.Started ? &state : nullptr;
+}
 const ChoiceMenu* VirtualMachine::CurrentOrdinaryChoice() const {
   if (Opcode() != 0x65) return nullptr;
   const auto& menu = commands_.at(size_t(state_.CurrentCommandIndex)).OrdinaryMenu;
@@ -143,6 +148,8 @@ void VirtualMachine::Load(bool preserveOwnerState) {
       command.Chapter = ChapterTitleCommand::Decode(script_->Payload(i));
     } else if (opcode == 0x258) {
       command.PlayBgm = PlayBgmCommand::Decode(script_->Payload(i));
+    } else if (opcode == 0x2c2) {
+      command.Movie = ScriptMovieCommand::Decode(script_->Payload(i));
     } else if (opcode == 0x25a) {
       command.PlaySe = PlaySeCommand::Decode(script_->Payload(i));
       command.Routing = {command.PlaySe->Route != 0, command.PlaySe->Lane};
@@ -549,6 +556,15 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
     StartChapterTitle(state_, command.ChapterAnimation, *command.Chapter, *environment, now);
   } else if ((opcode == 0xc8 || opcode == 0xc9) && !lane) {
     StartScreenFade(state_, command.FadeAnimation, *command.ScreenFade, now);
+  } else if (opcode == 0x2c2 && !lane) {
+    auto* movies = backend_.Movies();
+    if (!movies || !backend_.GlobalUiConfig())
+      throw UnsupportedCommand("movie service/global environment is unavailable");
+    if (!state_.SystemProgress || !state_.ScreenFade)
+      throw UnsupportedCommand("movie requires persistent volume and current screen fade");
+    StartScriptMovie(command.MovieState, *command.Movie, *movies,
+        state_.SystemProgress->Bytes6022c[7], *state_.ScreenFade);
+    state_.SkipPhase = command.MovieState.SkipPhase;
   } else if ((opcode == 0x3fd || opcode == 0x400) && !lane) {
     StartScreenFilter(state_.ScreenFilter, command.FilterAnimation, *command.ScreenFilter, now);
   } else if (opcode == 0xcb) {
@@ -762,6 +778,18 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
     if (lane) return true;
     return UpdateScreenFade(state_, command.FadeAnimation, *command.ScreenFade,
         input.Route == UpdateRoute::Skipping, now);
+  }
+  if (opcode == 0x2c2) {
+    if (lane) return true;  // Native common lane handlers do not start a player.
+    auto* movies = backend_.Movies(); const auto* environment = backend_.GlobalUiConfig();
+    if (!movies || !environment || !state_.SystemProgress)
+      throw UnsupportedCommand("movie update services/settings are unavailable");
+    if (!command.MovieState.Started)
+      throw UnsupportedCommand("movie Start was suppressed; controller is unavailable");
+    const auto done = UpdateScriptMovie(command.MovieState, *movies,
+        int32_t(environment->FadeDuration), state_.SystemProgress->Bytes6022c[7], input.Advance, now);
+    state_.ScreenFade = command.MovieState.ScreenFade;
+    return done;
   }
   if (opcode == 0x3fd || opcode == 0x400) {
     if (lane) return true;

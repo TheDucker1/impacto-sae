@@ -97,6 +97,12 @@ class HeadlessBackend : public VmBackend {
   BgmResources* Music() override { return MusicResources; }
   SeResources* SeArchives = nullptr;
   SeResources* SoundEffects() override { return SeArchives; }
+  ScriptMovieServices* MovieOutput = nullptr;
+  std::optional<GlobalUiEnvironment> GlobalUiSettings;
+  ScriptMovieServices* Movies() override { return MovieOutput; }
+  const GlobalUiEnvironment* GlobalUiConfig() const override {
+    return GlobalUiSettings ? &*GlobalUiSettings : nullptr;
+  }
   std::optional<BattleGaugeEnvironment> BattleConfig;
   std::optional<ApproachGaugeEnvironment> ApproachConfig;
   std::optional<ChapterEnvironment> ChapterSettings;
