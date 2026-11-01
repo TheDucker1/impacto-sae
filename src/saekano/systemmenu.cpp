@@ -24,7 +24,7 @@ int32_t SystemMenu::Word(uint16_t at) const {
   return std::bit_cast<int32_t>(env_.Scalars.at(at));
 }
 SystemMenu::SystemMenu(SystemMenuEnvironment e, ProfileTextureSection bank,
-    uint32_t hold, SystemMenuServices& services)
+    uint32_t hold, SystemMenuServices& services, int32_t initialSelection)
     : env_(std::move(e)), bank_(bank), services_(services),
       close_(White(env_.Sprites.at(0x154)),Texture(3),1,false,hold),
       back_(White(env_.Sprites.at(0x178)),Texture(3),1,false,hold),
@@ -39,7 +39,8 @@ SystemMenu::SystemMenu(SystemMenuEnvironment e, ProfileTextureSection bank,
     rows_.push_back({{BattleCardSprite(s,Texture(uint32_t(7+i)),1,true,hold),
                       BattleCardSprite(s,Texture(uint32_t(12+i)),1,true,hold)}});
   }
-  Highlight(0,true);
+  if(initialSelection<0 || initialSelection>=5)throw FormatError("invalid initial system-menu selection");
+  selected_=initialSelection;Highlight(selected_,true);
 }
 void SystemMenu::BeginFrame(WidgetInputHistory::Snapshot snapshot) {
   contacts_.BeginFrame(std::move(snapshot));

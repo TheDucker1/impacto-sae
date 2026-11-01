@@ -58,6 +58,14 @@ class PcSceneThumbnail {
   PcSceneThumbnail()=default;
   PcSceneThumbnail(const PcSceneThumbnail&)=delete;PcSceneThumbnail& operator=(const PcSceneThumbnail&)=delete;
   bool Ready() const{return Published;}
+  void Present(std::array<GLint,4> viewport) const {
+    if(!Ready())throw FormatError("scene modal has no completed background");
+    Bindings old;const auto& frame=Frames[Current];
+    glBindFramebuffer(GL_READ_FRAMEBUFFER,frame.Fbo);glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glBlitFramebuffer(0,0,frame.Width,frame.Height,viewport[0],viewport[1],
+      viewport[0]+viewport[2],viewport[1]+viewport[3],GL_COLOR_BUFFER_BIT,GL_LINEAR);
+    GlCheck("scene modal background");
+  }
   // Called only after a complete scene draw, before separate menu/modal draws.
   // Viewport is in framebuffer pixels, including its actual origin.
   void Publish(std::array<GLint,4> viewport) {

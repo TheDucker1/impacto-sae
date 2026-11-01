@@ -39,6 +39,7 @@
 #include "optionswidgets.h"
 #include "optionsdialog.h"
 #include "systemmenu.h"
+#include "savepreview.h"
 #include "optionspreview.h"
 #include "buttonhelp.h"
 #include "globalui.h"
@@ -1061,7 +1062,11 @@ struct SceneDialogLayer {
 
 // An ordinary-dialogue frontend. Unbound auxiliary/effect passes are
 // reported explicitly; this is not yet the complete scenario renderer.
-int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
+struct ScenarioSceneTransfer {
+  std::unique_ptr<NativePendingSlotLoad> Load;
+  std::unique_ptr<SemanticState> Owner;
+};
+int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
                       FontTextures& fontTextures, PcFontFace& font,
                       GameResources& resources, MusicPlayback& playback,
                       ArchiveBgmResources& music, ArchiveSeResources& sounds,
@@ -1075,11 +1080,13 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
                       std::optional<int32_t> captureScriptOverride = {},
                       bool captureWaitingInput = false,bool captureConfirmInput = false,int32_t captureMenuInput = 0,
                       const std::filesystem::path& capturePlan = {},
-                      const std::filesystem::path& progressRoot = {},const NativeSlotData* slotProgress=nullptr,
-                      const NativePendingSlotLoad* load=nullptr,uint8_t captureOrdinaryChoice=0) {
+                      const std::filesystem::path& progressRoot = {},NativeSlotData* slotProgress=nullptr,
+                      const NativePendingSlotLoad* load=nullptr,uint8_t captureOrdinaryChoice=0,
+                      ScenarioSceneTransfer* transfer=nullptr) {
   const bool capture = !captureDirectory.empty();
   PcSceneThumbnail sceneThumbnail;
   const bool captureEnding=captureMenuInput==16;
+  const bool captureScenarioMenu=captureMenuInput==19;
   const bool captureParticles=captureMenuInput==4;
   const bool captureChapter=captureMenuInput==7;
   const bool captureLip=captureMenuInput==9;
@@ -1114,7 +1121,7 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
   if (!owner.WindowOpacity || !owner.ReadColorEnabled || !owner.TextSpeed ||
       !owner.AutoSpeed)
     throw UnsupportedCommand("scene owner display settings are missing");
-  const auto opacity = *owner.WindowOpacity;
+  auto opacity = *owner.WindowOpacity;
   const auto format = TextFormatEnvironment::Decode(
       SceneRead(root / "env/env_string_format.dat"), true);
   const auto timing = TextTimingEnvironment::Decode(
@@ -1172,7 +1179,7 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
   const auto selectionShared=SharedSelectionEnvironment::Decode(SceneRead(root/"env/env_script_select.dat"));
   std::map<int32_t,std::unique_ptr<ModelTextures>> modelTextures;
   SdkLive2dDriver models(resources, Live2dEnvironment::Decode(SceneRead(root / "env/env_live2d.dat")));
-  const auto voiceSettings = owner.VoiceSettings.value_or(MakeFreshOrdinaryVoiceSettings());
+  auto voiceSettings = owner.VoiceSettings.value_or(MakeFreshOrdinaryVoiceSettings());
   PlaybackMissionVoice missionVoice(playback,root,voiceSettings.Volume,1.0f);
   const auto resultVisual=ModeResultVisualEnvironment::DecodeApproach(SceneRead(root/"env/env_approach.dat"));
   const auto resultCursors=MessageCursorEnvironment::Decode(SceneRead(root/"env/env_message_window.dat"));
@@ -1250,7 +1257,7 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
       throw FormatError("capture target is not a valid entry-script command/message");
     if (!capture || !captureAuto)
       throw FormatError("capture target requires automatic capture mode");
-    if(captureMenuInput && !captureEnding && script.Records()[*captureUntilMessage].Opcode!=(captureBranch?0x64:0x3f6))
+    if(captureMenuInput && captureMenuInput<17 && !captureEnding && script.Records()[*captureUntilMessage].Opcode!=(captureBranch?0x64:0x3f6))
       throw FormatError("menu capture target requires approach selection");
   }
   bool targetCompleted = false, targetWaitingReached = false;
@@ -1442,6 +1449,7 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
   std::string previousPointer;
   uint64_t previous = 0, firstMessage = UINT64_MAX, lastSaved = 0;
   const auto epoch = SDL_GetTicks();
+  #include "desktopscenariomenu.inc"
   std::string previousSignature;
   size_t saved = 0;
   bool versusConfirmSent=false;
@@ -1491,11 +1499,13 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
     particleClock=now;
     messageCursor.Update(now);
     CommandInput input;
+    systemMenuInput={};scenarioSlotInput={};scenarioOptionsInput={};scenarioModalInput={};requestSystemMenu=false;
     uint32_t battleFaces=0;
     WidgetInputHistory::Snapshot pointerSnapshot;
     SkipAutoInput policyInput;
     SDL_Event event;
     DialogInput modalInput;
+    if(captureScenarioMenu)captureScenarioMenuInput(now);
     if(captureEnding && endingState.Started) {
       SDL_Keycode key=0;
       if(endingHost.Modal.Visible && endingHost.Modal.Phase==3 && !endingConfirmInjected) {
@@ -1641,7 +1651,7 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
       events << "{\"kind\":\"explicit_confirmation\",\"source\":\"SDL_Enter\",\"now\":"
              << now << ",\"script\":" << captureScript << ",\"command\":" << *captureUntilMessage << "}\n";
     }
-    if (capture && !captureAuto && firstMessage != UINT64_MAX &&
+    if (capture && !captureAuto && !captureScenarioMenu && firstMessage != UINT64_MAX &&
         capturePointerStage < (captureButtonAuto ? 2u : 4u)) {
       constexpr std::array<uint64_t, 4> Delays{96, 112, 512, 528};
       if (now - firstMessage >= Delays[capturePointerStage]) {
@@ -1664,7 +1674,7 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
         ++capturePointerStage;
       }
     }
-    if (capture && captureAuto && !load && firstMessage != UINT64_MAX && captureAutoStage < 2) {
+    if (capture && captureAuto && !captureScenarioMenu && !load && firstMessage != UINT64_MAX && captureAutoStage < 2) {
       const uint64_t delay = captureAutoStage == 0 ? 96 : 1296;
       if (now - firstMessage >= delay) {
         SDL_Event synthetic{};
@@ -1678,6 +1688,13 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
     }
     }
     while (SDL_PollEvent(&event)) {
+      if(modalOwned()){handleModalEvent(event);continue;}
+      if(!endingState.Started && !vm->CurrentProfile() &&
+          !vm->State().ApproachSelection.Visible && !vm->State().OrdinaryChoice.Visible &&
+          ((event.type==SDL_EVENT_KEY_DOWN && event.key.key==SDLK_ESCAPE && !event.key.repeat) ||
+           (event.type==SDL_EVENT_GAMEPAD_BUTTON_DOWN && event.gbutton.button==SDL_GAMEPAD_BUTTON_START))) {
+        requestSystemMenu=true;continue;
+      }
       if(endingState.Started) {
         if(event.type==SDL_EVENT_KEY_DOWN && !event.key.repeat) {
           modalInput.Left|=event.key.key==SDLK_LEFT;modalInput.Right|=event.key.key==SDLK_RIGHT;
@@ -1765,6 +1782,19 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
       }
     }
     if (quit) break;
+    if(requestSystemMenu && !endingState.Started && !vm->CurrentProfile() &&
+        !vm->State().OrdinaryChoice.Visible && sceneThumbnail.Ready()) {
+      const auto& s=vm->State();
+      if(ShouldEnterScenarioMenu({s.ExitRequested!=0,s.BattleEntry.Enabled,
+          s.ApproachMode.Enabled.value_or(false),backend.CursorVisible(),s.ScenarioMenuBlocked,true,false}))
+        enterSystemMenu();
+    }
+    if(modalOwned()) {
+      updateScenarioModal(now);
+      if(quit)break;
+      if(!capture)SDL_Delay(16);
+      continue;
+    }
     if(endingState.Started) {
       if(saveHost && saveHost->State().Started)saveHost->Input=modalInput;
       else endingHost.Input=modalInput;
@@ -2101,7 +2131,7 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
         chapterCompleted=true;
       if(captureLip && captureActive && step.Opcode==0x64 && step.Boundary==VmBoundary::CommandCompletedBeforeDispatch &&
           backend.CurrentMessage() && backend.CurrentMessage()->VoiceId>=0){targetCompleted=true;quit=true;}
-      if (step.Boundary == VmBoundary::CommandCompletedBeforeDispatch && capture && !captureParticles && !captureResult &&
+      if (step.Boundary == VmBoundary::CommandCompletedBeforeDispatch && capture && !captureScenarioMenu && !captureParticles && !captureResult &&
           (captureUntilMessage
                ? step.Script == captureScript && size_t(step.Command) == *captureUntilMessage
                : step.Opcode == 0x64 && (!captureVoiced || step.Command >= 67))) {
@@ -2886,6 +2916,7 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
     if (!capture) SDL_Delay(16);
     else if(endingState.Started)SDL_Delay(1);
   }
+  if(transfer && transfer->Load)return 0;
   if(captureEnding) {
     if(!titleRequested || !endingProbeStarted || !saveConfirmInjected)throw FormatError("ending UI component capture did not finish");
     const auto pair=ReadProgressStore(progressRoot);
@@ -2905,6 +2936,41 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
       throw UnsupportedCommand("scene preview budget exhausted");
   }
   return 0;
+}
+// A native Load replaces the manager and all of its borrowed presentation
+// services. Retire the old scope before constructing the next; no recursive
+// scene calls or references into a moved/destroyed VM.
+int RunScenarioScene(ViewerWindow& window,UiBlitRenderer& renderer,
+    FontTextures& fontTextures,PcFontFace& font,GameResources& resources,
+    MusicPlayback& playback,ArchiveBgmResources& music,ArchiveSeResources& sounds,
+    SemanticState&& owner,const ProfileMode* completed,const std::filesystem::path& root,
+    const std::filesystem::path& captureDirectory={},bool captureAuto=false,
+    bool captureButtonAuto=false,bool captureVoiced=false,
+    std::optional<size_t> captureUntilMessage={},std::optional<size_t> captureFromCommand={},
+    std::optional<int32_t> captureScriptOverride={},bool captureWaitingInput=false,
+    bool captureConfirmInput=false,int32_t captureMenuInput=0,const std::filesystem::path& capturePlan={},
+    const std::filesystem::path& progressRoot={},NativeSlotData* slotProgress=nullptr,
+    const NativePendingSlotLoad* load=nullptr,uint8_t captureOrdinaryChoice=0) {
+  auto live=std::make_unique<SemanticState>(std::move(owner));
+  std::unique_ptr<NativePendingSlotLoad> pending;
+  auto output=captureDirectory;
+  for(;;) {
+    if(!output.empty())std::filesystem::create_directories(output);
+    ScenarioSceneTransfer next;
+    const auto result=RunScenarioSceneOnce(window,renderer,fontTextures,font,resources,
+      playback,music,sounds,std::move(*live),completed,root,output,captureAuto,
+      captureButtonAuto,captureVoiced,captureUntilMessage,captureFromCommand,
+      captureScriptOverride,captureWaitingInput,captureConfirmInput,captureMenuInput,
+      capturePlan,progressRoot,slotProgress,load,captureOrdinaryChoice,&next);
+    if(!next.Load)return result;
+    if(!next.Owner)throw FormatError("scenario Load lost its persistent owner");
+    live=std::move(next.Owner);pending=std::move(next.Load);load=pending.get();completed=nullptr;
+    if(!output.empty()) {
+      output/="loaded";captureUntilMessage=size_t(load->Context.ResumeCommand);
+      captureFromCommand.reset();captureScriptOverride=load->Context.File;
+      captureWaitingInput=true;captureConfirmInput=false;captureMenuInput=0;captureOrdinaryChoice=0;captureAuto=true;
+    }
+  }
 }
 }  // namespace
 
@@ -4937,7 +5003,7 @@ int RunMovieInfoProbe(const std::filesystem::path& path,const std::filesystem::p
   }
 }
 int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::path& requestedProgressRoot,
-    const std::filesystem::path& captureDirectory,bool capturePointer,bool captureOpening,uint8_t captureMovie,uint8_t captureOptions,uint8_t captureContinue){
+    const std::filesystem::path& captureDirectory,bool capturePointer,bool captureOpening,uint8_t captureMovie,uint8_t captureOptions,uint8_t captureContinue,bool captureScenarioMenu){
   bool created=false;
   try{
     const bool capture=!captureDirectory.empty();
@@ -5229,7 +5295,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     return RunScenarioScene(window,renderer,textures,font,resources,playback,music,sounds,std::move(*owner),nullptr,
       usrdir,capture?captureDirectory/"entry":std::filesystem::path{},captureOpening || captureContinue>=3,false,captureContinue>=3,
       captureContinue>=3?std::optional<size_t>(captureContinue==4?149:captureContinue==5?297:size_t(title.PendingLoad->Context.ResumeCommand)):std::nullopt,{},{},captureContinue>=3,false,
-      capture?(captureContinue>=3?0:captureOpening?18:17):0,{},progressRoot,&session.Slots,title.PendingLoad.get(),captureContinue>=4?captureContinue-3:0);
+      capture?(captureScenarioMenu?19:captureContinue>=3?0:captureOpening?18:17):0,{},progressRoot,&session.Slots,title.PendingLoad.get(),captureContinue>=4?captureContinue-3:0);
   }catch(const std::exception& error){
     if(created){std::ofstream out(captureDirectory/"error.txt");out<<std::string(error.what()).substr(0,2048)<<'\n';}
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano title: %s",error.what());return 1;

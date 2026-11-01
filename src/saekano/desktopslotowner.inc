@@ -11,6 +11,8 @@ class PcSlotOwner final:public SlotControllerServices {
   size_t DrawFrames=0,CardCommands=0,MarkerDraws=0,DialogBegins=0;
   std::unique_ptr<NativePendingSlotLoad> PendingLoad;
   const DialogState& Question() const { return question_; }
+  const SaveWorkerState& SaveState() const { return save_.State(); }
+  const DialogState& SaveModal() const { return save_.Modal; }
   PcSlotOwner(SemanticState& owner,GameResources& resources,UiBlitRenderer& renderer,
       FontTextures& textures,PcFontFace& font,PlaybackTitleAudio& audio,
       const std::filesystem::path& root,const std::filesystem::path& saveRoot,NativeSlotData& slots,

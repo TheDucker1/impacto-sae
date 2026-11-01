@@ -117,6 +117,8 @@ class PlaybackOrdinaryVoice final : public OrdinaryVoiceOutput {
 class PlaybackTitleAudio final : public TitleAudioOutput {
  public:
   PlaybackTitleAudio(MusicPlayback& playback,SystemSoundAssets& ui,float voiceGain,float uiGain);
+  // Borrow the playback owner's already bound UI bank (scenario submenus).
+  PlaybackTitleAudio(MusicPlayback& playback,float voiceGain);
   void SetGains(float voiceGain,float uiGain);
   void BindVoiceAttenuation(PlaybackVoiceAttenuation& owner,std::function<uint64_t()> clock);
   void PlayVoice(Bytes encoded)override;

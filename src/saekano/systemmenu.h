@@ -25,7 +25,7 @@ using SystemMenuDraw = std::variant<UiRenderCommand, UiTextBlit>;
 class SystemMenu final : private SystemMenuInputServices {
  public:
   SystemMenu(SystemMenuEnvironment environment, ProfileTextureSection textureBank,
-             uint32_t holdFrames, SystemMenuServices& services);
+             uint32_t holdFrames, SystemMenuServices& services, int32_t initialSelection=0);
   void BeginFrame(WidgetInputHistory::Snapshot contacts);
   void CancelPointer();
   // Returns0 while owned, otherwise1..5 selected action or-1 dismiss. Action5

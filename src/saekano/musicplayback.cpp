@@ -558,9 +558,12 @@ bool MusicPlayback::UiSoundPlaying() const {
 }
 void MusicPlayback::StopUiSound(){impl_->UiSound->Stop(0);AlCheck("UI sound stop");}
 PlaybackTitleAudio::PlaybackTitleAudio(MusicPlayback& playback,SystemSoundAssets& ui,float voiceGain,float uiGain)
+    :PlaybackTitleAudio(playback,voiceGain){
+  playback_.BindUiSounds(ui,uiGain);
+}
+PlaybackTitleAudio::PlaybackTitleAudio(MusicPlayback& playback,float voiceGain)
     :playback_(playback),gain_(voiceGain){
   if(!std::isfinite(gain_) || gain_<0 || gain_>1)throw FormatError("title voice gain outside supported range");
-  playback_.BindUiSounds(ui,uiGain);
 }
 void PlaybackTitleAudio::SetGains(float voiceGain,float uiGain){
   ValidateLiveGain(voiceGain);ValidateLiveGain(uiGain);

@@ -8,7 +8,7 @@ class PcSystemMenuOwner final : public SystemMenuServices {
       UiBlitRenderer& renderer, FontTextures& textures, PcFontFace& font,
       PlaybackTitleAudio& audio, const std::filesystem::path& root,
       const std::filesystem::path& saveRoot, const NativeSlotData& slots,
-      uint32_t hold)
+      uint32_t hold,int32_t initialSelection=0)
       :owner_(owner),audio_(audio),hold_(hold),
        format_(TextFormatEnvironment::Decode(SceneRead(root/"env/env_string_format.dat"),true)),
        shared_(renderer,textures,font,resources,format_,
@@ -22,7 +22,7 @@ class PcSystemMenuOwner final : public SystemMenuServices {
        save_(SaveManagerEnvironment::Decode(SceneRead(root/"env/env_save_manager.dat")),
          [this](const std::u16string& text,size_t count){return shared_.Layout(text,count);},storage_),
        menu_(SystemMenuEnvironment::Decode(SceneRead(root/"env/env_system_menu.dat")),
-         ProfileTextureSection::SystemUi,hold,*this) {
+         ProfileTextureSection::SystemUi,hold,*this,initialSelection) {
     for(const auto& [key,texture]:renderer.Textures){(void)texture;priorTextures_.insert(key);}
   }
   ~PcSystemMenuOwner() {
@@ -38,6 +38,8 @@ class PcSystemMenuOwner final : public SystemMenuServices {
   }
   void CancelPointer(){menu_.CancelPointer();questionContacts_.CancelPointer();saveContacts_.CancelPointer();}
   int32_t Update(SystemMenuInput input){return menu_.Update(input,Now);}
+  int32_t Phase()const{return menu_.Phase();}
+  int32_t Selected()const{return menu_.Selected();}
   void Draw(int32_t chapterId,const std::u16string& chapterText) {
     auto& renderer=shared_.Renderer;
     glUseProgram(renderer.Program);glBindVertexArray(renderer.Vao);glBindBuffer(GL_ARRAY_BUFFER,renderer.Buffer);

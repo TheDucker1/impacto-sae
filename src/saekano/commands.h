@@ -55,6 +55,9 @@ struct SemanticState {
   std::optional<NativeSystemSave> SystemProgress;
   // Ephemeral native owner6031c; system.bin does not serialize this byte.
   std::optional<uint8_t> OptionsHeaderByte;
+  // C14514 / M1451c. Native context reset initializes this independent gate
+  // to0; retain it separately from the approach-gauge-changing byte C1451c.
+  bool ScenarioMenuBlocked = false;
   std::optional<OrdinaryVoiceSettings> VoiceSettings;
   int32_t ScriptFileId = 0;
   int32_t CurrentCommandIndex = 0;

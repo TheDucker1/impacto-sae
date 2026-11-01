@@ -137,6 +137,9 @@ class VirtualMachine {
   static std::unique_ptr<VirtualMachine> FromCompletedProfile(
       ScriptSource& scripts, VmBackend& backend, SemanticState owner,
       const ProfileMode& completed, MessageRuntimeContext messageContext = {});
+  // The owning frontend lends this session to native-style modal owners while
+  // VM execution is suspended (Save/Load/Options).
+  SemanticState& State() { return state_; }
   const SemanticState& State() const { return state_; }
   const MessageRuntimeContext& MessageContext() const { return messageContext_; }
   const NativeWorkingContext* WorkingContext() const {
