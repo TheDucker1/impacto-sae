@@ -3,6 +3,7 @@
 #include "flow.h"
 #include "profilemode.h"
 #include "slotrestore.h"
+#include "messagesnapshot.h"
 
 #include <memory>
 
@@ -21,6 +22,7 @@ struct MessageRuntimeContext {
   bool SplitDialogue = false;            // C+20ac
   int32_t Side0Character = 0;             // C+20b4
   std::optional<bool> KeywordSuppressed = false;  // S+7a4d4; SAS1 omitted it.
+  MessageSnapshotCursors SnapshotCursors;
 };
 
 class ScriptSource {
@@ -126,6 +128,7 @@ class VirtualMachine {
       ScriptSource& scripts, VmBackend& backend, SemanticState owner,
       const ProfileMode& completed, MessageRuntimeContext messageContext = {});
   const SemanticState& State() const { return state_; }
+  const MessageRuntimeContext& MessageContext() const { return messageContext_; }
   const DispatchState& Dispatcher() const { return dispatcher_; }
   VmBoundary Boundary() const { return boundary_; }
   uint16_t Opcode() const;

@@ -70,6 +70,7 @@ void ApplyNativeSlotContextValues(SemanticState& state,
   const auto word = [&](uint32_t offset) { return std::bit_cast<int32_t>(field(offset)); };
   auto next = std::make_unique<SemanticState>(state);
   auto context = message;
+  context.SnapshotCursors = RestoreMessageSnapshotCursors(saved);
   next->ScriptFileId = saved.File;
   next->CurrentCommandIndex = saved.ResumeCommand;
   next->PendingCommandIndex = -1;
