@@ -31,7 +31,8 @@ struct Live2dRecord {
   std::optional<int32_t> AnimationIndex;
   std::optional<int16_t> Pose;
   // Serialized game-record metadata only. Never interpret address-like words
-  // as PC pointers or pass them to the SDK. Fresh insertion leaves them unknown.
+  // as PC pointers or pass them to the SDK. Actual fresh insertions initialize
+  // opaque words to0; a default record with omitted input remains unknown.
   std::optional<uint32_t> SavedOpaque20, SavedOpaque28;
   std::optional<uint8_t> SavedEnabledByte;
 };

@@ -42,12 +42,21 @@ auto FindResource(Live2dState& state, int32_t id) {
       state.Records.begin(), state.Records.end(),
       [id](const auto& record) { return record.ResourceId == id; });
 }
+Live2dRecord FreshRecord(int32_t logical) {
+  Live2dRecord record;
+  record.LogicalId = logical;
+  // Native stack-row insertion copies these words without initializing them.
+  // Use deterministic safe metadata for new PC records; native loaded values
+  // are retained by RestoreNativeLive2dRecords instead.
+  record.SavedOpaque20 = 0;
+  record.SavedOpaque28 = 0;
+  return record;
+}
 Live2dRecord& EnsureLogical(Live2dState& state, int32_t id) {
   const auto found = FindLogical(state, id);
   if (found != state.Records.end()) return *found;
-  auto& record = state.Records.emplace_back();
-  record.LogicalId = id;
-  return record;
+  state.Records.push_back(FreshRecord(id));
+  return state.Records.back();
 }
 void Apply(Live2dRecord& record, const Live2dCommand& command,
            Live2dDriver& driver, uint64_t now) {
@@ -221,9 +230,8 @@ bool UpdateLive2d(Live2dState& state, const Live2dCommand& command,
     }
     auto found = FindResource(state, command.Target);
     if (found == state.Records.end()) {
-      Live2dRecord record;
+      auto record = FreshRecord(command.Value);
       record.ResourceId = command.Target;
-      record.LogicalId = command.Value;
       state.Records.push_back(record);
       found = state.Records.end() - 1;
     }
