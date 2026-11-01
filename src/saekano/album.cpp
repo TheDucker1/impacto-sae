@@ -134,7 +134,7 @@ ExtrasScreenEnvironment ExtrasScreenEnvironment::DecodeThroughMovies(std::span<c
   sprite(0xd6d4);sprite(0xd6f8);e.AlbumRectangles=table(16,rectValue);
   point(0xd72c);scalar(0xd734);scalar(0xd738);point(0xd73c);scalar(0xd744);
   sprite(0xd748);point(0xd76c);scalar(0xd774);point(0xd778);point(0xd780);scalar(0xd788);
-  e.AlbumCaptions=table(20,[&]{Caption c;c.Words=rectValue();c.Text=r.String();return c;});
+  e.MusicTracks=table(20,[&]{MusicTrack t;t.Flags=r.I32();t.Wave=r.I32();t.History=r.I32();t.DurationSeconds=r.I32();t.Title=r.String();return t;});
   string(0xd79c);string(0xd7d4);string(0xd80c);scalar(0xd844);string(0xd848);
   scalar(0xd880);scalar(0xd884);scalar(0xd888);
   e.Movies=table(8,[&]{Movie m;m.Name=r.String();m.Title=r.String();return m;});

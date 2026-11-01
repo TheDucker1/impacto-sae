@@ -448,6 +448,23 @@ void MusicPlayback::Update(float seconds) {
   impl_->UiSound->Update(seconds);
   AlCheck("BGM frame");
 }
+void MusicPlayback::StopBgmImmediately(){
+  impl_->RetiredBgm.clear();
+  if(impl_->CurrentBgmSerial)impl_->RetiredBgm.push_back(impl_->CurrentBgmSerial);
+  impl_->CurrentBgmSerial=0;impl_->Channel->Stop(0);impl_->RetireOutgoingBgm();
+  impl_->BgmFade={};impl_->BgmFadeFraction=0;impl_->BgmFadeFrameRemainder=0;
+}
+void MusicPlayback::PlayGalleryMusic(int32_t wave,std::unique_ptr<HcaWaveReader> reader){
+  if(!reader || wave<0)throw FormatError("invalid gallery music source");
+  const bool loop=reader->Info().Loop;
+  auto stream=std::make_unique<HcaPlaybackStream>(std::move(reader),wave,"music.awb");
+  StopBgmImmediately();impl_->Channel->SetVolume(impl_->BgmGain);
+  impl_->Channel->Play(std::move(stream),loop,0);impl_->CurrentBgmSerial=++impl_->BgmSerial;
+}
+void MusicPlayback::SetBgmPaused(bool paused){if(paused)impl_->Channel->Pause();else impl_->Channel->Resume();}
+bool MusicPlayback::BgmPaused()const{return impl_->Channel->GetState()==Audio::ACS_Paused;}
+bool MusicPlayback::BgmBusy()const{return impl_->Channel->GetState()!=Audio::ACS_Stopped;}
+uint64_t MusicPlayback::BgmPositionMs()const{return uint64_t(std::max(0.0,double(impl_->Channel->PositionInSeconds())*1000.0));}
 void MusicPlayback::StopAllChannels() {
   impl_->Channel->Stop(0);
   if (impl_->CurrentBgmSerial)

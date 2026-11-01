@@ -64,7 +64,7 @@ AlbumConfiguration LoadAlbumConfiguration(Bytes firstDat,
 // album owner instead of skipping a fixed byte count to reach movie records.
 // Keys identify native configuration fields, not serialized file offsets.
 struct ExtrasScreenEnvironment {
-  struct Caption {std::array<int32_t,4> Words{};std::u16string Text;};
+  struct MusicTrack {int32_t Flags=0,Wave=0,History=0,DurationSeconds=0;std::u16string Title;};
   struct Movie {std::u16string Name,Title;};
   AlbumEnvironment Common;
   std::map<uint16_t,uint32_t> Scalars;
@@ -74,7 +74,7 @@ struct ExtrasScreenEnvironment {
   std::map<uint16_t,std::u16string> Strings;
   std::map<uint16_t,std::vector<UiSpriteDefinition>> SpriteTables;
   std::vector<std::array<int32_t,4>> AlbumRectangles;
-  std::vector<Caption> AlbumCaptions;
+  std::vector<MusicTrack> MusicTracks;
   std::vector<Movie> Movies;
   size_t PrefixBytes=0;
   // Reader801d1522..1e0a, through movie preview animation period dad0.

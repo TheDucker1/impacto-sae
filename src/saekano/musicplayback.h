@@ -27,6 +27,14 @@ class MusicPlayback {
   void Update(float seconds);
   void Render(std::span<int16_t> stereoPcm);  // Offline 48kHz loopback only.
   bool Playing() const;
+  // Extras music uses music.awb on the shared BGM source, replacing playback
+  // immediately while preserving gain and the attached script fade duration.
+  void PlayGalleryMusic(int32_t wave,std::unique_ptr<HcaWaveReader> reader);
+  void StopBgmImmediately();
+  void SetBgmPaused(bool paused);
+  bool BgmPaused()const;
+  bool BgmBusy()const; // Includes pause; independent of UI/voice channels.
+  uint64_t BgmPositionMs()const;
   // Native shared audio utility's immediate all-channel stop. Retire both BGM
   // sources, cancel active fades and discard prepared voice handles. Preserve
   // gain settings and attached fade duration; script remembered IDs are external.
