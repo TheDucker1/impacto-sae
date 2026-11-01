@@ -6,6 +6,7 @@ namespace Impacto::Saekano {
 struct EndingEnvironment {
   std::u16string ClearSavePrompt,DiscardClearPrompt,SystemSavePrompt;
   size_t PrefixBytes=0;
+  uint32_t ParticleOpacityGroups=0; // Native script environment802607cc.
   static EndingEnvironment Decode(std::span<const uint8_t> bytes);
 };
 struct EndingDialogStatus { bool Visible=true; int32_t Result=-1; };

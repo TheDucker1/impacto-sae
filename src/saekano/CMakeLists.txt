@@ -108,6 +108,8 @@ add_executable(saekano_slot_rule_restore_probe ../../tools/saekano/slot_rule_res
 target_link_libraries(saekano_slot_rule_restore_probe PRIVATE saekano_core)
 add_executable(saekano_slot_deferred_start_probe ../../tools/saekano/slot_deferred_start_probe.cpp)
 target_link_libraries(saekano_slot_deferred_start_probe PRIVATE saekano_core)
+add_executable(saekano_slot_particle_restore_probe ../../tools/saekano/slot_particle_restore_probe.cpp)
+target_link_libraries(saekano_slot_particle_restore_probe PRIVATE saekano_core)
 target_link_libraries(saekano_slot_widgets_probe PRIVATE saekano_core)
 add_executable(saekano_slot_cards_probe ../../tools/saekano/slot_cards_probe.cpp)
 target_link_libraries(saekano_slot_cards_probe PRIVATE saekano_core)

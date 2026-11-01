@@ -3,6 +3,7 @@
 #include "nativesave.h"
 #include "slotdata.h"
 #include "slotbrowser.h"
+#include "particle.h"
 #include <memory>
 
 namespace Impacto::Saekano {
@@ -59,4 +60,19 @@ bool StepNativeSlotDeferredStart(SemanticState& state,
                                  NativeSlotDeferredStart& restore,
                                  bool resourcesReady,
                                  BgmResources* music, SeResources* sounds);
+struct NativeSavedParticleRequest {
+  size_t Row = 0, Effect = 0;
+  ParticleEffectRequest Request;
+  int32_t PrewarmMilliseconds = 0;
+};
+std::vector<NativeSavedParticleRequest> BuildNativeSlotParticleRequests(
+    const NativeContextSave& saved, const SceneCameraParameters& camera,
+    const ParticleEnvironment& environment, uint32_t opacityGroups);
+// Called after the native-equivalent script reset/reseed. Loads all needed
+// original effect assets before starting any handles; it never resets old RNG
+// state a second time or resumes captured particle heaps.
+std::vector<NativeSavedParticleRequest> RestoreNativeSlotParticles(
+    ParticleManager& manager, const GameResources& resources,
+    const NativeContextSave& saved, const SceneCameraParameters& camera,
+    const ParticleEnvironment& environment, uint32_t opacityGroups);
 }

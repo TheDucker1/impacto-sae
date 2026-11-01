@@ -14,8 +14,9 @@ EndingEnvironment EndingEnvironment::Decode(std::span<const uint8_t> bytes){
   }
   // 607cc scalar,607d0 rectangle,607e0/7e8 points,607f0/7f4 scalars,
   // and607f8/60800 points. Native serialized fields, not authored offsets.
-  for(size_t i=0;i<15;++i)r.U32();
   EndingEnvironment result;
+  result.ParticleOpacityGroups=r.U32();
+  for(size_t i=1;i<15;++i)r.U32();
   result.ClearSavePrompt=r.String();result.DiscardClearPrompt=r.String();result.SystemSavePrompt=r.String();
   result.PrefixBytes=bytes.size()-r.Remaining();return result;
 }

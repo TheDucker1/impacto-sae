@@ -231,4 +231,55 @@ bool StepNativeSlotDeferredStart(SemanticState& state,
   restore = std::move(next);
   return start;
 }
+std::vector<NativeSavedParticleRequest> BuildNativeSlotParticleRequests(
+    const NativeContextSave& saved, const SceneCameraParameters& camera,
+    const ParticleEnvironment& environment, uint32_t opacityGroups) {
+  if (opacityGroups > ParticleManager::GroupCount)
+    throw FormatError("script particle opacity groups exceed the manager");
+  std::vector<NativeSavedParticleRequest> result;
+  for (size_t i = 0; i < saved.FixedRecords.size(); ++i) {
+    const auto& row = saved.FixedRecords[i];
+    const auto group = std::bit_cast<int32_t>(row[0]);
+    if (group < 0) continue; // All remaining inactive-row bytes may be unwritten.
+    const auto effect = std::bit_cast<int32_t>(row[1]);
+    if (uint32_t(group) >= opacityGroups || effect < 0 ||
+        size_t(effect) >= environment.Effects.size())
+      throw FormatError("saved particle group/effect is outside authored tables");
+    const auto prewarm = environment.Effects[size_t(effect)].Parameter;
+    if (prewarm < 0) throw FormatError("negative saved particle prewarm");
+    const float scale = environment.Scalar *
+        (float(std::bit_cast<int32_t>(row[5])) / 100.0f);
+    auto request = BuildApproachParticleRequest(
+        {std::bit_cast<int32_t>(row[2]), std::bit_cast<int32_t>(row[3])},
+        camera, scale);
+    request.Group = uint32_t(group);
+    // The native owner uses B,G,R,A float slots; the wire word is AARRGGBB.
+    for (size_t c = 0; c < 4; ++c)
+      request.Owner[10 + c] = float(uint8_t(row[4] >> (8 * c))) / 255.0f;
+    result.push_back({i, size_t(effect), request, prewarm});
+  }
+  return result;
+}
+std::vector<NativeSavedParticleRequest> RestoreNativeSlotParticles(
+    ParticleManager& manager, const GameResources& resources,
+    const NativeContextSave& saved, const SceneCameraParameters& camera,
+    const ParticleEnvironment& environment, uint32_t opacityGroups) {
+  const auto requests = BuildNativeSlotParticleRequests(saved, camera, environment, opacityGroups);
+  for (size_t group = 0; group < ParticleManager::GroupCount; ++group)
+    for (const auto& handle : manager.Handles(group))
+      if (handle.EffectId || handle.State.Running)
+        throw UnsupportedCommand("saved particle restore needs the reset script manager");
+  std::map<size_t, ConfiguredParticleEffect> prepared;
+  for (const auto& request : requests)
+    if (!manager.HasEffect(request.Effect) && !prepared.contains(request.Effect))
+      prepared.emplace(request.Effect,
+          ConfiguredParticleEffect::Load(resources, environment, request.Effect));
+  manager.LoadTextureCatalog(resources);
+  for (auto& [effect, assets] : prepared)
+    manager.RegisterEffect(effect, std::move(assets));
+  for (const auto& request : requests)
+    if (!manager.Request(request.Effect, request.Request, request.PrewarmMilliseconds))
+      throw UnsupportedCommand("saved particle resource did not register");
+  return requests;
+}
 }
