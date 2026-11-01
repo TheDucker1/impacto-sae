@@ -4,6 +4,9 @@
 #include <cmath>
 
 namespace Impacto::Saekano {
+bool MessageBacklogEnabled(const MessageBacklogGates& gates) {
+  return !gates.Battle && !gates.Approach && !gates.Suppressed && !gates.CompletionPolicy;
+}
 BacklogTextEnvironment BacklogTextEnvironment::Decode(std::span<const uint8_t> bytes) {
   PayloadReader r(bytes);BacklogTextEnvironment result;
   const auto skip=[&](size_t count){r.CheckCount(uint32_t(count),1);for(size_t i=0;i<count;++i)r.U8();};
@@ -29,11 +32,19 @@ const BacklogEntry& BacklogHistory::At(size_t index) const {
 }
 void BacklogHistory::AppendChoice(std::u16string_view label,
     const NativeSlotRecord& working,const BacklogTextEnvironment& environment) {
-  if(environment.Colors.size()<=1 || !std::isfinite(environment.Scale) || environment.Scale<=0)
-    throw FormatError("choice backlog formatting is unavailable");
-  BacklogEntry entry;entry.Kind=1;entry.Flag=255;
-  entry.Text.push_back({std::u16string(label),environment.Colors[1],environment.Colors[1],
-                       environment.LayoutParameter,environment.Scale});
+  const std::u16string text(label);Append(1,255,std::span(&text,1),working,environment);
+}
+void BacklogHistory::AppendMessage(std::span<const std::u16string> text,bool readColor,
+    uint8_t voiceGroup,const NativeSlotRecord& working,const BacklogTextEnvironment& environment) {
+  Append(readColor?3:0,voiceGroup,text,working,environment);
+}
+void BacklogHistory::Append(int32_t kind,uint8_t flag,std::span<const std::u16string> text,
+    const NativeSlotRecord& working,const BacklogTextEnvironment& environment) {
+  if(kind<0 || size_t(kind)>=environment.Colors.size() || !std::isfinite(environment.Scale) || environment.Scale<=0)
+    throw FormatError("backlog formatting is unavailable");
+  BacklogEntry entry;entry.Kind=kind;entry.Flag=flag;
+  for(const auto& source:text)entry.Text.push_back({source,environment.Colors[size_t(kind)],environment.Colors[size_t(kind)],
+                                                  environment.LayoutParameter,environment.Scale});
   entry.Record=working;
   // Native5728..574e retires the copied thumbnail, before the ring deep copy.
   entry.Record.ThumbnailPresent=0;entry.Record.Thumbnail.reset();

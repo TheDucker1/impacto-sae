@@ -3,6 +3,11 @@
 #include <string>
 
 namespace Impacto::Saekano {
+struct MessageBacklogGates {
+  uint8_t Battle = 0, Approach = 0, Suppressed = 0;
+  uint32_t CompletionPolicy = 0;
+};
+bool MessageBacklogEnabled(const MessageBacklogGates& gates);
 struct BacklogTextEnvironment {
   uint32_t LayoutParameter = 0;  // Native global25bf1c -> text helper19cda.
   float Scale = 0;
@@ -30,9 +35,14 @@ class BacklogHistory {
   const BacklogEntry& At(size_t chronologicalIndex) const;
   void AppendChoice(std::u16string_view label, const NativeSlotRecord& working,
                     const BacklogTextEnvironment& environment);
+  void AppendMessage(std::span<const std::u16string> text, bool readColor,
+                     uint8_t voiceGroup, const NativeSlotRecord& working,
+                     const BacklogTextEnvironment& environment);
   void Clear();
  private:
   std::vector<BacklogEntry> entries_;
   size_t oldest_ = 0, next_ = 0;
+  void Append(int32_t kind,uint8_t flag,std::span<const std::u16string> text,
+              const NativeSlotRecord& working,const BacklogTextEnvironment& environment);
 };
 }

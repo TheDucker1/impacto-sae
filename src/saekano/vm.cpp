@@ -244,6 +244,7 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     if (auto* models = backend_.Models()) models->Reset();
     state_.ApproachGauge = 0;
     state_.ApproachMode = {};
+    state_.ApproachMode.Enabled = false; // Fresh context constructor801a09e2.
     state_.ApproachMission = {};
     state_.ApproachSelection = {};
     state_.ApproachResult = {};
@@ -295,6 +296,7 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     state_.DayEnabled = 0;
     const auto keywordSuppressed = messageContext_.KeywordSuppressed;
     messageContext_ = {};
+    messageContext_.BacklogSuppressed = 0; // Context reset801a021a.
     state_.SnapshotMetadata = {};
     // Native reset801a02c8 clears context1b58 (=manager1b60).
     state_.SnapshotMetadata.WorkingMode = 0;
@@ -430,6 +432,27 @@ void VirtualMachine::SetupMessage(size_t index, uint64_t now) {
   backend_.SetSplitDialogue(messageContext_.SplitDialogue);
   backend_.SetMessageDualCleanup(state_.MouthControl && state_.MouthControl->DualCleanup);
   backend_.BeginMessage(index, message, context, now);
+  if(workingContext_) {
+    if(!state_.BattleEntry.Known || !state_.ApproachMode.Enabled || !messageContext_.BacklogSuppressed)
+      throw UnsupportedCommand("message backlog gate owners are unknown");
+    const MessageBacklogGates gates{uint8_t(state_.BattleEntry.Enabled),uint8_t(*state_.ApproachMode.Enabled),
+        *messageContext_.BacklogSuppressed,message.CompletionPolicy};
+    if(MessageBacklogEnabled(gates)) {
+      const auto* environment=backend_.BacklogConfig();
+      if(!environment || !state_.ReadColorEnabled)throw UnsupportedCommand("message backlog style/read setting is unknown");
+      bool read=false;
+      if(*state_.ReadColorEnabled) {
+        const auto known=backend_.MessageWasRead(state_.ScriptFileId,uint32_t(state_.CurrentCommandIndex),script_->Records());
+        if(!known)throw UnsupportedCommand("message backlog read history is unknown");
+        read=*known;
+      }
+      const auto group=message.VoiceId<0?std::optional<int32_t>(-1):backend_.MessageVoiceGroup(index);
+      if(!group || *group < -1 || *group > 8)throw UnsupportedCommand("message backlog voice group is unknown");
+      // Native844b6 refreshes after text setup, before copying this record.
+      RefreshWorkingContext();
+      state_.Backlog.AppendMessage(state_.Messages[context],read,uint8_t(*group),CaptureWorkingRecord(),*environment);
+    }
+  }
 }
 void VirtualMachine::CollectMessageKeywords(size_t index) {
   const auto& keywords = messageKeywords_[commands_[index].MessageSide];

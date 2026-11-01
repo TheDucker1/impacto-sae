@@ -103,7 +103,9 @@ void SceneMessageBackend::BeginMessage(size_t command,
     if (!voices_) throw UnsupportedCommand("ordinary voice owner is not bound");
     if (message.VoiceId > INT16_MAX)
       throw FormatError("ordinary voice ID exceeds native signed16 catalog");
-    if (OrdinaryVoiceEligible(message.VoiceId, voices_->Ranges, voices_->Settings).Enabled) {
+    const auto eligibility=OrdinaryVoiceEligible(message.VoiceId, voices_->Ranges, voices_->Settings);
+    next.BacklogVoiceGroup=eligibility.Group;
+    if (eligibility.Enabled) {
       const auto found = std::find_if(voices_->Envelopes.begin(), voices_->Envelopes.end(),
           [&](const auto& item) { return item.VoiceId == message.VoiceId; });
       if (found == voices_->Envelopes.end() || found->Mouth.Duration < 0)
@@ -137,6 +139,10 @@ void SceneMessageBackend::BeginMessage(size_t command,
   messages_[side]=std::move(next);current_=&*messages_[side];
   sample_ = now;
   cursorVisible_ = false;
+}
+std::optional<int32_t> SceneMessageBackend::MessageVoiceGroup(size_t command) const {
+  if(!current_ || current_->Command!=command)return std::nullopt;
+  return current_->BacklogVoiceGroup;
 }
 void SceneMessageBackend::UpdateMessage(uint64_t now) {
   if (!current_) return;

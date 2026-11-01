@@ -86,7 +86,8 @@ void ApplyNativeSlotContextValues(SemanticState& state,
     next->MouthControl->OverrideIds[i] = std::bit_cast<int16_t>(saved.Shorts[i]);
   context.SplitDialogue = field(0x20b4) != 0;
   context.Side0Character = word(0x20bc);
-  next->BattleEntry.Enabled = context.SplitDialogue;
+  // C20ac is serialized split dialogue. C14a54 battle entry is an independent
+  // constructor/payload-load field and is not inferred from this saved word.
   next->Battle.SideCharacters = {context.Side0Character, word(0x20c4)};
   // Only the first window's openness is serialized. The second window and
   // window-type selections retain their fresh/load-callback values.

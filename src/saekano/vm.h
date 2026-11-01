@@ -24,6 +24,7 @@ struct MessageRuntimeContext {
   int32_t Side0Character = 0;             // C+20b4
   std::optional<bool> KeywordSuppressed = false;  // S+7a4d4; SAS1 omitted it.
   MessageSnapshotCursors SnapshotCursors;
+  std::optional<uint8_t> BacklogSuppressed; // C1bb8; reset0, other producers unresolved.
 };
 
 class ScriptSource {
@@ -47,6 +48,8 @@ class VmBackend {
   virtual void ClearMessage(size_t) {}
   virtual void BeginMessage(size_t command, const MessageCommand& message,
                              size_t context, uint64_t now) = 0;
+  virtual std::optional<int32_t> MessageVoiceGroup(size_t) const { return std::nullopt; }
+  virtual std::optional<bool> MessageWasRead(int32_t,uint32_t,std::span<const ScriptRecord>) const { return std::nullopt; }
   virtual bool MessageRevealed(size_t command, uint64_t now) = 0;
   virtual bool MessageAdvanceAllowed(size_t command, uint64_t now) = 0;
   virtual void RevealMessage(size_t command) = 0;

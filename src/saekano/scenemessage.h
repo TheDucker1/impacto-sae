@@ -42,6 +42,7 @@ struct SceneMessageTextState {
   uint32_t SourceUnits = 0;
   bool PreviousUpdated = false;
   int32_t VoiceId = -1, Speaker = -1;
+  int32_t BacklogVoiceGroup = -1;
   std::optional<uint32_t> VoiceDuration;
   OrdinaryVoiceGate VoiceGate{-2, -1};
   int32_t AudioPosition = -1;
@@ -63,6 +64,7 @@ class SceneMessageBackend : public HeadlessBackend {
   void StartPresentation(size_t command,uint16_t opcode,std::span<const uint8_t> payload,bool lane,uint64_t now) override;
   void BeginMessage(size_t command, const MessageCommand& message, size_t side,
                     uint64_t now) override;
+  std::optional<int32_t> MessageVoiceGroup(size_t command) const override;
   void SetSplitDialogue(bool split) override { splitDialogue_=split; }
   void SetMessageDualCleanup(bool enabled) override { dualCleanup_=enabled; }
   void ClearMessage(size_t side) override;

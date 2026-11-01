@@ -14,6 +14,11 @@ class HeadlessBackend : public VmBackend {
  public:
   RegisteredReadHistory* RegisteredHistory=nullptr;
   HistoryEnvironment HistorySettings;
+  std::optional<bool> MessageWasRead(int32_t script,uint32_t command,std::span<const ScriptRecord> records) const override {
+    if(HistorySettings.SuppressReadHistory)return false;
+    if(!RegisteredHistory || script<0 || size_t(script)>=RegisteredHistory->Files.size())return std::nullopt;
+    return SkipHistoryEligible(HistorySettings,records,command,&RegisteredHistory->Files[size_t(script)]);
+  }
   void RecordReadHistory(int32_t script,uint32_t command) override {
     if(!RegisteredHistory || HistorySettings.SuppressReadHistory)return;
     if(script<0 || size_t(script)>=RegisteredHistory->Files.size())
