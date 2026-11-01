@@ -416,6 +416,19 @@ void VirtualMachine::RefreshSavePreview(const SavePreviewFormatter& formatter) {
   const auto& primary = state_.Messages[0];
   formatter.Publish(state_.WorkingSave->Retained, primary.empty() ? std::u16string_view{} : primary.front());
 }
+void VirtualMachine::RefreshSavePresentation(const SavePreviewFormatter& formatter,SlotThumbnail thumbnail) {
+  if(!state_.WorkingSave || !state_.WorkingSave->Context.Used || !state_.TitleSession)
+    throw UnsupportedCommand("save presentation requires a working context snapshot");
+  if(thumbnail.Format!=4 || thumbnail.Pixels.size()!=192*108*2)
+    throw FormatError("invalid menu-entry thumbnail");
+  const auto& primary=state_.Messages[0];
+  const auto preview=formatter.Prepare(primary.empty()?std::u16string_view{}:primary.front());
+  std::vector<uint16_t> owned(preview.begin(),preview.end());
+  auto& record=state_.WorkingSave->Retained;
+  record.Strings[2]=std::move(owned);record.Thumbnail=std::move(thumbnail);
+  record.ThumbnailPresent=1;record.Bytes2b6[2]=1;
+  state_.TitleSession->Flags[0]=1; // Live S5e814 alias overlaid by record composition.
+}
 void VirtualMachine::RefreshWorkingContext() {
   if (!state_.WorkingSave) return;
   if (!state_.SnapshotMetadata.WorkingMode)

@@ -146,6 +146,9 @@ class VirtualMachine {
   // Save/menu entry producer only. Uses the first retained primary message,
   // independent of current reveal/voice or a later appended message.
   void RefreshSavePreview(const SavePreviewFormatter& formatter);
+  // Menu entry: prepare both producers before replacing the occupied preview
+  // and thumbnail. Does not refresh the context snapshot or run any UI/VM step.
+  void RefreshSavePresentation(const SavePreviewFormatter& formatter,SlotThumbnail thumbnail);
   const DispatchState& Dispatcher() const { return dispatcher_; }
   VmBoundary Boundary() const { return boundary_; }
   uint16_t Opcode() const;
