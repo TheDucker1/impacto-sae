@@ -174,6 +174,7 @@ void StartLive2d(Live2dState& state, const Live2dCommand& command,
   switch (command.Selector) {
     case 3:
       record.Enabled = command.Value != 0;
+      record.SavedEnabledByte = uint8_t(command.Value != 0);
       break;
     case 6:
       record.Pose = std::bit_cast<int16_t>(uint16_t(command.Value));

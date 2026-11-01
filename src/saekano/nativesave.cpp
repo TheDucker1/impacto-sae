@@ -272,10 +272,48 @@ Live2dState RestoreNativeLive2dRecords(
     record.Position = floats(savedRecord.PositionBits);
     record.Scale = floats(savedRecord.ScaleBits);
     record.Enabled = savedRecord.EnabledByte != 0;
+    record.SavedEnabledByte = savedRecord.EnabledByte;
+    record.SavedOpaque20 = savedRecord.Opaque20;
+    record.SavedOpaque28 = savedRecord.Opaque28;
     record.Color = savedRecord.Color;
     record.AnimationIndex = savedRecord.AnimationIndex;
     record.Pose = savedRecord.Pose;
     result.Records.push_back(record);
+  }
+  return result;
+}
+std::vector<NativeSavedLive2dRecord> CaptureNativeLive2dRecords(
+    const Live2dState& state) {
+  if (!state.Known)
+    throw FormatError("unknown Live2D records cannot be serialized");
+  std::vector<NativeSavedLive2dRecord> result;
+  std::set<int32_t> resources;
+  for (const auto& record : state.Records) {
+    if (!record.ResourceId || !record.Position || !record.Scale ||
+        !record.Enabled || !record.Color || !record.AnimationIndex || !record.Pose ||
+        !record.SavedOpaque20 || !record.SavedOpaque28)
+      throw FormatError("unknown saved Live2D fields cannot be serialized");
+    if (record.LogicalId < 0 || *record.ResourceId < 0 ||
+        !resources.insert(*record.ResourceId).second)
+      throw FormatError("invalid or duplicate saved Live2D resource");
+    NativeSavedLive2dRecord saved;
+    saved.LogicalId = record.LogicalId;
+    saved.ResourceId = *record.ResourceId;
+    for (size_t i = 0; i < 2; ++i) {
+      if (!std::isfinite((*record.Position)[i]) || !std::isfinite((*record.Scale)[i]))
+        throw FormatError("non-finite saved Live2D target");
+      saved.PositionBits[i] = std::bit_cast<uint32_t>((*record.Position)[i]);
+      saved.ScaleBits[i] = std::bit_cast<uint32_t>((*record.Scale)[i]);
+    }
+    saved.EnabledByte = record.SavedEnabledByte.value_or(uint8_t(*record.Enabled));
+    if ((saved.EnabledByte != 0) != *record.Enabled)
+      throw FormatError("saved Live2D enabled byte disagrees with owner");
+    saved.Color = *record.Color;
+    saved.AnimationIndex = *record.AnimationIndex;
+    saved.Pose = *record.Pose;
+    saved.Opaque20 = *record.SavedOpaque20;
+    saved.Opaque28 = *record.SavedOpaque28;
+    result.push_back(saved);
   }
   return result;
 }

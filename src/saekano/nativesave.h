@@ -69,6 +69,11 @@ NativeLive2dSaveTail DecodeNativeLive2dSaveTail(std::span<const uint8_t> bytes,
 Live2dState RestoreNativeLive2dRecords(
     const NativeLive2dSaveTail& saved,
     const std::array<Live2dParameterSlot, 2>& parameters);
+// Project saved targets and retained raw metadata from the live game owner.
+// No SDK transforms, resources, queues or parameter slots enter this table.
+// Unknown fields reject; this does not invent fresh uninitialized native words.
+std::vector<NativeSavedLive2dRecord> CaptureNativeLive2dRecords(
+    const Live2dState& state);
 // L2R1 is our explicit bridge packet, not a native game format. It carries
 // matched save bytes/used/count and independently captured parameter slots.
 Live2dState DecodeNativeLive2dRestorePacket(std::span<const uint8_t> packet);

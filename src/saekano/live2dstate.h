@@ -30,6 +30,10 @@ struct Live2dRecord {
   std::optional<std::array<uint8_t, 4>> Color = std::array<uint8_t, 4>{};
   std::optional<int32_t> AnimationIndex;
   std::optional<int16_t> Pose;
+  // Serialized game-record metadata only. Never interpret address-like words
+  // as PC pointers or pass them to the SDK. Fresh insertion leaves them unknown.
+  std::optional<uint32_t> SavedOpaque20, SavedOpaque28;
+  std::optional<uint8_t> SavedEnabledByte;
 };
 struct Live2dParameterSlot {
   int32_t Target = -1;
