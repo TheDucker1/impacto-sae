@@ -57,6 +57,10 @@ struct SemanticState {
   std::optional<NativeSystemSave> SystemProgress;
   // Ephemeral native owner6031c; system.bin does not serialize this byte.
   std::optional<uint8_t> OptionsHeaderByte;
+  // S7a4e7: startup enables the CG commentary help variant after the first
+  // additional-content marker reads "1". Base startup has no mounted content;
+  // the original commentary bank and playback are independent of this flag.
+  bool CommentaryHelpAvailable=false;
   // C14514 / M1451c. Native context reset initializes this independent gate
   // to0; retain it separately from the approach-gauge-changing byte C1451c.
   bool ScenarioMenuBlocked = false;

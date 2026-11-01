@@ -14,6 +14,9 @@ OptionsDebugSettings OptionsDebugSettings::Decode(std::span<const uint8_t> bytes
   constexpr size_t prefix=3+20+8+11+1;
   if(bytes.size()<prefix)throw FormatError("truncated Options debug settings");
   OptionsDebugSettings settings;for(size_t i=0;i<3;++i)settings.Flags[i]=bytes[i];
+  // Native reader801c5c64: c240 begins at byte3. The movie constructor
+  // reads c245, while CG/music/battle read c242/c243/c244 respectively.
+  settings.UnlockMovies=bytes[8];settings.UnlockCg=bytes[5];settings.UnlockMusic=bytes[6];settings.UnlockBattle=bytes[7];
   settings.Silent=bytes[prefix-1];settings.PrefixBytes=prefix;return settings;
 }
 OptionsEnvironment OptionsEnvironment::Decode(std::span<const uint8_t> bytes){

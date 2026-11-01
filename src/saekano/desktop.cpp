@@ -1121,7 +1121,6 @@ struct SceneDialogLayer {
 #include "desktopextrasmovie.inc"
 #include "desktopextrascg.inc"
 #include "desktopextrasmusic.inc"
-#include "desktoptitle.inc"
 #include "desktopprofile.inc"
 
 // An ordinary-dialogue frontend. Unbound auxiliary/effect passes are
@@ -3136,6 +3135,8 @@ int RunScenarioScene(ViewerWindow& window,UiBlitRenderer& renderer,
   }
 }
 #include "desktopextrasbattle.inc"
+#include "desktopextrasowner.inc"
+#include "desktoptitle.inc"
 }  // namespace
 
 int RunSceneSdkUiProbe(const std::filesystem::path& usrdir,
@@ -5244,12 +5245,12 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     const bool returnedTitleCapture=captureScenarioMenu==2 && titleVisits>0;
     // CMain constructs a fresh title after retiring the previous scene. The
     // persistent session owner and writable store survive the scene loop.
-    PcTitleOwner title(*owner,resources,renderer,textures,font,playback,music,sounds,audio,attenuation,movie,movieFrame,usrdir,env,seeds,utility.OpaqueTable,
+    PcTitleOwner title(*owner,resources,renderer,textures,font,playback,music,sounds,audio,attenuation,movie,movieFrame,window,usrdir,env,seeds,utility.OpaqueTable,
       widget.HoldFrames,[&]{owner->Backlog.Clear();},progressRoot,session.Slots,audioClock,0);
     std::ofstream trace,pcm;
     if(capture){trace.open(captureDirectory/"title.jsonl");pcm.open(captureDirectory/"audio.pcm",std::ios::binary);
       if(!trace || !pcm)throw FormatError("cannot open title capture outputs");}
-    bool quit=false,pressedStart=false,chose=false,skippedVoice=false,pointerDown=false;std::array<bool,2> held{},horizontalHeld{};
+    bool quit=false,pressedStart=false,chose=false,skippedVoice=false,pointerDown=false;std::array<bool,2> held{},horizontalHeld{},galleryPageHeld{};
     uint32_t optionsStage=0,optionsGesture=0;bool optionsOpenImage=false,optionsQuestionImage=false,optionsPreviewImage=false;
     uint32_t continueStage=0;bool continueOpenImage=false;
     bool sawMovie=false,movieReturned=false,movieSkipped=false,movieImage=false;
@@ -5259,6 +5260,11 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
       title.Input={};title.NavigationInput={};title.NavigationInput.Held=held;title.OptionsInput={};title.OptionsInput.Vertical.Held=held;
       title.OptionsInput.HorizontalHeld=horizontalHeld;title.OptionsModalInput={};
       title.SlotInput={};title.SlotInput.Vertical.Held=held;
+      title.ExtrasInput={};title.ExtrasInput.Vertical.Held=held;
+      // Options uses left as index1; the gallery's shared navigation uses
+      // index0 for the preceding row/page and index1 for the following one.
+      title.ExtrasInput.Horizontal.Held={horizontalHeld[1],horizontalHeld[0]};
+      title.ExtrasInput.Pages.Held=galleryPageHeld;
       const uint64_t now=capture?frames*16:SDL_GetTicks()-epoch;
       const auto key=[&](SDL_Keycode code){for(auto type:{SDL_EVENT_KEY_DOWN,SDL_EVENT_KEY_UP}){
         SDL_Event event{};event.type=type;event.key.windowID=SDL_GetWindowID(window.Window);event.key.key=code;
@@ -5340,16 +5346,22 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
       }
       SDL_Event event{};
       while(SDL_PollEvent(&event)){
-        if(event.type==SDL_EVENT_QUIT || (event.type==SDL_EVENT_KEY_DOWN && event.key.key==SDLK_ESCAPE && !title.Config() && !title.Continue()))quit=true;
+        if(event.type==SDL_EVENT_QUIT || (event.type==SDL_EVENT_KEY_DOWN && event.key.key==SDLK_ESCAPE && !title.Config() && !title.Continue() && !title.Extras()))quit=true;
         if(event.type==SDL_EVENT_KEY_DOWN || event.type==SDL_EVENT_KEY_UP){
           const bool down=event.type==SDL_EVENT_KEY_DOWN;
           title.Input.AnyActivity|=down;
           if(event.key.key==SDLK_UP || event.key.key==SDLK_DOWN){const size_t i=event.key.key==SDLK_DOWN;
             held[i]=down;title.NavigationInput.Held[i]=down;title.NavigationInput.Pressed[i]|=down&&!event.key.repeat;
             title.OptionsInput.Vertical.Held[i]=down;title.OptionsInput.Vertical.Pressed[i]|=down&&!event.key.repeat;
-            title.SlotInput.Vertical.Held[i]=down;title.SlotInput.Vertical.Pressed[i]|=down&&!event.key.repeat;}
+            title.SlotInput.Vertical.Held[i]=down;title.SlotInput.Vertical.Pressed[i]|=down&&!event.key.repeat;
+            title.ExtrasInput.Vertical.Held[i]=down;title.ExtrasInput.Vertical.Pressed[i]|=down&&!event.key.repeat;}
           if(event.key.key==SDLK_LEFT || event.key.key==SDLK_RIGHT){const size_t i=event.key.key==SDLK_LEFT;
-            horizontalHeld[i]=down;title.OptionsInput.HorizontalHeld[i]=down;title.OptionsInput.HorizontalPressed[i]|=down&&!event.key.repeat;}
+            horizontalHeld[i]=down;title.OptionsInput.HorizontalHeld[i]=down;title.OptionsInput.HorizontalPressed[i]|=down&&!event.key.repeat;
+            title.ExtrasInput.Horizontal.Held[1-i]=down;title.ExtrasInput.Horizontal.Pressed[1-i]|=down&&!event.key.repeat;}
+          if(event.key.key==SDLK_Q || event.key.key==SDLK_PAGEUP || event.key.key==SDLK_E || event.key.key==SDLK_PAGEDOWN){
+            const size_t i=event.key.key==SDLK_E || event.key.key==SDLK_PAGEDOWN;galleryPageHeld[i]=down;
+            title.ExtrasInput.Pages.Held[i]=down;title.ExtrasInput.Pages.Pressed[i]|=down&&!event.key.repeat;
+          }
           if(down&&!event.key.repeat){title.Input.Accept|=event.key.key==SDLK_RETURN;title.Input.Cancel|=event.key.key==SDLK_BACKSPACE;title.Input.Start|=event.key.key==SDLK_SPACE;
             title.OptionsInput.Accept|=event.key.key==SDLK_RETURN;title.OptionsInput.Preview|=event.key.key==SDLK_P;
             title.SlotInput.Accept|=event.key.key==SDLK_RETURN;title.SlotInput.Protect|=event.key.key==SDLK_P;
@@ -5360,13 +5372,17 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
             title.OptionsInput.Common.NextTab|=event.key.key==SDLK_E || event.key.key==SDLK_PAGEDOWN;
             title.OptionsModalInput.Left|=event.key.key==SDLK_LEFT;title.OptionsModalInput.Right|=event.key.key==SDLK_RIGHT;
             title.OptionsModalInput.Accept|=event.key.key==SDLK_RETURN;title.OptionsModalInput.Cancel|=event.key.key==SDLK_BACKSPACE || event.key.key==SDLK_ESCAPE;
+            title.ExtrasInput.Accept|=event.key.key==SDLK_RETURN;
+            title.ExtrasInput.Cancel|=event.key.key==SDLK_BACKSPACE || event.key.key==SDLK_ESCAPE;
+            title.ExtrasInput.Comment|=event.key.key==SDLK_C;title.ExtrasInput.ToggleHelp|=event.key.key==SDLK_H;
+            title.ExtrasInput.Stop|=event.key.key==SDLK_SPACE;title.ExtrasInput.Mode|=event.key.key==SDLK_M;
           }
         }
         if((event.type==SDL_EVENT_MOUSE_BUTTON_DOWN || event.type==SDL_EVENT_MOUSE_BUTTON_UP) && event.button.button==SDL_BUTTON_LEFT){
           pointerDown=event.type==SDL_EVENT_MOUSE_BUTTON_DOWN;pointer={event.button.x,event.button.y};title.Input.AnyActivity=true;
         }
         if(event.type==SDL_EVENT_MOUSE_MOTION){pointer={event.motion.x,event.motion.y};title.Input.AnyActivity=true;}
-        if(event.type==SDL_EVENT_WINDOW_FOCUS_LOST){held={};horizontalHeld={};title.NavigationInput={};title.OptionsInput={};title.SlotInput={};pointerDown=false;title.Contacts.CancelPointer();if(title.Config())title.Config()->CancelPointer();if(title.Continue())title.Continue()->CancelPointer();}
+        if(event.type==SDL_EVENT_WINDOW_FOCUS_LOST){held={};horizontalHeld={};galleryPageHeld={};title.NavigationInput={};title.OptionsInput={};title.SlotInput={};title.ExtrasInput={};pointerDown=false;title.Contacts.CancelPointer();if(title.Config())title.Config()->CancelPointer();if(title.Continue())title.Continue()->CancelPointer();if(title.Extras())title.Extras()->CancelPointer();}
       }
       WidgetInputHistory::Snapshot contacts{};
       if(pointerDown){
@@ -5378,7 +5394,12 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
       title.Input.AnyActivity|=pointerDown||held[0]||held[1];title.Contacts.BeginFrame(contacts);title.FrameContacts=contacts;
       if(quit)break;
       const uint32_t playingBefore=(audio.Playing(6)?1u:0u)|(audio.Playing(7)?2u:0u);
-      title.Update(now);playback.Update(0.016f);
+      title.Update(now);
+      if(title.Extras()){
+        if(title.Extras()->WindowClosed()){quit=true;break;}
+        if(title.Extras()->ConsumeInputReset()){held={};horizontalHeld={};galleryPageHeld={};pointerDown=false;title.FrameContacts={};title.Contacts.CancelPointer();title.Extras()->CancelPointer();}
+      }
+      playback.Update(0.016f);
       if(capture){
         std::array<int16_t,1536> samples{};playback.Render(samples);pcm.write(reinterpret_cast<const char*>(samples.data()),sizeof(samples));audioFrames+=768;
         trace << "{\"frame\":"<<frames<<",\"now\":"<<now<<",\"phase\":"<<title.State.Phase<<",\"pending\":"<<title.State.PendingPhase.value_or(-1)

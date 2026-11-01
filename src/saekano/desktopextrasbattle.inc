@@ -42,13 +42,14 @@ class PcExtrasBattle final:public ExtrasBattleServices {
           saveRoot_,&slots_,nullptr,0,&returned,scripts_.at(size_t(screen_.Selected())));
       if(code!=0)throw FormatError("battle replay session failed");
       if(!returned){windowClosed_=true;return 0;}
-      owner_=std::move(*returned);restoreMusic_();
+      owner_=std::move(*returned);restoreMusic_();++sessionSerial_;
       now_+=SDL_GetTicks()-started;CancelPointer();input_={};modalInput_={};screen_.ResumeReplay(now_);
     }
     if(!result)UpdateNewMarker(marker_,markerEnv_,now_);return result;
   }
   bool Dirty()const{return screen_.Dirty();}
   bool WindowClosed()const{return windowClosed_;}
+  uint64_t SessionSerial()const{return sessionSerial_;}
   const ExtrasBattleBrowser& State()const{return screen_;}
   bool ResourcesReady()const override{
     if(scripts_.size()!=env_.BattleReplays.size())return false;
@@ -167,5 +168,5 @@ class PcExtrasBattle final:public ExtrasBattleServices {
   ExtrasScreenEnvironment env_;ExtrasChildButtonHelpEnvironment help_;ButtonHelpStyle style_;
   NewMarkerEnvironment markerEnv_;NewMarkerState marker_;ExtrasBattleBrowser screen_;ExtrasBattleInput input_;DialogInput modalInput_;
   DialogState question_;DialogContentLayout layout_;PcDialogContacts contacts_;std::vector<int32_t> scripts_;
-  std::set<ProfileTextureKey> owned_;bool windowClosed_=false;
+  std::set<ProfileTextureKey> owned_;bool windowClosed_=false;uint64_t sessionSerial_=0;
 };

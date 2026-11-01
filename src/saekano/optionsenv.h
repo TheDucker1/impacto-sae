@@ -6,6 +6,7 @@ namespace Impacto::Saekano {
 struct OptionsDebugSettings {
   std::array<uint8_t,3> Flags{};
   uint8_t Silent=0;
+  uint8_t UnlockMovies=0,UnlockCg=0,UnlockMusic=0,UnlockBattle=0;
   size_t PrefixBytes=0;
   bool ForceSilent()const{return Silent!=0;}
   static OptionsDebugSettings Decode(std::span<const uint8_t> bytes);
