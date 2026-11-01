@@ -38,6 +38,7 @@
 #include "optionspagedraw.h"
 #include "optionswidgets.h"
 #include "optionsdialog.h"
+#include "systemmenu.h"
 #include "optionspreview.h"
 #include "buttonhelp.h"
 #include "globalui.h"
@@ -1038,6 +1039,7 @@ struct SceneDialogLayer {
 #include "desktopoptions.inc"
 #include "desktopoptionsowner.inc"
 #include "desktopslotowner.inc"
+#include "desktopsystemmenu.inc"
 #include "desktoptitle.inc"
 #include "desktopprofile.inc"
 
