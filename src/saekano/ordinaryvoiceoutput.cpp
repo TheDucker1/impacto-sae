@@ -40,10 +40,9 @@ void ClockedOrdinaryVoice::PrepareMemory(uint32_t channel, Bytes encoded) {
 }
 void ClockedOrdinaryVoice::Stop(uint32_t channel) {
   const auto slot = Slot(channel);
-  voices_[slot].Reset();
+  if (voices_[slot].FramesConsumed()) voices_[slot].Stop();
   ready_[slot] = false;
-  rates_[slot] = 0;
-  ids_[slot].reset();
+  if (voices_[slot].Stopped()) ids_[slot].reset();
 }
 void ClockedOrdinaryVoice::Update(uint64_t now) {
   if (sampled_ && now < now_) throw FormatError("ordinary voice clock moved backwards");

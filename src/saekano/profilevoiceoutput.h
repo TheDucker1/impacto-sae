@@ -1,6 +1,6 @@
 #pragma once
 
-#include "audio.h"
+#include "music.h"
 
 namespace Impacto::Saekano {
 // Profile lifecycle consumes real voice state. A PC frontend owns the audio
@@ -31,7 +31,9 @@ class ClockedProfileVoice final : public ProfileVoiceOutput {
 
  private:
   std::unique_ptr<HcaWaveReader> voice_;
-  uint64_t epoch_ = 0;
+  std::unique_ptr<HcaWaveReader> preparedVoice_;
+  BgmStopFade stopFade_;
+  uint64_t epoch_ = 0, now_ = 0;
   bool playing_ = false, prepared_ = false;
 };
 }  // namespace Impacto::Saekano

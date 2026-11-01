@@ -219,6 +219,8 @@ int main(int argc, char* argv[]) {
   }
   if (argc == 4 && std::string_view(argv[1]) == "--saekano-voice-stop")
     return Saekano::RunOrdinaryVoiceStopSession(argv[2], argv[3]);
+  if (argc == 4 && std::string_view(argv[1]) == "--saekano-voice-fade")
+    return Saekano::RunVoiceFadeSession(argv[2], argv[3]);
   if (argc >= 2 && std::string_view(argv[1]) == "--saekano-ordinary-voice") {
     if (argc == 5 && std::string_view(argv[3]) == "--capture")
       return Saekano::RunOrdinaryVoiceSession(argv[2], argv[4]);

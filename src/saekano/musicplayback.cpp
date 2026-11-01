@@ -4,6 +4,7 @@
 #include "resources.h"
 #include "profilearchive.h"
 #include "optionspreview.h"
+#include "ordinaryvoiceoutput.h"
 #include "scenemessage.h"
 #include "../audio/audiosystem.h"
 #include "../audio/openal/audiobackend.h"
@@ -221,6 +222,45 @@ struct MusicPlayback::Impl {
   std::array<std::unique_ptr<HcaPlaybackStream>, 6> PreparedOrdinaryVoices;
   std::array<bool, 6> HasOrdinaryVoice{};
   bool HasProfileVoice = false;
+  // Native b6c38 attaches the same linear fader to voices7..12. Prepare
+  // stops the old token; Start retires that tail before playing the new token.
+  std::array<BgmStopFade, 6> VoiceFades;
+  std::array<float, 6> VoiceGains{1, 1, 1, 1, 1, 1};
+  double VoiceFadeFraction = 0;
+  uint32_t VoiceFadeFrameRemainder = 0;
+  void StopVoice(size_t slot, bool prepared) {
+    auto& output = OrdinaryOutput(slot);
+    auto& fade = VoiceFades[slot];
+    if (prepared || fade.Active() || output->GetState() == Audio::ACS_Stopped) {
+      output->Stop(0);
+      fade = {};
+      output->SetVolume(VoiceGains[slot]);
+      return;
+    }
+    fade = {};
+    fade.Request(500);
+    fade.Tick(0); fade.Tick(0); // The existing output is already ready.
+  }
+  void SetVoiceGain(size_t slot, float gain) {
+    VoiceGains[slot] = gain;
+    OrdinaryOutput(slot)->SetVolume(gain *
+        (VoiceFades[slot].Active() ? VoiceFades[slot].Weight : 1.0f));
+  }
+  void StartVoice(size_t slot, std::unique_ptr<HcaPlaybackStream> stream) {
+    VoiceFades[slot] = {};
+    auto& output = OrdinaryOutput(slot);
+    output->SetVolume(VoiceGains[slot]);
+    output->Play(std::move(stream), false, 0);
+  }
+  void AdvanceVoiceFades(uint32_t milliseconds) {
+    for (size_t slot = 0; slot < VoiceFades.size(); ++slot) {
+      auto& fade = VoiceFades[slot];
+      if (!fade.Active()) continue;
+      fade.Tick(milliseconds);
+      OrdinaryOutput(slot)->SetVolume(VoiceGains[slot] * fade.Weight);
+      if (!fade.Active()) OrdinaryOutput(slot)->Stop(0);
+    }
+  }
   float OldMaster = Audio::MasterVolume;
   float OldGroup = Audio::GroupVolumes[Audio::ACG_BGM];
   float OldSeGroup = Audio::GroupVolumes[Audio::ACG_SE];
@@ -438,6 +478,12 @@ void MusicPlayback::Submit(const GameEvent& event) {
 void MusicPlayback::Update(float seconds) {
   if (!std::isfinite(seconds) || seconds < 0)
     throw FormatError("invalid audio update interval");
+  if (!impl_->RenderSamples) {
+    impl_->VoiceFadeFraction += double(seconds) * 1000.0;
+    const double whole = std::floor(impl_->VoiceFadeFraction);
+    impl_->VoiceFadeFraction -= whole;
+    impl_->AdvanceVoiceFades(uint32_t(std::min(whole, 67.0)));
+  }
   if (impl_->BgmFade.Active() && !impl_->RenderSamples) {
     impl_->BgmFadeFraction += double(seconds) * 1000.0;
     const double whole = std::floor(impl_->BgmFadeFraction);
@@ -489,6 +535,16 @@ void MusicPlayback::StopAllChannels() {
   impl_->UiSound->Stop(0);
   for (uint32_t channel = 7; channel <= 12; ++channel)
     StopOrdinaryVoice(channel);
+  // Native immediate-stop teardown bypasses attached fades, including tails
+  // just created by stopping live channels above.
+  for (size_t slot = 0; slot < impl_->VoiceFades.size(); ++slot) {
+    impl_->OrdinaryOutput(slot)->Stop(0);
+    impl_->VoiceFades[slot] = {};
+  }
+  impl_->VoiceFadeFraction = 0;
+  impl_->VoiceFadeFrameRemainder = 0;
+  impl_->HasOrdinaryVoice.fill(false);
+  impl_->HasProfileVoice = impl_->HasMissionVoice = false;
   AlCheck("shared audio quiescence");
 }
 namespace {
@@ -510,7 +566,7 @@ void MusicPlayback::SetChannelOutputGain(uint32_t channel,float gain){
     impl_->SeChannels.at(channel-2)->SetVolume(gain);
   }
   else if(channel==6){impl_->UiSoundGain=gain;impl_->UiSound->SetVolume(gain);}
-  else impl_->OrdinaryOutput(channel-7)->SetVolume(gain);
+  else impl_->SetVoiceGain(channel-7, gain);
   AlCheck("live channel gain");
 }
 float MusicPlayback::ChannelOutputGain(uint32_t channel)const{
@@ -520,7 +576,7 @@ float MusicPlayback::ChannelOutputGain(uint32_t channel)const{
     return impl_->SeChannels.at(channel-2)->GetVolume();
   }
   if(channel==6)return impl_->UiSound->GetVolume();
-  return impl_->OrdinaryOutput(channel-7)->GetVolume();
+  return impl_->VoiceGains[channel-7];
 }
 AudioDuckingInputs MusicPlayback::VoiceAttenuationInputs()const{
   AudioDuckingInputs in;in.Available=0;in.TargetAvailable=bool(impl_->Channel);
@@ -627,10 +683,10 @@ void MusicPlayback::PrepareProfileVoice(Bytes encoded, float gain) {
   if (!std::isfinite(gain) || gain < 0 || gain > 1)
     throw FormatError("profile voice gain outside supported range");
   auto stream = std::make_unique<HcaPlaybackStream>(std::move(encoded));
+  impl_->StopVoice(0, bool(impl_->PreparedProfileVoice || impl_->PreparedOrdinaryVoices[0]));
   impl_->PreparedOrdinaryVoices[0].reset();
   impl_->HasOrdinaryVoice[0] = false;
-  impl_->ProfileVoice->Stop(0);
-  impl_->ProfileVoice->SetVolume(gain);
+  impl_->SetVoiceGain(0, gain);
   impl_->PreparedProfileVoice = std::move(stream);
   impl_->HasProfileVoice = true;
   AlCheck("profile voice preparation");
@@ -639,12 +695,14 @@ void MusicPlayback::StartProfileVoice() {
   if (!impl_->PreparedProfileVoice)
     throw UnsupportedCommand(
         "profile voice must be prepared before each start");
-  impl_->ProfileVoice->Play(std::move(impl_->PreparedProfileVoice), false, 0);
+  impl_->StartVoice(0, std::move(impl_->PreparedProfileVoice));
   AlCheck("profile voice start");
   if(impl_->Attenuation)impl_->Attenuation->state_.StartVoice(7,true,AudioServiceTime());
 }
 void MusicPlayback::StopProfileVoice() {
-  impl_->ProfileVoice->Stop(0);
+  impl_->StopVoice(0, bool(impl_->PreparedProfileVoice || impl_->PreparedOrdinaryVoices[0]));
+  impl_->PreparedProfileVoice.reset();
+  impl_->PreparedOrdinaryVoices[0].reset();
   AlCheck("profile voice stop");
 }
 void MusicPlayback::ResetProfileVoice() {
@@ -676,9 +734,9 @@ void MusicPlayback::PrepareOrdinaryVoice(
   if (voiceId > uint32_t(INT16_MAX)) throw FormatError("ordinary voice ID exceeds slot catalog");
   if(channel==11){PrepareMissionVoice(voiceId,std::move(reader),gain);return;}
   auto stream = std::make_unique<HcaPlaybackStream>(std::move(reader), int32_t(voiceId), "voice.awb");
-  auto& output = impl_->OrdinaryOutput(slot);
-  output->Stop(0);
-  output->SetVolume(gain);
+  impl_->StopVoice(slot, bool(impl_->PreparedOrdinaryVoices[slot] ||
+      (!slot && impl_->PreparedProfileVoice)));
+  impl_->SetVoiceGain(slot, gain);
   if (!slot) {
     impl_->PreparedProfileVoice.reset();
     impl_->HasProfileVoice = false;
@@ -693,7 +751,7 @@ void MusicPlayback::StartOrdinaryVoice(uint32_t channel) {
   const bool ready = bool(impl_->PreparedOrdinaryVoices[slot]);
   auto& output = impl_->OrdinaryOutput(slot);
   if (impl_->PreparedOrdinaryVoices[slot])
-    output->Play(std::move(impl_->PreparedOrdinaryVoices[slot]), false, 0);
+    impl_->StartVoice(slot, std::move(impl_->PreparedOrdinaryVoices[slot]));
   else if (impl_->HasOrdinaryVoice[slot]) output->Resume();
   AlCheck("ordinary voice start");
   if(impl_->Attenuation)impl_->Attenuation->state_.StartVoice(channel,ready,AudioServiceTime());
@@ -705,9 +763,9 @@ void MusicPlayback::PrepareMemoryVoice(uint32_t channel, Bytes encoded, float ga
     throw FormatError("memory voice gain outside supported range");
   auto stream = std::make_unique<HcaPlaybackStream>(
       std::make_unique<HcaWaveReader>(std::move(encoded)), 0, "memory.hca");
-  auto& output = impl_->OrdinaryOutput(slot);
-  output->Stop(0);
-  output->SetVolume(gain);
+  impl_->StopVoice(slot, bool(impl_->PreparedOrdinaryVoices[slot] ||
+      (!slot && impl_->PreparedProfileVoice)));
+  impl_->SetVoiceGain(slot, gain);
   if (!slot) {
     impl_->PreparedProfileVoice.reset();
     impl_->HasProfileVoice = false;
@@ -718,10 +776,10 @@ void MusicPlayback::PrepareMemoryVoice(uint32_t channel, Bytes encoded, float ga
 }
 void MusicPlayback::StopOrdinaryVoice(uint32_t channel) {
   const auto slot = OrdinaryVoiceSlot(channel);
-  if(channel==11){ResetMissionVoice();return;}
-  (impl_->OrdinaryOutput(slot))->Stop(0);
+  impl_->StopVoice(slot, channel==11 ? bool(impl_->PreparedMissionVoice) :
+      bool(impl_->PreparedOrdinaryVoices[slot] || (!slot && impl_->PreparedProfileVoice)));
+  if(channel==11)impl_->PreparedMissionVoice.reset();
   impl_->PreparedOrdinaryVoices[slot].reset();
-  impl_->HasOrdinaryVoice[slot] = false;
   if (!slot) {
     impl_->PreparedProfileVoice.reset();
     impl_->HasProfileVoice = false;
@@ -736,6 +794,7 @@ bool MusicPlayback::OrdinaryVoicePlaying(uint32_t channel) const {
   const auto slot = OrdinaryVoiceSlot(channel);
   if(channel==11)return MissionVoicePlaying();
   return impl_->HasOrdinaryVoice[slot] &&
+         !impl_->PreparedOrdinaryVoices[slot] &&
          (impl_->OrdinaryOutput(slot))->GetState() == Audio::ACS_Playing;
 }
 int32_t MusicPlayback::OrdinaryVoicePosition(uint32_t channel) const {
@@ -786,27 +845,27 @@ void MusicPlayback::PrepareMissionVoice(uint32_t id,std::unique_ptr<HcaWaveReade
   if(!reader || id>uint32_t(INT16_MAX) || !std::isfinite(gain) || gain<0 || gain>1)
     throw FormatError("invalid mission voice preparation");
   auto stream=std::make_unique<HcaPlaybackStream>(std::move(reader),int32_t(id),"voice.awb/mission11");
-  impl_->MissionVoice->Stop(0);impl_->MissionVoice->SetVolume(gain);
+  impl_->StopVoice(4, bool(impl_->PreparedMissionVoice));impl_->SetVoiceGain(4, gain);
   impl_->PreparedMissionVoice=std::move(stream);impl_->HasMissionVoice=false;
   AlCheck("mission voice prepare");
 }
 void MusicPlayback::StartMissionVoice() {
   const bool ready = bool(impl_->PreparedMissionVoice);
   if(impl_->PreparedMissionVoice) {
-    impl_->MissionVoice->Play(std::move(impl_->PreparedMissionVoice),false,0);impl_->HasMissionVoice=true;
+    impl_->StartVoice(4,std::move(impl_->PreparedMissionVoice));impl_->HasMissionVoice=true;
   } else if(impl_->HasMissionVoice)impl_->MissionVoice->Resume();
   AlCheck("mission voice play");
   if(impl_->Attenuation)impl_->Attenuation->state_.StartVoice(11,ready,AudioServiceTime());
 }
 bool MusicPlayback::MissionVoiceReady() const { return bool(impl_->PreparedMissionVoice); }
 void MusicPlayback::ResetMissionVoice() {
-  impl_->MissionVoice->Stop(0);impl_->PreparedMissionVoice.reset();impl_->HasMissionVoice=false;AlCheck("mission voice reset");
+  StopOrdinaryVoice(11);AlCheck("mission voice reset");
 }
 bool MusicPlayback::MissionVoicePlaying() const {
-  return impl_->HasMissionVoice && impl_->MissionVoice->GetState()!=Audio::ACS_Stopped;
+  return impl_->HasMissionVoice && !impl_->PreparedMissionVoice && impl_->MissionVoice->GetState()!=Audio::ACS_Stopped;
 }
 int32_t MusicPlayback::MissionVoicePosition() const {
-  if(!impl_->HasMissionVoice)return -1;
+  if(!MissionVoicePlaying())return -1;
   const auto seconds=impl_->MissionVoice->PositionInSeconds();
   return std::isfinite(seconds) && seconds>=0 ? int32_t(seconds*1000) : -1;
 }
@@ -867,6 +926,9 @@ void MusicPlayback::Render(std::span<int16_t> output) {
   size_t frame = 0;
   while (frame < output.size() / 2) {
     const auto count = std::min<size_t>(480, output.size() / 2 - frame);
+    impl_->VoiceFadeFrameRemainder += uint32_t(count);
+    impl_->AdvanceVoiceFades(impl_->VoiceFadeFrameRemainder / 48);
+    impl_->VoiceFadeFrameRemainder %= 48;
     if (impl_->BgmFade.Active()) {
       impl_->BgmFadeFrameRemainder += uint32_t(count);
       impl_->AdvanceBgmFade(impl_->BgmFadeFrameRemainder / 48);
@@ -1105,17 +1167,17 @@ int RunMissionVoiceSession(const std::filesystem::path& usrdir,
     // Start consumes the prepared reader. Mission stop must preserve the
     // playing dialogue source, without recreating its consumed preparation.
     if(!ordinary.Playing(7) || ordinary.Ready(7) || before<0 || after<=before ||
-        playback.MissionVoicePlaying() || playback.MissionVoicePosition()!=-1)
+        !playback.MissionVoicePlaying() || playback.MissionVoicePosition()<0)
       throw FormatError("mission independence: before="+std::to_string(before)+", after="+std::to_string(after)+
           ", dialogue_playing="+std::to_string(ordinary.Playing(7))+", ready="+std::to_string(ordinary.Ready(7))+
           ", mission_playing="+std::to_string(playback.MissionVoicePlaying())+
           ", mission_position="+std::to_string(playback.MissionVoicePosition()));
-    ordinary.Stop(7);playback.Render(block);  // Settle both stop ramps.
+    ordinary.Stop(7);playback.Render(block);
     voice.Begin(10579,0);playback.Render(block);voice.Disable();
     std::vector<int16_t> tail(9600*2);playback.Render(tail);SaveWav(captureDirectory/"stop-tail.wav",tail);
     report << "],\"unregistered_rejected\":true,\"dialogue_before_ms\":" << before
            << ",\"dialogue_after_ms\":" << after
-           << ",\"independent_dialogue\":true,\"reset_missing_position\":true}\n";
+           << ",\"independent_dialogue\":true,\"stop_tail_retains_position\":true}\n";
     return 0;
   }catch(const std::exception& e) {
     if(created){std::ofstream error(captureDirectory/"error.txt");error << std::string(e.what()).substr(0,2048);}
@@ -1219,12 +1281,19 @@ int RunAudioOwnerSession(const std::filesystem::path& usrdir,const std::filesyst
         throw FormatError("direct BGM replacement overwrote the attenuation target");
       dialogue.PrepareMemory(9,clip); // Unstarted preparation cannot hold ducking.
       for(uint32_t channel:{7u,8u,11u})playback.StopOrdinaryVoice(channel);
+      // Stops now retain native fading/silent tails. Restoration begins only
+      // after those outputs retire; an unstarted prepared token is excluded.
+      for(uint32_t waited=0;playback.VoiceAttenuationInputs().Busy && waited<1000;waited+=10)
+        advance(10);
+      if(playback.VoiceAttenuationInputs().Busy)
+        throw FormatError("voice tails exceeded attached fade retirement");
       playback.Update(0);advance(150);expect(30);advance(150);expect(40);
       if(owner.State().SavedGain!=40 || playback.BgmVoices().Current!=serial ||
           !(playback.VoiceAttenuationInputs().Prepared&(1u<<9)) || peak<=8)
         throw FormatError("shared owner restoration lost BGM/prepared state or PCM");
+      const auto retirementTime=playback.AudioServiceTime();
       playback.StopAllChannels();
-      if(playback.VoiceAttenuation()!=&owner || playback.AudioServiceTime()!=1300)
+      if(playback.VoiceAttenuation()!=&owner || playback.AudioServiceTime()!=retirementTime)
         throw FormatError("scene retirement replaced the session audio owner/clock");
     }
     if(playback.VoiceAttenuation())throw FormatError("retired attenuation owner remains bound");
@@ -1810,6 +1879,77 @@ int RunMusicSession(const std::filesystem::path& usrdir, uint32_t track,
   } catch (const std::exception& error) {
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Saekano audio: %s",
                  error.what());
+    return 1;
+  }
+}
+int RunVoiceFadeSession(const std::filesystem::path& usrdir,
+                       const std::filesystem::path& captureDirectory) {
+  bool created = false;
+  try {
+    CreateCaptureDirectory(usrdir, captureDirectory); created = true;
+    ArchiveBgmResources resources(usrdir);
+    if (!SDL_Init(SDL_INIT_EVENTS)) throw FormatError(SDL_GetError());
+    struct Cleanup { ~Cleanup() { SDL_Quit(); } } cleanup;
+    MusicPlayback playback(resources, true);
+    PlaybackOrdinaryVoice pc(playback, usrdir, 10, 1.0f);
+    ClockedOrdinaryVoice headless(usrdir);
+    uint64_t now = 0;
+    headless.Update(now);
+    std::array<int16_t, 960> pcm;
+    int tailPeak = 0, silentPeak = 0;
+    auto advance = [&](uint32_t milliseconds, bool tail = false, bool silent = false) {
+      for (uint32_t elapsed = 0; elapsed < milliseconds; elapsed += 10) {
+        playback.Render(pcm); now += 10; headless.Update(now);
+        if (pc.Playing(7) != headless.Playing(7))
+          throw FormatError("PC/headless active voice retirement differs");
+        for (const auto sample : pcm) {
+          if (tail) tailPeak = std::max(tailPeak, std::abs(int(sample)));
+          if (silent) silentPeak = std::max(silentPeak, std::abs(int(sample)));
+        }
+      }
+    };
+    auto prepare = [&] { pc.Prepare(7, 7491); headless.Prepare(7, 7491); };
+    auto start = [&] { pc.Start(7); headless.Start(7); };
+    auto stop = [&] { pc.Stop(7); headless.Stop(7); };
+    prepare(); start(); advance(100);
+    stop(); advance(100, true);
+    if (!pc.Playing(7) || !headless.Playing(7) || tailPeak <= 32)
+      throw FormatError("active voice was cut instead of faded");
+    advance(500); advance(100, false, true);
+    if (!pc.Playing(7) || !headless.Playing(7) || silentPeak > 1)
+      throw FormatError("voice silent retirement interval is missing");
+    advance(300);
+    if (pc.Playing(7) || headless.Playing(7))
+      throw FormatError("voice survived fade plus retirement delay");
+    prepare(); start(); advance(100); stop(); advance(100); stop();
+    if (pc.Playing(7) || headless.Playing(7))
+      throw FormatError("repeated stop restarted the fade");
+    prepare(); start(); advance(100);
+    prepare(); // Old tail continues while the new token is prepared.
+    if (!pc.Ready(7) || !headless.Ready(7) || pc.Playing(7) || headless.Playing(7))
+      throw FormatError("prepared replacement exposes the old playing token");
+    start(); advance(100);
+    if (!pc.Playing(7) || !headless.Playing(7))
+      throw FormatError("replacement start did not retire the old fade");
+    prepare(); stop();
+    if (pc.Ready(7) || headless.Ready(7) || pc.Playing(7) || headless.Playing(7))
+      throw FormatError("prepared cancellation retained a playback");
+    prepare(); start(); advance(100); playback.StopAllChannels();
+    if (pc.Playing(7) || playback.VoiceAttenuationInputs().Busy ||
+        playback.VoiceAttenuationInputs().Prepared)
+      throw FormatError("immediate teardown retained voice tails");
+    std::ofstream report(captureDirectory / "report.json");
+    report << "{\"passed\":true,\"voice_id\":7491,\"fade_ms\":500,"
+        "\"silent_delay_ms\":500,\"pc_headless_retirement_agrees\":true,"
+        "\"repeat_stop_immediate\":true,\"replacement_start\":true,"
+        "\"prepared_cancel\":true,\"immediate_teardown\":true,\"tail_peak\":"
+        << tailPeak << ",\"silent_peak\":" << silentPeak
+        << ",\"rendered_frames\":" << now * 48 << "}\n";
+    if (!report) throw FormatError("cannot write voice fade report");
+    return 0;
+  } catch (const std::exception& error) {
+    if (created) { std::ofstream out(captureDirectory / "error.txt"); out << error.what() << '\n'; }
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Saekano voice fade: %s", error.what());
     return 1;
   }
 }

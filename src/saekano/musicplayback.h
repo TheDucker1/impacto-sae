@@ -72,6 +72,8 @@ class MusicPlayback {
   void PrepareOrdinaryVoice(uint32_t channel, uint32_t voiceId,
                             std::unique_ptr<HcaWaveReader> reader, float gain);
   void StartOrdinaryVoice(uint32_t channel);
+  // Attached500ms linear stop plus500ms silent retirement; repeated Stop or
+  // cancellation of a prepared token retires immediately. StopAll is immediate.
   void StopOrdinaryVoice(uint32_t channel);
   bool OrdinaryVoiceReady(uint32_t channel) const;
   bool OrdinaryVoicePlaying(uint32_t channel) const;
@@ -219,6 +221,8 @@ int RunMissionVoicePrepareSession(const std::filesystem::path& usrdir,
                                   const std::filesystem::path& captureDirectory);
 int RunOrdinaryVoiceStopSession(const std::filesystem::path& usrdir,
                                const std::filesystem::path& captureDirectory);
+int RunVoiceFadeSession(const std::filesystem::path& usrdir,
+                       const std::filesystem::path& captureDirectory);
 int RunUiSoundSession(const std::filesystem::path& usrdir,
                       const std::filesystem::path& captureDirectory);
 int RunSharedAudioStopSession(const std::filesystem::path& usrdir,

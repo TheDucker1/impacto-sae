@@ -9,7 +9,8 @@
 
 namespace Impacto::Saekano {
 struct SemanticState;
-// Attached BGM fader with the game's proved500ms silent retirement delay.
+// Shared attached-player fader (BGM and voices), with the game's proved500ms
+// silent retirement delay. The historical type name is retained for callers.
 // Tick inputs are audio-service elapsed milliseconds; the native service caps
 // each clock delta at67ms. Device callbacks and readiness are owned by the host.
 struct BgmStopFade {
