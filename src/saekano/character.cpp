@@ -111,6 +111,33 @@ NativeCharacterSavePrefix DecodeNativeCharacterSavePrefix(
   result.EndOffset = cursor;
   return result;
 }
+NativeCharacterSavePrefix CaptureNativeCharacters(const SemanticState& state) {
+  RequireCharacters(state);
+  NativeCharacterSavePrefix result;
+  result.DefaultColor = state.CharacterRuntimeState.DefaultColor;
+  for (const auto& [id, actor] : state.Characters) {
+    if (!actor.Pose.Known)
+      throw UnsupportedCommand("native character snapshot needs known face/pose targets");
+    NativeSavedCharacter saved;
+    saved.Id = id;
+    // These five words are persistent actor configuration, not animation clocks
+    // or the originally saved geometry. Geometry targets below come from the
+    // live owner, so a later command cannot leave the loaded values in a save.
+    for (size_t i = 6; i <= 10; ++i) saved.Fields[i] = actor.SavedFields[i];
+    saved.Fields[0] = actor.Pose.Face;
+    constexpr std::array<CharacterTween, 4> Channels{
+        CharacterTween::X, CharacterTween::Y, CharacterTween::Scale,
+        CharacterTween::Opacity};
+    for (size_t i = 0; i < Channels.size(); ++i)
+      saved.Fields[i + 1] = actor.Tweens[size_t(Channels[i])].To;
+    saved.Fields[5] = std::bit_cast<int32_t>(actor.Priority);
+    saved.Fields[11] = actor.Pose.Current;
+    for (size_t i = 0; i < actor.Tint.size(); ++i)
+      saved.PackedColor |= uint32_t(actor.Tint[i]) << (8 * i);
+    result.Records.push_back(saved);
+  }
+  return result;
+}
 void RestoreNativeCharacters(SemanticState& state,
                              const NativeCharacterSavePrefix& saved,
                              uint64_t now) {

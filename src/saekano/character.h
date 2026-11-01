@@ -19,6 +19,10 @@ struct NativeCharacterSavePrefix {
 };
 NativeCharacterSavePrefix DecodeNativeCharacterSavePrefix(
     std::span<const uint8_t> bytes);
+// Native64162 reads command-target mirrors for geometry/opacity, current tint
+// bytes, face/pose and the five retained actor configuration words. It does
+// not save interpolated geometry samples or previous-face/pose animation state.
+NativeCharacterSavePrefix CaptureNativeCharacters(const SemanticState& state);
 
 // The native eight-tween shared transition group. Autonomous blink/lip and the
 // ninth previous-face tween remain separate from this shared scheduling group.
