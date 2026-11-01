@@ -66,6 +66,10 @@ class HeadlessBackend : public VmBackend {
   std::optional<ApproachMissionEnvironment> MissionSettings;
   std::optional<ApproachSelectionEnvironment> SelectionSettings;
   std::optional<SharedSelectionEnvironment> OrdinaryChoiceSettings;
+  std::optional<BacklogTextEnvironment> BacklogSettings;
+  const BacklogTextEnvironment* BacklogConfig() const override {
+    return BacklogSettings ? &*BacklogSettings : nullptr;
+  }
   const SharedSelectionEnvironment* OrdinaryChoiceConfig() const override {
     return OrdinaryChoiceSettings ? &*OrdinaryChoiceSettings : nullptr;
   }

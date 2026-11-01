@@ -2,6 +2,7 @@
 
 #include "formats.h"
 #include "contextsnapshot.h"
+#include "backlog.h"
 #include "systemsave.h"
 #include "ordinaryvoice.h"
 #include "live2dstate.h"
@@ -45,6 +46,7 @@ struct GameEvent {
 };
 
 struct SemanticState {
+  BacklogHistory Backlog;  // Shared session owner; survives manager/file replacement.
   ContextSnapshotMetadata SnapshotMetadata;
   // Complete raw persistent owner retains all nine history groups, slot metadata,
   // unknown options/words. Typed gameplay consumers below overlay their fields.

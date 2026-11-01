@@ -1157,6 +1157,7 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
   ArchiveApproachResultHost resultHost(resources,missionVoice,skipAuto,format,timing,
       resultVisual,font.Cached(),metrics,uint32_t(utility.Size),font.NominalSize());
   SceneMessageBackend backend(format, timing, *owner.TextSpeed, owner.AutoSpeed);
+  backend.BacklogSettings = BacklogTextEnvironment::Decode(SceneRead(root/"env/env_backlog.dat"));
   PlaybackProfileVoice profileVoice(playback,voiceSettings.Volume,1.0f);
   ArchiveProfileServices profileServices(resources,ScriptNameIndex::FromFirstArchive(SceneRead(root/"first.dat")),
       format,timing,&profileVoice);
@@ -4919,11 +4920,9 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     PlaybackTitleAudio audio(playback,systemSounds,ProfileVoiceGain(progress.Bytes6022c[10],1.0f),ProfileVoiceGain(progress.Bytes6022c[9],1.0f));
     audio.BindVoiceAttenuation(attenuation,audioClock);
     PcMovieFrameLayer movieFrame;MoviePlayback movie;movie.Present=[&](const AVFrame* frame,int64_t pts){movieFrame.Present(frame,pts);};
-    // This is the fresh boot owner. A future title return must carry its actual
-    // backlog/surface owners rather than substituting this initially empty ring.
-    std::vector<std::u16string> backlog;
+    // Fresh boot history starts empty; title actions clear the session owner.
     PcTitleOwner title(*owner,resources,renderer,textures,font,playback,music,sounds,audio,attenuation,movie,movieFrame,usrdir,env,seeds,utility.OpaqueTable,
-      widget.HoldFrames,[&]{backlog.clear();},progressRoot,session.Slots,audioClock,0);
+      widget.HoldFrames,[&]{owner->Backlog.Clear();},progressRoot,session.Slots,audioClock,0);
     std::ofstream trace,pcm;
     if(capture){trace.open(captureDirectory/"title.jsonl");pcm.open(captureDirectory/"audio.pcm",std::ios::binary);
       if(!trace || !pcm)throw FormatError("cannot open title capture outputs");}

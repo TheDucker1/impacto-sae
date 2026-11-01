@@ -74,6 +74,7 @@ class VmBackend {
   virtual const ApproachMissionEnvironment* MissionConfig() const { return nullptr; }
   virtual const ApproachSelectionEnvironment* SelectionConfig() const { return nullptr; }
   virtual const SharedSelectionEnvironment* OrdinaryChoiceConfig() const { return nullptr; }
+  virtual const BacklogTextEnvironment* BacklogConfig() const { return nullptr; }
   virtual const ApproachResultEnvironment* ApproachResultConfig() const { return nullptr; }
   virtual ApproachResultHost* ResultHost() { return nullptr; }
   virtual BgmResources* Music() { return nullptr; }

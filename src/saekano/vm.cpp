@@ -104,6 +104,7 @@ std::unique_ptr<VirtualMachine> VirtualMachine::FromNativeSlot(
   auto vm = std::unique_ptr<VirtualMachine>(new VirtualMachine(
       scripts, backend, std::move(owner), messageContext, true));
   ApplyNativeSlotWorkingOwner(vm->state_, pending);
+  vm->state_.Backlog.Clear();  // Native wrapper309a4, immediately after Load preparation.
   vm->workingContext_ = MakeNativeWorkingContext(pending.Record);
   vm->workingRecordMetadata_ = std::make_unique<NativeSlotRecord>(pending.Record);
   QueueNativeSlotLoadStops(vm->state_);
@@ -600,6 +601,8 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
     if (!models) throw UnsupportedCommand("Live2D resource/model backend is unavailable");
     StartLive2d(state_.Live2d, *command.Live2d, *models, now);
   } else if (opcode == 0x65 && !lane) {
+    if (workingContext_ && !backend_.BacklogConfig())
+      throw UnsupportedCommand("native choice backlog environment is unavailable");
     command.SavedDay = uint8_t(state_.DayEnabled);
     state_.DayEnabled = 0;
     if (const auto* environment = backend_.OrdinaryChoiceConfig())
@@ -884,8 +887,13 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
   if (opcode == 0x65) {
     const std::array<size_t,1> flags{*commitInput.Choice};
     backend_.RecordChoiceHistory(state_.ScriptFileId,uint32_t(index),flags);
-    // Native choice refresh follows the old-record backlog append. Backlog
-    // ownership is not bound yet; do not dispatch or restore day before here.
+    if (workingContext_) {
+      const auto* environment = backend_.BacklogConfig();
+      if (!environment) throw UnsupportedCommand("native choice backlog environment is unavailable");
+      state_.Backlog.AppendChoice(command.OrdinaryMenu->Entries.at(*commitInput.Choice).Label,
+                                 CaptureWorkingRecord(), *environment);
+    }
+    // Native appends the previous working record before publishing choice145.
     RefreshWorkingContext();
     if(auto* policy=backend_.AutoPolicy())CompleteApproachResultPolicy(state_,*policy);
     state_.DayEnabled = int32_t(command.SavedDay);
