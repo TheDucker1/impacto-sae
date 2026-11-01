@@ -7,6 +7,9 @@
 #include <cmath>
 
 namespace Impacto::Saekano {
+void Live2dDriver::Restore(const Live2dState&, uint64_t) {
+  throw UnsupportedCommand("model backend does not implement saved scene restore");
+}
 Live2dTransform Live2dDriver::CurrentTransform(const Live2dRecord&) const {
   throw UnsupportedCommand("model backend does not expose current transforms");
 }

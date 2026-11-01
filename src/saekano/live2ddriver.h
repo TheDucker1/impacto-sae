@@ -48,7 +48,7 @@ class SdkLive2dDriver final : public Live2dDriver,public OrdinaryModelMouthServi
   // Recreates the native game's SAVE/LOAD behavior; this deliberately starts
   // fresh queues/tweens, rather than transplanting an arbitrary live SDK state.
   // Prepare transactionally so a bad save cannot destroy the current scene.
-  void Restore(const Live2dState& state, uint64_t now);
+  void Restore(const Live2dState& state, uint64_t now) override;
 
   // Called exactly once per game frame, independently of VM Step boundaries.
   // Invisible attached models still animate. No OpenGL context is needed here.

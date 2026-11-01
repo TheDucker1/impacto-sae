@@ -65,6 +65,11 @@ struct NativeSavedParticleRequest {
   ParticleEffectRequest Request;
   int32_t PrewarmMilliseconds = 0;
 };
+// Full-slot Load constructs a new context. Its unsaved model parameter slots
+// retain constructor defaults (-1, +0), rather than the old live scene slots.
+// Publish records only after the backend's transactional asset/SDK restore.
+void RestoreNativeSlotModels(SemanticState& state, const NativeContextSave& saved,
+                             Live2dDriver& driver, uint64_t now);
 std::vector<NativeSavedParticleRequest> BuildNativeSlotParticleRequests(
     const NativeContextSave& saved, const SceneCameraParameters& camera,
     const ParticleEnvironment& environment, uint32_t opacityGroups);

@@ -65,6 +65,9 @@ class Live2dDriver {
                      uint64_t now) = 0;
   virtual void Remove(const Live2dRecord& record) = 0;
   virtual void Reset() = 0;
+  // Native save/load reattaches saved targets to fresh animation owners.
+  // Concrete drivers must prepare transactionally before replacing the scene.
+  virtual void Restore(const Live2dState& state, uint64_t now);
   // Game mode effects operate on current renderer transforms and do not alter
   // script-record targets (which are used by native save serialization).
   virtual Live2dTransform CurrentTransform(const Live2dRecord& record) const;

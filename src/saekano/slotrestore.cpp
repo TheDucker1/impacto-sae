@@ -231,6 +231,13 @@ bool StepNativeSlotDeferredStart(SemanticState& state,
   restore = std::move(next);
   return start;
 }
+void RestoreNativeSlotModels(SemanticState& state, const NativeContextSave& saved,
+                             Live2dDriver& driver, uint64_t now) {
+  // Constructor801a0c14..0c54; neither slot appears in801a3730's stream.
+  auto models = RestoreNativeLive2dRecords(saved.Models, {});
+  driver.Restore(models, now);
+  state.Live2d = std::move(models);
+}
 std::vector<NativeSavedParticleRequest> BuildNativeSlotParticleRequests(
     const NativeContextSave& saved, const SceneCameraParameters& camera,
     const ParticleEnvironment& environment, uint32_t opacityGroups) {
