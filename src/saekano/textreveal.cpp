@@ -437,22 +437,20 @@ void VoiceTextReveal::Start(VoiceTextDurations durations, uint64_t now) {
     throw UnsupportedCommand(
         "text requires fresh preparation before reveal start");
   std::vector<Segment> segments;
-  int32_t previousGlyph = 0, previousTime = 0;
-  for (const auto& marker : QueueMarkers) {
-    if (durations.Selected && uint32_t(marker.VoiceTime) > durations.Selected)
-      throw UnsupportedCommand("queue threshold exceeds selected text duration");
-    const auto glyphs = marker.Before - previousGlyph;
-    const auto duration = marker.VoiceTime - previousTime;
-    if (durations.Selected && !duration && glyphs)
-      throw UnsupportedCommand("zero-time queued glyph segment is not verified");
-    segments.push_back({0, glyphs, duration, previousTime});
-    previousGlyph = marker.Before; previousTime = marker.VoiceTime;
-  }
-  if (!QueueMarkers.empty()) {
-    segments.push_back({0, int32_t(Glyphs.size()) - previousGlyph,
-        std::bit_cast<int32_t>(durations.Selected - uint32_t(previousTime)), previousTime});
-    if (durations.Selected && !segments.back().Duration && segments.back().GlyphCount)
-      throw UnsupportedCommand("zero-time queued tail is not verified");
+  // Native mode1 uses ms_per_character, independently of cue thresholds.
+  // Keep cue records for the audio-position consumer, without voice segments.
+  if (!PerCharacter) {
+    int32_t previousGlyph = 0, previousTime = 0;
+    for (const auto& marker : QueueMarkers) {
+      const auto glyphs = marker.Before - previousGlyph;
+      const auto duration = marker.VoiceTime - previousTime;
+      segments.push_back({0, glyphs, duration, previousTime});
+      previousGlyph = marker.Before; previousTime = marker.VoiceTime;
+    }
+    if (!QueueMarkers.empty()) {
+      segments.push_back({0, int32_t(Glyphs.size()) - previousGlyph,
+          std::bit_cast<int32_t>(durations.Selected - uint32_t(previousTime)), previousTime});
+    }
   }
   Segments = std::move(segments);
   Durations = durations;
@@ -478,8 +476,8 @@ void VoiceTextReveal::ConfigureQueueMarkers(std::span<const TextQueueMarker> mar
   SegmentIndex = 0;
 }
 void VoiceTextReveal::StartCharacters(uint32_t interval, uint64_t now) {
-  Start({interval, interval}, now);
   PerCharacter = true;
+  Start({interval, interval}, now);
   Ratio = 1.0f;
 }
 void VoiceTextReveal::Update(uint64_t now, int32_t voicePosition) {

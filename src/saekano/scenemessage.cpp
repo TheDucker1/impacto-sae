@@ -125,8 +125,6 @@ void SceneMessageBackend::BeginMessage(size_t command,
       (void)timing_.ForVoice(*next.VoiceDuration, textSpeed_);
     }
   }
-  if (!next.Parsed.QueueMarkers.empty() && !envelope)
-    throw UnsupportedCommand("timed inline queue requires an enabled ordinary voice");
   if (envelope) {
     auto& queue=VoiceQueue(side);
     if(queue.NextSlot>1 || (dualCleanup_ && (!voices_->SecondaryQueue || voices_->SecondaryQueue->NextSlot>1 || voices_->Queue.NextSlot>1)))
@@ -219,9 +217,25 @@ bool SceneMessageBackend::BeginMessageUpdate(size_t command, uint64_t now,
                                              UpdateRoute route) {
   if (!current_ || current_->Command != command)
     throw UnsupportedCommand("scene message has not started");
+  if (route == UpdateRoute::Skipping) {
+    // Native854dc..85528 bypasses the normal voice gate and cue consumer.
+    // Even a still-preparing voice is stopped; StopOnAdvance is irrelevant.
+    if (!current_->Reveal.Started) {
+      if (current_->VoiceDuration)
+        current_->Reveal.Start(timing_.ForVoice(*current_->VoiceDuration, textSpeed_), now);
+      else current_->Reveal.StartCharacters(interval_, now);
+    }
+    current_->Epoch = sample_ = now;
+    if (current_->VoiceId >= 0) {
+      if (!voices_) throw UnsupportedCommand("ordinary voice owner is unavailable");
+      voices_->Output.Update(now);
+      SharedVoicePreparation(*voices_).Stop(VoiceQueue(current_->Side).BaseChannel + uint32_t(current_->VoiceGate.Slot));
+    }
+    current_->VoiceGate.Phase = -2;
+    current_->AudioPosition = -1;
+    return true;
+  }
   if (current_->VoiceId < 0) return true;
-  if (route != UpdateRoute::Normal)
-    throw UnsupportedCommand("ordinary voiced skip/lane update is not bound");
   if (!voices_) throw UnsupportedCommand("ordinary voice owner is unavailable");
   voices_->Output.Update(now);
   struct Gate final : OrdinaryVoiceServices {
@@ -241,9 +255,8 @@ bool SceneMessageBackend::BeginMessageUpdate(size_t command, uint64_t now,
     int32_t Position(uint32_t c) override { return Owner.Output.Position(c); }
     void BeginReveal(OrdinaryVoiceReveal kind) override {
       if (kind == OrdinaryVoiceReveal::Fallback) {
-        if (!Message.Parsed.QueueMarkers.empty())
-          throw UnsupportedCommand("voiced inline queue fallback is not bound");
         Message.Reveal.PrepareUtf16(Message.Parsed.Body, Format, Now);
+        Message.Reveal.ConfigureQueueMarkers(Message.Parsed.QueueMarkers);
         Message.Reveal.StartCharacters(200, Now);
       } else if (kind == OrdinaryVoiceReveal::Voiced) {
         Message.Reveal.Start(Timing.ForVoice(*Message.VoiceDuration, Speed), Now);

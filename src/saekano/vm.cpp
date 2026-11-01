@@ -901,6 +901,25 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
       messageContext_.PreviousCompletionPolicy = command.Message->CompletionPolicy;
       return true;
     }
+    if (input.Route == UpdateRoute::Skipping) {
+      // Native85424: phase1 reveals/stops, phase2 completes without the
+      // normal voice/cue/auto/mouth-finalization path. Phase3 is reset by
+      // the shared skip policy on the next frame.
+      if (state_.SkipPhase == 1 || state_.SkipPhase == 0) {
+        backend_.BeginMessageUpdate(index, now, input.Route);
+        backend_.RevealMessage(index);
+        command.AdvancePending = false;
+        state_.SkipPhase = 2;
+        return false;
+      }
+      if (state_.SkipPhase == 2) {
+        CollectMessageKeywords(index);
+        state_.SkipPhase = 3;
+        state_.FirstAsyncCommandIndex = -1;
+        return true;
+      }
+      return false;
+    }
     if (command.AdvancePending) {
       backend_.CompleteMessage(index, now);
       command.AdvancePending = false;

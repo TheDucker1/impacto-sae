@@ -52,8 +52,8 @@ struct SceneMessageTextState {
   std::optional<uint64_t> LastRevealSample;
 };
 // Shared frontend text lifecycle with two retained native context containers.
-// Selector0/policy0 and normal voiced updates are bound. Async, append and
-// voiced skip routes remain explicit unsupported boundaries.
+// Selector0/policy0 normal and skip updates are bound. Async and append
+// remain explicit unsupported boundaries.
 // Font/layout, input polling and audio services belong to the owning frontend.
 class SceneMessageBackend : public HeadlessBackend {
  public:
