@@ -292,6 +292,7 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     state_.DayEnabled = 0;
     const auto keywordSuppressed = messageContext_.KeywordSuppressed;
     messageContext_ = {};
+    state_.SnapshotMetadata = {};
     messageContext_.SnapshotCursors = FreshMessageSnapshotCursors();
     messageContext_.KeywordSuppressed = keywordSuppressed;  // owner S survives
     dispatcher_ = {};
