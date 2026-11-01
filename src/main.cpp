@@ -323,6 +323,8 @@ int main(int argc, char* argv[]) {
   if(argc==6 && std::string_view(argv[1])=="--saekano-movie-decode")return Saekano::RunMovieDecodeProbe(argv[2],argv[5],uint32_t(std::stoul(argv[3])),uint32_t(std::stoul(argv[4])));
   if(argc==5 && std::string_view(argv[1])=="--saekano-movie-session")return Saekano::RunMoviePlaybackSession(argv[2],argv[4],uint32_t(std::stoul(argv[3])));
   if(argc>=3 && std::string_view(argv[1])=="--saekano-play"){
+    if(argc==7 && std::string_view(argv[3])=="--capture-continue-load" && std::string_view(argv[5])=="--save-dir")
+      return Saekano::RunTitleScene(argv[2],argv[6],argv[4],false,false,0,0,3);
     if(argc==3)return Saekano::RunTitleScene(argv[2]);
     if(argc==5 && std::string_view(argv[3])=="--save-dir")return Saekano::RunTitleScene(argv[2],argv[4]);
     if(argc==5 && (std::string_view(argv[3])=="--capture-title" || std::string_view(argv[3])=="--capture-title-pointer"))

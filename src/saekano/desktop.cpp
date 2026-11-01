@@ -1054,7 +1054,8 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
                       std::optional<int32_t> captureScriptOverride = {},
                       bool captureWaitingInput = false,bool captureConfirmInput = false,int32_t captureMenuInput = 0,
                       const std::filesystem::path& capturePlan = {},
-                      const std::filesystem::path& progressRoot = {},const NativeSlotData* slotProgress=nullptr) {
+                      const std::filesystem::path& progressRoot = {},const NativeSlotData* slotProgress=nullptr,
+                      const NativePendingSlotLoad* load=nullptr) {
   const bool capture = !captureDirectory.empty();
   const bool captureEnding=captureMenuInput==16;
   const bool captureParticles=captureMenuInput==4;
@@ -1179,6 +1180,10 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
       throw UnsupportedCommand("scene particle resource is not registered");
     particleCaptureRequested=true;
   };
+  const auto opacityGroups=EndingEnvironment::Decode(SceneRead(root/"env/env_script.dat")).ParticleOpacityGroups;
+  backend.ParticleRestore=[&](const NativeContextSave& saved){
+    RestoreNativeSlotParticles(particles,resources,saved,particleCamera,particleEnvironment,opacityGroups);
+  };
   backend.SceneImages = &images;
   backend.CharacterPoses = &poses;
   backend.ApproachResourceBank = &approachAssets;
@@ -1198,9 +1203,10 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
   backend.ApproachConfig = ApproachGaugeEnvironment::Decode(SceneRead(root / "env/env_approach.dat"));
   backend.MusicResources = &music;
   backend.SeArchives = &sounds;
-  auto vm = completed ? VirtualMachine::FromCompletedProfile(resources,backend,std::move(owner),*completed)
+  auto vm = load ? VirtualMachine::FromNativeSlot(resources,backend,std::move(owner),*load,0)
+                      : completed ? VirtualMachine::FromCompletedProfile(resources,backend,std::move(owner),*completed)
                       : VirtualMachine::FromTitleNewGame(resources,backend,std::move(owner));
-  if(capture && !completed){
+  if(capture && !completed && !load){
     if(completed || vm->State().ScriptFileId!=0 || vm->State().CurrentCommandIndex!=0 ||
         vm->Opcode()!=0 || vm->Boundary()!=VmBoundary::BeforeStart)
       throw FormatError("PC title New Game did not enter the original script0");
@@ -1593,7 +1599,7 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
         ++capturePointerStage;
       }
     }
-    if (capture && captureAuto && firstMessage != UINT64_MAX && captureAutoStage < 2) {
+    if (capture && captureAuto && !load && firstMessage != UINT64_MAX && captureAutoStage < 2) {
       const uint64_t delay = captureAutoStage == 0 ? 96 : 1296;
       if (now - firstMessage >= delay) {
         SDL_Event synthetic{};
@@ -1982,6 +1988,12 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
         } else quit = true;
         break;
       }
+      if (step.Boundary == VmBoundary::SlotResourcesLoading || step.Boundary == VmBoundary::SlotFileReady ||
+          step.Boundary == VmBoundary::SlotDeferredStart) {
+        if(capture)events<<"{\"kind\":\"slot_load_boundary\",\"now\":"<<now<<",\"boundary\":"<<int(step.Boundary)
+          <<",\"script\":"<<step.Script<<",\"command\":"<<step.Command<<"}\n";
+        break; // Each deferred update belongs to a separate real frame.
+      }
       if (step.Boundary == VmBoundary::WaitingInput ||
           step.Boundary == VmBoundary::WaitingBackend) {
         if(captureMenuInput && !captureEnding && !menuMissionSent && step.Opcode==0x3f7 && step.Boundary==VmBoundary::WaitingInput)
@@ -1990,7 +2002,7 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
           resultConfirmationDue=true;
         if(capture && (captureWaitingInput || captureConfirmInput) && captureUntilMessage &&
             step.Script==captureScript && size_t(step.Command)==*captureUntilMessage &&
-            step.Boundary==VmBoundary::WaitingInput) {
+            (step.Boundary==VmBoundary::WaitingInput || (load && step.Opcode==0x64 && backend.CursorVisible()))) {
           targetWaitingReached=true;
           if(captureWaitingInput){targetCompleted=true;quit=true;}
           else if(!confirmSent){captureActive=true;confirmDue=true;}
@@ -4862,11 +4874,17 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
         if(captureContinue && title.Continue() && title.Continue()->State.Phase==4){
           ++continueStage;
           if(captureContinue==1){if(continueStage==8)key(SDLK_ESCAPE);}
-          else{
+          else if(captureContinue==2){
             if(continueStage==1 || continueStage==9 || continueStage==17 || continueStage==25)key(SDLK_DOWN);
             if(continueStage==34)mouse(0,70,520);
             if(continueStage==35)mouse(2,70,520);
           }
+          else if(captureContinue==3 && continueStage==8)key(SDLK_RETURN);
+        }
+        if(captureContinue==3 && title.Continue() && title.Continue()->Question().Visible &&
+            title.Continue()->Question().Phase==3){
+          if(title.Continue()->State.OperationPhase==1 && title.Continue()->Question().Selected!=1)key(SDLK_RIGHT);
+          else key(SDLK_RETURN);
         }
         if(captureOptions && title.Config()){
           auto& config=*title.Config();const auto& cs=config.State;
@@ -4999,7 +5017,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     }
     if(capture){
       trace.close();pcm.close();if(!trace || !pcm)throw FormatError("cannot save title trace/PCM");
-      if(captureContinue){
+      if(captureContinue && captureContinue!=3){
         const auto stored=ReadProgressStore(progressRoot);
         if(quit || title.RequestedScene || title.ContinueEntries!=1 || title.ContinueReturns!=1 || title.ContinueResult!=2 || !continueOpenImage || !title.ContinueDraws || !title.ContinueCards ||
            !stored || stored->Generation!=session.Generation || stored->Slots.Encode()!=initialSlotBytes || session.Slots.Encode()!=initialSlotBytes)
@@ -5011,6 +5029,15 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
           <<",\"escape_cancels\":"<<(captureContinue==1)<<",\"pointer_back\":"<<(captureContinue==2)
           <<",\"slots_unchanged\":true,\"save_generation_unchanged\":true,\"occupied_resume\":false,\"manual_acceptance\":false}\n";
         if(!report)throw FormatError("cannot save Continue report");
+      }else if(captureContinue==3){
+        const auto stored=ReadProgressStore(progressRoot);
+        if(quit || title.RequestedScene!=2 || !title.PendingLoad || title.ContinueResult!=3 || !stored ||
+           stored->Generation!=session.Generation || stored->Slots.Encode()!=initialSlotBytes || session.Slots.Encode()!=initialSlotBytes)
+          throw FormatError("Continue load missed pending handoff or changed source slots");
+        std::ofstream report(captureDirectory/"continue.json");
+        report<<"{\"passed\":true,\"occupied_resume\":true,\"selected\":"<<title.ContinueSelected
+          <<",\"script\":"<<title.PendingLoad->Context.File<<",\"command\":"<<title.PendingLoad->Context.ResumeCommand
+          <<",\"slots_unchanged\":true,\"save_generation_unchanged\":true,\"manual_acceptance\":false}\n";
       }else if(captureOptions){
         if(quit || title.RequestedScene || title.ConfigEntries!=1 || title.ConfigReturns!=1 || title.ConfigPreviews!=1 || !optionsOpenImage || !optionsQuestionImage || !optionsPreviewImage)
           throw FormatError("Options capture missed its live round trip");
@@ -5041,12 +5068,13 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
       report<<"{\"passed\":true,\"textures\":0,\"ui_playing\":false,\"voice_playing\":false}\n";
       report.close();if(!report)throw FormatError("cannot save title retirement report");
     }
-    if(quit || captureOptions || captureContinue)return 0;
+    if(quit || captureOptions || (captureContinue && captureContinue!=3))return 0;
     if(title.RequestedScene!=2)throw UnsupportedCommand("unknown PC title scene request");
     if(capture)std::filesystem::create_directory(captureDirectory/"entry");
     return RunScenarioScene(window,renderer,textures,font,resources,playback,music,sounds,std::move(*owner),nullptr,
-      usrdir,capture?captureDirectory/"entry":std::filesystem::path{},captureOpening,false,false,
-      {},{},{},false,false,capture?(captureOpening?18:17):0,{},progressRoot,&session.Slots);
+      usrdir,capture?captureDirectory/"entry":std::filesystem::path{},captureOpening || captureContinue==3,false,captureContinue==3,
+      captureContinue==3?std::optional<size_t>(size_t(title.PendingLoad->Context.ResumeCommand)):std::nullopt,{},{},captureContinue==3,false,
+      capture?(captureContinue==3?0:captureOpening?18:17):0,{},progressRoot,&session.Slots,title.PendingLoad.get());
   }catch(const std::exception& error){
     if(created){std::ofstream out(captureDirectory/"error.txt");out<<std::string(error.what()).substr(0,2048)<<'\n';}
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano title: %s",error.what());return 1;

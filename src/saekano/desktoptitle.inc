@@ -18,6 +18,7 @@ class PcTitleOwner final:public TitleServices {
   uint64_t Now=0;
   uint32_t MovieFlags=0;
   std::optional<int32_t> RequestedScene;
+  std::unique_ptr<NativePendingSlotLoad> PendingLoad;
   size_t Resets=0,HistoryClears=0;
   PcTitleOwner(SemanticState& owner,GameResources& resources,UiBlitRenderer& renderer,FontTextures& textures,PcFontFace& font,
       MusicPlayback& playback,ArchiveBgmResources& music,ArchiveSeResources& sounds,PlaybackTitleAudio& output,PlaybackVoiceAttenuation& attenuation,
@@ -117,6 +118,12 @@ class PcTitleOwner final:public TitleServices {
   void TickAmbient(uint64_t now)override{TickTitleAmbient(Visual,now);}
   void RequestScene(int32_t scene)override{
     if(RequestedScene)throw FormatError("title requested a second destination");
+    if(slot_ && slot_->Result==3){
+      if(scene!=2 || !slot_->PendingLoad)throw FormatError("Continue completed without pending scene data");
+      ContinueSelected=slot_->Browser.Rows.Selected;ContinueResult=slot_->Result;
+      ContinueDraws+=slot_->DrawFrames;ContinueCards+=slot_->CardCommands;
+      PendingLoad=std::move(slot_->PendingLoad);
+    }
     RequestedScene=scene;
   }
   void Update(uint64_t now){

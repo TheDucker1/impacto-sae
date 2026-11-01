@@ -27,6 +27,11 @@ class HeadlessBackend : public VmBackend {
   bool AutoAdvance = true;
   bool AutoAdvanceEnabled() const { return ScenePolicy?ScenePolicy->Auto:AutoAdvance; }
   std::function<void(bool)> ParticleReset;
+  std::function<void(const NativeContextSave&)> ParticleRestore;
+  void RestoreSavedParticles(const NativeContextSave& saved) override {
+    if (!ParticleRestore) throw UnsupportedCommand("saved particle restoration is unbound");
+    ParticleRestore(saved);
+  }
   std::function<void(const GameEvent&)> ParticleRequest;
   void ResetParticles(bool fresh) override { if (ParticleReset) ParticleReset(fresh); }
   bool StartParticleEffect(const GameEvent& event) override {

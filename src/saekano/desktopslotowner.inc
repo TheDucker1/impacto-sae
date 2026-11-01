@@ -9,6 +9,8 @@ class PcSlotOwner final:public SlotControllerServices {
   int32_t Result=0;
   bool BrowserUpdated=false;
   size_t DrawFrames=0,CardCommands=0,MarkerDraws=0,DialogBegins=0;
+  std::unique_ptr<NativePendingSlotLoad> PendingLoad;
+  const DialogState& Question() const { return question_; }
   PcSlotOwner(SemanticState& owner,GameResources& resources,UiBlitRenderer& renderer,
       FontTextures& textures,PcFontFace& font,PlaybackTitleAudio& audio,
       const std::filesystem::path& root,const std::filesystem::path& saveRoot,NativeSlotData& slots,
@@ -94,9 +96,8 @@ class PcSlotOwner final:public SlotControllerServices {
   }
   void RetireDialog()override{question_={};questionOwned_=false;}
   void StageSelectedLoad()override{
-    // Do not stage a partial scene or let the title treat it as loaded. The
-    // pending5e814 consumer must restore every live owner before enabling this.
-    throw UnsupportedCommand("occupied-slot scene restoration is not bound yet");
+    if(PendingLoad)throw FormatError("Continue staged a second slot load");
+    PendingLoad=StageNativeSlotLoad(slots_,size_t(Browser.Rows.Selected));
   }
   void BeginSlotSave()override{throw UnsupportedCommand("title Continue cannot create a scenario slot");}
   bool UpdateSlotSave()override{throw UnsupportedCommand("title Continue has no scenario save worker");}

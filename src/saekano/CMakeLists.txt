@@ -181,6 +181,8 @@ if(SAEKANO_CUBISM2_SDK_ROOT)
     target_link_libraries(saekano_scene_sdk_probe PRIVATE saekano_live2d_driver)
     add_executable(saekano_slot_model_restore_probe ../../tools/saekano/slot_model_restore_probe.cpp)
     target_link_libraries(saekano_slot_model_restore_probe PRIVATE saekano_live2d_driver)
+    add_executable(saekano_slot_vm_restore_probe ../../tools/saekano/slot_vm_restore_probe.cpp)
+    target_link_libraries(saekano_slot_vm_restore_probe PRIVATE saekano_live2d_driver)
 endif()
 
 add_executable(saekano_inspect inspect.cpp scenecontinuation.cpp)

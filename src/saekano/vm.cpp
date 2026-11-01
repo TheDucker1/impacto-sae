@@ -86,6 +86,34 @@ std::unique_ptr<VirtualMachine> VirtualMachine::FromTitleNewGame(
   return std::unique_ptr<VirtualMachine>(new VirtualMachine(scripts,backend,std::move(owner),messageContext,true));
 }
 
+std::unique_ptr<VirtualMachine> VirtualMachine::FromNativeSlot(
+    ScriptSource& scripts, VmBackend& backend, SemanticState owner,
+    const NativePendingSlotLoad& pending, uint64_t now,
+    MessageRuntimeContext messageContext) {
+  if (!backend.Images() || !backend.Poses() || !backend.Models())
+    throw UnsupportedCommand("slot load needs image, pose and model resource owners");
+  owner.ScriptFileId = pending.Context.File;
+  owner.CurrentCommandIndex = pending.Context.ResumeCommand;
+  owner.PendingCommandIndex = -1; owner.PendingFileId = -2;
+  owner.LaneCommandIndex.fill(-1); owner.FirstAsyncCommandIndex = -1;
+  auto vm = std::unique_ptr<VirtualMachine>(new VirtualMachine(
+      scripts, backend, std::move(owner), messageContext, true));
+  ApplyNativeSlotWorkingOwner(vm->state_, pending);
+  QueueNativeSlotLoadStops(vm->state_);
+  auto restore = std::make_unique<SlotRestore>();
+  restore->Saved = pending.Context;
+  vm->state_.SceneImages = RestoreSceneImages(pending.Context.Images, *backend.Images());
+  RestoreNativeCharacters(vm->state_, pending.Context.Characters, now);
+  // The character-prefix consumer replaces its shared owner. Apply the later
+  // saved maximum-priority field after that replacement, as801a3730 does.
+  ApplyNativeSlotContextValues(vm->state_, vm->messageContext_, pending);
+  BeginNativeCharacterPoseRestore(vm->state_, *backend.Poses(), restore->Poses);
+  BeginNativeRuleWipeRestore(vm->state_, pending.Context, *backend.Images(), restore->Rule);
+  vm->slotRestore_ = std::move(restore);
+  vm->boundary_ = VmBoundary::SlotResourcesLoading;
+  return vm;
+}
+
 void VirtualMachine::Load(bool preserveOwnerState) {
   script_ = std::make_unique<ScriptObject>(scripts_.Load(state_.ScriptFileId));
   if (state_.CurrentCommandIndex < 0 ||
@@ -320,7 +348,7 @@ void VirtualMachine::SetGauge(bool battle, int32_t value) {
 }
 void VirtualMachine::SeedRandom(uint32_t seed) {
   if (boundary_ != VmBoundary::BeforeStart && boundary_ != VmBoundary::FileLoadedBeforeStart &&
-      boundary_ != VmBoundary::ProfileDestinationLoaded)
+      boundary_ != VmBoundary::ProfileDestinationLoaded && boundary_ != VmBoundary::SlotResourcesLoading)
     throw std::runtime_error("random initialization must precede Start");
   state_.Random.Seed(seed);
 }
@@ -836,6 +864,32 @@ void VirtualMachine::UpdateLanes(uint64_t now) {
 
 VmEvent VirtualMachine::Step(uint64_t now, const CommandInput& input) {
   try {
+    if (slotRestore_) {
+      auto& restore = *slotRestore_;
+      if (!restore.FileReady) {
+        auto& images = *backend_.Images();
+        PollSceneImages(state_.SceneImages, images);
+        const bool posesReady = PollNativeCharacterPoseRestore(state_, *backend_.Poses(), restore.Poses);
+        const bool ruleReady = PollNativeRuleWipeRestore(images, restore.Rule);
+        if (!images.Ready() || !posesReady || !ruleReady || !backend_.Models()->GateReady())
+          return Event(VmBoundary::SlotResourcesLoading);
+        RestoreNativeSlotModels(state_, restore.Saved, *backend_.Models(), now);
+        backend_.RestoreSavedParticles(restore.Saved);
+        restore.FileReady = true;
+        boundary_ = VmBoundary::SlotFileReady;
+        return Event(boundary_); // Original wrapper FILE_READY precedes deferred update1.
+      }
+      if (!StepNativeSlotDeferredStart(state_, restore.Deferred, true,
+                                       backend_.Music(), backend_.SoundEffects())) {
+        boundary_ = VmBoundary::SlotDeferredStart;
+        return Event(boundary_);
+      }
+      slotRestore_.reset();
+      Start(size_t(state_.CurrentCommandIndex), now, false);
+      boundary_ = VmBoundary::CommandStarted;
+      if (Opcode() == 0x64) UpdateLanes(now);
+      return FrameEvent(boundary_, now);
+    }
     if (boundary_ == VmBoundary::Ended) return FrameEvent(boundary_, now);
     // Profile owns the outer loop, not a completed script command. Native
     // outer80030ba2 replaces the manager without dispatching3ed's successor.

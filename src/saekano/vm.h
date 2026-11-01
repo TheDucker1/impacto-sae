@@ -2,6 +2,7 @@
 
 #include "flow.h"
 #include "profilemode.h"
+#include "slotrestore.h"
 
 #include <memory>
 
@@ -34,6 +35,9 @@ class VmBackend {
  public:
   virtual ~VmBackend() = default;
   virtual void ResetParticles(bool) {}
+  virtual void RestoreSavedParticles(const NativeContextSave&) {
+    throw UnsupportedCommand("backend does not restore saved particle descriptors");
+  }
   virtual bool StartParticleEffect(const GameEvent&) { return false; }
   virtual void SetSplitDialogue(bool) {}
   virtual void SetMessageDualCleanup(bool) {}
@@ -85,7 +89,8 @@ class VmBackend {
 
 enum class VmBoundary {
   BeforeStart, CommandStarted, WaitingInput, WaitingBackend,
-  CommandCompletedBeforeDispatch, FileLoadedBeforeStart, ProfileDestinationLoaded, Ended
+  CommandCompletedBeforeDispatch, FileLoadedBeforeStart, ProfileDestinationLoaded, Ended,
+  SlotResourcesLoading, SlotFileReady, SlotDeferredStart
 };
 struct VmEvent {
   VmBoundary Boundary;
@@ -106,6 +111,12 @@ class VirtualMachine {
   static std::unique_ptr<VirtualMachine> FromTitleNewGame(
       ScriptSource& scripts,VmBackend& backend,SemanticState owner,
       MessageRuntimeContext messageContext={});
+  // Full native slot: fresh manager/load callbacks, saved working/context state,
+  // original resource reconstruction, then the deferred twelve-update Start.
+  static std::unique_ptr<VirtualMachine> FromNativeSlot(
+      ScriptSource& scripts, VmBackend& backend, SemanticState owner,
+      const NativePendingSlotLoad& pending, uint64_t now,
+      MessageRuntimeContext messageContext = {});
   // Outer-loop frontend handoff after a standalone ProfileMode completes.
   // Uses the same fresh-manager reset as the opcode3ed owning path. Destination
   // is derived from the completed mode; callers retain their audio/backend
@@ -212,6 +223,14 @@ class VirtualMachine {
   std::unique_ptr<ProfileMode> profile_;
   std::map<uint16_t, CharacterBlink> spriteBlinks_;
   bool freshSpriteFrames_ = false;
+  struct SlotRestore {
+    NativeContextSave Saved;
+    NativeCharacterPoseRestore Poses;
+    NativeRuleWipeRestore Rule;
+    NativeSlotDeferredStart Deferred;
+    bool FileReady = false;
+  };
+  std::unique_ptr<SlotRestore> slotRestore_;
   void Load(bool preserveOwnerState);
   void Start(size_t index, uint64_t now, bool lane);
   bool Update(size_t index, uint64_t now, const CommandInput& input, bool lane);
