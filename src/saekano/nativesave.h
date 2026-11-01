@@ -50,6 +50,11 @@ struct NativeContextSave {
 // unused padding is not serialized state. No captured used/count is required.
 // Resource reconstruction and binding to scene owners remain separate steps.
 NativeContextSave DecodeNativeContextSave(std::span<const uint8_t> bytes);
+// Emit the native80195ac0 stream from owned values, without source-byte reuse.
+// EndOffset/TableOffset/ResumeCommand are decoder metadata and are recomputed
+// on read. Slot padding is the containing owner's responsibility. Throws if
+// fields are missing/duplicated or the native4096-byte context capacity is hit.
+Bytes EncodeNativeContextSave(const NativeContextSave& saved);
 
 // Decode only the proven serializer tail (80195ac0). 'used' comes from the
 // native stream metadata and 'count' from an independently captured vector.

@@ -4,9 +4,130 @@
 
 #include <bit>
 #include <cmath>
+#include <map>
 #include <set>
 
 namespace Impacto::Saekano {
+Bytes EncodeNativeContextSave(const NativeContextSave& saved) {
+  Bytes result;
+  auto write = [&](uint32_t value, size_t width = 4) {
+    if (result.size() + width > 4096)
+      throw FormatError("native saved context exceeds4096-byte capacity");
+    for (size_t i = 0; i < width; ++i)
+      result.push_back(uint8_t(value >> (8 * i)));
+  };
+  auto count = [&](size_t value) {
+    if (value > 4096)
+      throw FormatError("native saved context count exceeds capacity");
+    write(uint32_t(value));
+  };
+  std::map<uint32_t, NativeSavedContextField> fields;
+  for (const auto& field : saved.Fields) {
+    if ((field.Width != 1 && field.Width != 2 && field.Width != 4) ||
+        (field.Width < 4 && field.Value >= (uint32_t(1) << (field.Width * 8))) ||
+        !fields.emplace(field.ManagerOffset, field).second)
+      throw FormatError("invalid or duplicate native saved context field");
+  }
+  auto field = [&](uint32_t offset, uint8_t width = 4) {
+    const auto found = fields.find(offset);
+    if (found == fields.end() || found->second.Width != width)
+      throw FormatError("missing or incorrectly sized native saved context field");
+    const auto value = found->second.Value;
+    fields.erase(found);
+    return value;
+  };
+  auto emitField = [&](uint32_t offset, uint8_t width = 4) {
+    write(field(offset, width), width);
+  };
+  auto color = [&](uint32_t offset) {
+    const auto red = field(offset, 1), green = field(offset + 1, 1);
+    const auto blue = field(offset + 2, 1), alpha = field(offset + 3, 1);
+    write((alpha << 24) | (red << 16) | (green << 8) | blue);
+  };
+  for (const auto& rect : saved.Images.FillRects) {
+    write(rect.PackedColor);
+    write(uint32_t(rect.Opacity));
+    write(rect.Bucket);
+  }
+  for (const auto& group : saved.Images.FloatSlots)
+    for (const auto& slot : group) {
+      write(slot.Flag, 1);
+      write(uint16_t(slot.Texture), 2);
+      for (auto value : slot.Parameters) write(value, 1);
+      for (auto value : slot.Words) write(value);
+    }
+  for (const auto& slot : saved.Images.IntegerSlots) {
+    write(slot.Flag, 1);
+    for (auto value : slot.GeometryAndTexture) write(uint16_t(value), 2);
+    write(slot.Parameter4, 1);
+    write(uint16_t(slot.Parameter5), 2);
+    write(slot.Parameter6, 1);
+    for (auto value : slot.Words) write(value);
+  }
+  for (const auto& references : saved.Images.TextureReferences) {
+    count(references.size());
+    for (auto value : references) write(value);
+  }
+  write(uint32_t(saved.SavedCommand));
+  write(uint32_t(saved.File));
+  write(uint32_t(saved.SavedNextCommand));
+  emitField(0x1c54, 1);
+  count(saved.Shorts.size());
+  for (auto value : saved.Shorts) write(value, 2);
+  for (uint32_t offset : {0x15ac, 0x15b0, 0x15b4, 0x15b8, 0x15bc})
+    emitField(offset);
+  count(saved.Characters.Records.size());
+  std::set<uint16_t> characterIds;
+  for (const auto& actor : saved.Characters.Records) {
+    if (!characterIds.insert(actor.Id).second)
+      throw FormatError("duplicate native saved character ID");
+    write(1, 1);
+    write(actor.Id, 2);
+    for (auto value : actor.Fields) write(uint32_t(value));
+    write(actor.PackedColor);
+  }
+  write(saved.Characters.DefaultColor);
+  for (uint32_t offset : {0x20b4, 0x20c0, 0x20b8, 0x20c8,
+                          0x20cc, 0x20c4, 0x20bc}) emitField(offset);
+  count(saved.StringCodeUnits.size());
+  for (auto value : saved.StringCodeUnits) write(value, 2);
+  emitField(0x1b9e, 2);
+  count(saved.List.size());
+  for (const auto& row : saved.List)
+    for (auto value : row) write(value);
+  emitField(0x20d8);
+  color(0x1c6c);
+  emitField(0x1c64);
+  emitField(0x1c68);
+  emitField(0x1c60, 1);
+  emitField(0x14518);
+  count(saved.FixedRecords.size());
+  for (const auto& row : saved.FixedRecords)
+    for (auto value : row) write(value);
+  emitField(0x150c);
+  emitField(0x1bf1, 1);
+  for (uint32_t offset : {0x1c00, 0x1bfc, 0x1c04, 0x1c10}) emitField(offset);
+  color(0x1c18);
+  count(saved.Models.Records.size());
+  for (const auto& model : saved.Models.Records) {
+    write(uint32_t(model.LogicalId));
+    write(uint32_t(model.ResourceId));
+    for (auto value : model.PositionBits) write(value);
+    for (auto value : model.ScaleBits) write(value);
+    write(model.EnabledByte, 1);
+    write((uint32_t(model.Color[3]) << 24) |
+          (uint32_t(model.Color[0]) << 16) |
+          (uint32_t(model.Color[1]) << 8) | model.Color[2]);
+    write(model.Opaque20);
+    write(uint32_t(model.AnimationIndex));
+    write(model.Opaque28);
+    write(uint16_t(model.Pose), 2);
+  }
+  for (auto value : saved.Models.FinalWords) write(value);
+  if (!fields.empty())
+    throw FormatError("unexpected native saved context field");
+  return result;
+}
 NativeContextSave DecodeNativeContextSave(std::span<const uint8_t> bytes) {
   NativeContextSave result;
   result.Images = DecodeNativeImageSavePrefix(bytes);
