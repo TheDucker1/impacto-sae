@@ -127,6 +127,10 @@ class VirtualMachine {
   static std::unique_ptr<VirtualMachine> FromTitleNewGame(
       ScriptSource& scripts,VmBackend& backend,SemanticState owner,
       MessageRuntimeContext messageContext={});
+  // Native replay creates/binds a fresh manager and loads its selected original
+  // script at command0. Persistent owner state survives; keywords are suppressed.
+  static std::unique_ptr<VirtualMachine> FromExtrasReplay(
+      ScriptSource& scripts,VmBackend& backend,SemanticState owner,int32_t script);
   // Full native slot: fresh manager/load callbacks, saved working/context state,
   // original resource reconstruction, then the deferred twelve-update Start.
   static std::unique_ptr<VirtualMachine> FromNativeSlot(

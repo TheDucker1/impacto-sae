@@ -66,6 +66,7 @@ AlbumConfiguration LoadAlbumConfiguration(Bytes firstDat,
 struct ExtrasScreenEnvironment {
   struct MusicTrack {int32_t Flags=0,Wave=0,History=0,DurationSeconds=0;std::u16string Title;};
   struct Movie {std::u16string Name,Title;};
+  struct BattleReplay {std::array<std::u16string,4> Text;};
   AlbumEnvironment Common;
   std::map<uint16_t,uint32_t> Scalars;
   std::map<uint16_t,std::array<int32_t,2>> Points;
@@ -76,8 +77,14 @@ struct ExtrasScreenEnvironment {
   std::vector<std::array<int32_t,4>> AlbumRectangles;
   std::vector<MusicTrack> MusicTracks;
   std::vector<Movie> Movies;
+  std::vector<std::array<int32_t,4>> BattleRectangles;
+  std::vector<BattleReplay> BattleReplays;
   size_t PrefixBytes=0;
   // Reader801d1522..1e0a, through movie preview animation period dad0.
   static ExtrasScreenEnvironment DecodeThroughMovies(std::span<const uint8_t> bytes);
+  static ExtrasScreenEnvironment DecodeThroughBattle(std::span<const uint8_t> bytes);
 };
+// Native489f6 reads resource.dat/2/2/0/0 CSV, skipping // rows and retaining
+// each accepted row's second token in authored order.
+std::vector<std::string> DecodeBattleReplayScripts(std::span<const uint8_t> text);
 }  // namespace Impacto::Saekano

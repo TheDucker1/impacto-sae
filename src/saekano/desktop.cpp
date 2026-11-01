@@ -1129,6 +1129,7 @@ struct ScenarioSceneTransfer {
   std::unique_ptr<NativePendingSlotLoad> Load;
   std::unique_ptr<SemanticState> Owner;
   bool Title=false;
+  bool Replay=false;
 };
 int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
                       FontTextures& fontTextures, PcFontFace& font,
@@ -1146,8 +1147,9 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
                       const std::filesystem::path& capturePlan = {},
                       const std::filesystem::path& progressRoot = {},NativeSlotData* slotProgress=nullptr,
                       const NativePendingSlotLoad* load=nullptr,uint8_t captureOrdinaryChoice=0,
-                      ScenarioSceneTransfer* transfer=nullptr) {
+                      ScenarioSceneTransfer* transfer=nullptr,std::optional<int32_t> replayScript={}) {
   const bool capture = !captureDirectory.empty();
+  if(replayScript && (!transfer || completed || load || capture))throw FormatError("replay requires its own live manager/return owner");
   PcSceneThumbnail sceneThumbnail;
   const bool captureEnding=captureMenuInput==16;
   const bool captureScenarioMenu=captureMenuInput>=19 && captureMenuInput<=21;
@@ -1302,7 +1304,8 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
   backend.ApproachConfig = ApproachGaugeEnvironment::Decode(SceneRead(root / "env/env_approach.dat"));
   backend.MusicResources = &music;
   backend.SeArchives = &sounds;
-  auto vm = load ? VirtualMachine::FromNativeSlot(resources,backend,std::move(owner),*load,0)
+  auto vm = replayScript ? VirtualMachine::FromExtrasReplay(resources,backend,std::move(owner),*replayScript)
+                      : load ? VirtualMachine::FromNativeSlot(resources,backend,std::move(owner),*load,0)
                       : completed ? VirtualMachine::FromCompletedProfile(resources,backend,std::move(owner),*completed)
                       : VirtualMachine::FromTitleNewGame(resources,backend,std::move(owner));
   if(capture && !completed && !load){
@@ -1756,6 +1759,11 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
     }
     while (SDL_PollEvent(&event)) {
       if(modalOwned()){handleModalEvent(event);continue;}
+      if(replayScript &&
+          ((event.type==SDL_EVENT_KEY_DOWN && event.key.key==SDLK_ESCAPE && !event.key.repeat) ||
+           event.type==SDL_EVENT_GAMEPAD_BUTTON_DOWN && event.gbutton.button==SDL_GAMEPAD_BUTTON_START)){
+        replayInterrupt=true;continue;
+      }
       if(!endingState.Started && !vm->CurrentProfile() &&
           !vm->State().ApproachSelection.Visible && !vm->State().OrdinaryChoice.Visible &&
           ((event.type==SDL_EVENT_KEY_DOWN && event.key.key==SDLK_ESCAPE && !event.key.repeat) ||
@@ -1849,6 +1857,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       }
     }
     if (quit) break;
+    if(replayScript && requestSystemMenu){replayInterrupt=true;requestSystemMenu=false;}
     if(requestSystemMenu && !endingState.Started && !vm->CurrentProfile() &&
         !vm->State().OrdinaryChoice.Visible && sceneThumbnail.Ready()) {
       const auto& s=vm->State();
@@ -2232,10 +2241,22 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
         break;
       }
       if (step.Boundary == VmBoundary::Ended) {
-        StartScenarioEnding(endingState);updateEnding(now);break;
+        if(replayScript){transfer->Replay=true;quit=true;}
+        else {StartScenarioEnding(endingState);updateEnding(now);}
+        break;
       }
       if (work == 255)
         throw UnsupportedCommand("scene per-frame command budget exceeded");
+    }
+    // Native49122 checks the queued interruption after updating the manager,
+    // using that update's menu-blocking gate. A completed manager wins.
+    if(replayInterrupt && !quit && !vm->State().ScenarioMenuBlocked){
+      const auto count=endingLayer.Environment.ButtonGroups.at(1).size();
+      if(count!=2)throw FormatError("replay interruption requires the authored two-button group");
+      replayQuestionLayout=endingLayer.Layout(replayQuestionPrompt,count);
+      BeginDialog(replayQuestion,replayQuestionLayout,count,0,true,true,now);
+      UpdateDialog(replayQuestion,{},now);
+      replayInterrupt=false;sceneInput.CancelPointer();
     }
     if(capture && captureActive)for(const auto& requestLog:particleRequests) {
       events << "{\"kind\":\"particle_request\",\"now\":" << now << ",\"id\":" << requestLog.Id
@@ -2716,6 +2737,10 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       if(endingHost.Modal.Visible)endingLayer.Draw(endingHost.Modal,endingHost.Prompt(),endingLayout,1);
       if(saveHost && saveHost->Modal.Visible)endingLayer.Draw(saveHost->Modal,saveHost->Prompt(),saveHost->Layout(),0);
     }
+    if(replayQuestion.Visible){
+      endingLayer.Draw(replayQuestion,replayQuestionPrompt,replayQuestionLayout,1,{255,255,255,90});
+      replayQuestionContacts.Latch(replayQuestion,replayQuestionLayout,endingLayer.Environment);
+    }
     GlCheck("first scene composition");
     std::string signature = std::to_string(message->Reveal.Revealed) + ':' +
                             std::to_string(backend.CursorVisible()) + ':' +
@@ -3032,6 +3057,11 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
     if (!capture) SDL_Delay(16);
     else if(endingState.Started)SDL_Delay(1);
   }
+  if(replayScript && transfer->Replay){
+    vm->State().SystemProgress=SnapshotSystemOwner(vm->State(),registeredHistory);
+    transfer->Owner=std::make_unique<SemanticState>(std::move(vm->State()));
+    return 0;
+  }
   if(transfer && (transfer->Load || transfer->Title))return 0;
   if(captureEnding) {
     if(!titleRequested || !endingProbeStarted || !saveConfirmInjected)throw FormatError("ending UI component capture did not finish");
@@ -3067,7 +3097,7 @@ int RunScenarioScene(ViewerWindow& window,UiBlitRenderer& renderer,
     bool captureConfirmInput=false,int32_t captureMenuInput=0,const std::filesystem::path& capturePlan={},
     const std::filesystem::path& progressRoot={},NativeSlotData* slotProgress=nullptr,
     const NativePendingSlotLoad* load=nullptr,uint8_t captureOrdinaryChoice=0,
-    std::unique_ptr<SemanticState>* returnedTitle=nullptr) {
+    std::unique_ptr<SemanticState>* returnedTitle=nullptr,std::optional<int32_t> replayScript={}) {
   auto live=std::make_unique<SemanticState>(std::move(owner));
   std::unique_ptr<NativePendingSlotLoad> pending;
   auto output=captureDirectory;
@@ -3080,16 +3110,16 @@ int RunScenarioScene(ViewerWindow& window,UiBlitRenderer& renderer,
       playback,music,sounds,std::move(*live),completed,root,output,captureAuto,
       captureButtonAuto,captureVoiced,captureUntilMessage,captureFromCommand,
       captureScriptOverride,captureWaitingInput,captureConfirmInput,captureMenuInput,
-      capturePlan,progressRoot,slotProgress,load,captureOrdinaryChoice,&next);
+      capturePlan,progressRoot,slotProgress,load,captureOrdinaryChoice,&next,replayScript);
     // The old scope (including modal/model/movie consumers) has retired. Remove
     // only its shared-renderer uploads; borrowed textures belong to the caller.
     for(auto it=renderer.Textures.begin();it!=renderer.Textures.end();) {
       if(!borrowedTextures.contains(it->first)){glDeleteTextures(1,&it->second.Handle);it=renderer.Textures.erase(it);}
       else ++it;
     }
-    if(next.Title) {
+    if(next.Title || next.Replay) {
       if(!returnedTitle || !next.Owner)throw UnsupportedCommand("scenario title request has no outer scene owner");
-      // CMain26c3e..26ca8 deletes the old scene before title construction.
+      // CMain and Extras both retire the manager before returning its owner.
       playback.StopAllChannels();
       next.Owner->SceneImages={}; // Its scene driver has just been destroyed.
       *returnedTitle=std::move(next.Owner);return result;
@@ -5141,7 +5171,7 @@ int RunMovieInfoProbe(const std::filesystem::path& path,const std::filesystem::p
   }
 }
 int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::path& requestedProgressRoot,
-    const std::filesystem::path& requestedCaptureDirectory,bool capturePointer,bool captureOpening,uint8_t captureMovie,uint8_t captureOptions,uint8_t captureContinue,uint8_t captureScenarioMenu){
+    const std::filesystem::path& requestedCaptureDirectory,bool capturePointer,bool captureOpening,uint8_t captureMovie,uint8_t captureOptions,uint8_t captureContinue,uint8_t captureScenarioMenu,std::optional<size_t> replayRow){
   auto captureDirectory=requestedCaptureDirectory;
   bool created=false;
   try{
@@ -5186,6 +5216,26 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     PlaybackTitleAudio audio(playback,systemSounds,ProfileVoiceGain(progress.Bytes6022c[10],1.0f),ProfileVoiceGain(progress.Bytes6022c[9],1.0f));
     audio.BindVoiceAttenuation(attenuation,audioClock);
     PcMovieFrameLayer movieFrame;MoviePlayback movie;movie.Present=[&](const AVFrame* frame,int64_t pts){movieFrame.Present(frame,pts);};
+    if(replayRow){
+      if(capture)throw FormatError("live battle replay cannot use title capture controls");
+      const auto gallery=ExtrasScreenEnvironment::DecodeThroughBattle(SceneRead(usrdir/"env/env_omake.dat"));
+      const auto names=DecodeBattleReplayScripts(resources.LoadExtrasBattleScripts().Data);
+      if(names.size()!=gallery.BattleReplays.size() || *replayRow>=names.size())throw FormatError("battle replay row outside authored catalogue");
+      const auto status=ExactMusicStatus(owner->BattleHistory,*replayRow);
+      if(status!=1 && status!=2 && status!=3)throw UnsupportedCommand("battle replay is locked in this system save");
+      ResetTitleSession(*owner,seeds);
+      if(status==1){
+        auto& h=owner->BattleHistory;if(*replayRow>=h.Entries.size())h.Entries.resize(*replayRow+1,h.Default);
+        h.Entries[*replayRow]=int32_t(3);
+      }
+      const auto script=ScriptNameIndex::FromFirstArchive(first).Resolve(names[*replayRow]);
+      std::unique_ptr<SemanticState> returned;
+      // Direct developer entry uses the actual scenario owner. The gallery
+      // will use this return path before its own save question and fade-in.
+      return RunScenarioScene(window,renderer,textures,font,resources,playback,music,sounds,
+          std::move(*owner),nullptr,usrdir,{},false,false,false,{},{},{},false,false,0,{},
+          progressRoot,&session.Slots,nullptr,0,&returned,script);
+    }
     uint32_t titleVisits=0;
     std::optional<Bytes> returnedSystemExpected;
     for(;;) {

@@ -83,7 +83,7 @@ Bytes InflateGzip(std::span<const uint8_t> input, size_t outputLimit) {
 }
 
 struct GameResources::FrontendAssets {
-  std::optional<GpdaArchive> TitleUi,SystemUi,SystemVoices,MovieThumbnails,CgThumbnails,CgCatalogue;
+  std::optional<GpdaArchive> TitleUi,SystemUi,SystemVoices,MovieThumbnails,CgThumbnails,CgCatalogue,BattleReplayScripts;
 };
 GameResources::GameResources(Bytes resourceDat)
     : GameResources(GpdaArchive(std::move(resourceDat))) {}
@@ -103,6 +103,10 @@ GameResources::GameResources(const GpdaArchive& root)
     if(extras.Entries().size()>1){
       const GpdaArchive movies(RawEntry(extras,1));
       if(movies.Entries().size()>1)frontend->MovieThumbnails.emplace(RawEntry(movies,1));
+    }
+    if(extras.Entries().size()>2){
+      const GpdaArchive battle(RawEntry(extras,2));
+      if(!battle.Entries().empty())frontend->BattleReplayScripts.emplace(RawEntry(battle,0));
     }
   }
   if(root.Entries().size()>15)frontend->TitleUi.emplace(ResourceSection(root,15));
@@ -155,6 +159,10 @@ ResourceAsset GameResources::LoadExtrasCgCatalogue()const{
   return {frontend_->CgCatalogue->Entries()[0].Name,RawEntry(*frontend_->CgCatalogue,0)};
 }
 size_t GameResources::SystemVoiceBankCount()const{return frontend_->SystemVoices?frontend_->SystemVoices->Entries().size():0;}
+ResourceAsset GameResources::LoadExtrasBattleScripts()const{
+  if(!frontend_->BattleReplayScripts || frontend_->BattleReplayScripts->Entries().empty())throw FormatError("battle replay script list is missing");
+  return {frontend_->BattleReplayScripts->Entries()[0].Name,RawEntry(*frontend_->BattleReplayScripts,0)};
+}
 size_t GameResources::SystemVoiceCount(size_t bank)const{
   if(bank>=SystemVoiceBankCount())throw FormatError("system voice bank outside original archive");
   return GpdaArchive(RawEntry(*frontend_->SystemVoices,bank)).Entries().size();

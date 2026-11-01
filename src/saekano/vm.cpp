@@ -85,6 +85,15 @@ std::unique_ptr<VirtualMachine> VirtualMachine::FromCompletedProfile(
   vm->boundary_ = VmBoundary::ProfileDestinationLoaded;
   return vm;
 }
+std::unique_ptr<VirtualMachine> VirtualMachine::FromExtrasReplay(
+    ScriptSource& scripts,VmBackend& backend,SemanticState owner,int32_t script){
+  if(script<0)throw FormatError("negative replay script index");
+  owner.ScriptFileId=script;owner.CurrentCommandIndex=0;
+  owner.PendingCommandIndex=-1;owner.PendingFileId=-2;
+  owner.LaneCommandIndex.fill(-1);owner.FirstAsyncCommandIndex=-1;
+  MessageRuntimeContext context;context.KeywordSuppressed=true;
+  return std::unique_ptr<VirtualMachine>(new VirtualMachine(scripts,backend,std::move(owner),context,true));
+}
 std::unique_ptr<VirtualMachine> VirtualMachine::FromTitleNewGame(
     ScriptSource& scripts,VmBackend& backend,SemanticState owner,MessageRuntimeContext messageContext){
   if(!owner.TitleSession || !owner.LastBackgroundId || *owner.LastBackgroundId!=-1)

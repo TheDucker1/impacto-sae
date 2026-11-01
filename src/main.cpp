@@ -331,6 +331,12 @@ int main(int argc, char* argv[]) {
   if(argc==5 && std::string_view(argv[1])=="--saekano-movie-session")return Saekano::RunMoviePlaybackSession(argv[2],argv[4],uint32_t(std::stoul(argv[3])));
   if(argc==4 && std::string_view(argv[1])=="--saekano-movie-controls-session")return Saekano::RunMoviePlaybackSession(argv[2],argv[3],44,true);
   if(argc>=3 && std::string_view(argv[1])=="--saekano-play"){
+    if((argc==5 || (argc==7 && std::string_view(argv[5])=="--save-dir")) && std::string_view(argv[3])=="--replay-battle"){
+      uint32_t row=0;const std::string_view text(argv[4]);
+      const auto parsed=std::from_chars(text.data(),text.data()+text.size(),row);
+      if(parsed.ec!=std::errc{} || parsed.ptr!=text.data()+text.size())return 1;
+      return Saekano::RunTitleScene(argv[2],argc==7?argv[6]:"",{},false,false,0,0,0,0,size_t(row));
+    }
     if(argc==7 && std::string_view(argv[3])=="--capture-continue-load" && std::string_view(argv[5])=="--save-dir")
       return Saekano::RunTitleScene(argv[2],argv[6],argv[4],false,false,0,0,3);
     if(argc==7 && std::string_view(argv[3])=="--capture-continue-choice" && std::string_view(argv[5])=="--save-dir")

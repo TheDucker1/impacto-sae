@@ -14,6 +14,18 @@ bool requestSystemMenu=false;
 bool captureBacklogImage=false;
 bool returningTitle=false;
 TitleTween titleReturnFade;
+DialogState replayQuestion;
+DialogContentLayout replayQuestionLayout;
+PcDialogContacts replayQuestionContacts;
+TitleTween replayReturnFade;
+bool replayInterrupt=false,returningReplay=false;
+std::u16string replayQuestionPrompt;
+int32_t replayFadeDuration=0;
+if(replayScript){
+  const auto replayEnv=ExtrasScreenEnvironment::DecodeThroughBattle(SceneRead(root/"env/env_omake.dat"));
+  replayQuestionPrompt=replayEnv.Strings.at(0xde98);replayFadeDuration=replayEnv.Common.FadeDuration;
+  if(replayFadeDuration<0)throw FormatError("negative replay return fade duration");
+}
 const auto beginReturnTitle=[&](uint64_t now,bool alreadyOpaque=false) {
   if(returningTitle)return;
   returningTitle=true;
@@ -36,7 +48,7 @@ scenarioUiAudio.BindVoiceAttenuation(scenarioAttenuation,scenarioAudioClock);
 const SavePreviewFormatter scenarioSaveFormatter{format,font.Cached(),metrics,
     uint32_t(utility.Size),font.NominalSize(),SavePreviewSettings::FromSlotEnvironment(
       SlotEnvironment::Decode(SceneRead(root/"env/env_saveload.dat")))};
-const auto modalOwned=[&]{return bool(systemMenu || scenarioSlots || scenarioOptions || scenarioBacklog || returningTitle);};
+const auto modalOwned=[&]{return bool(systemMenu || scenarioSlots || scenarioOptions || scenarioBacklog || returningTitle || replayQuestion.Visible || returningReplay);};
 const auto openSystemMenu=[&] {
   if(!slotProgress || progressRoot.empty())throw UnsupportedCommand("scenario menu needs a writable session owner");
   systemMenu=std::make_unique<PcSystemMenuOwner>(vm->State(),resources,renderer,
@@ -122,6 +134,7 @@ const auto handleModalEvent=[&](const SDL_Event& e) {
     if(systemMenu)systemMenu->CancelPointer();if(scenarioSlots)scenarioSlots->CancelPointer();
     if(scenarioOptions)scenarioOptions->CancelPointer();
     if(scenarioBacklog)scenarioBacklog->CancelPointer();
+    if(replayQuestion.Visible)replayQuestionContacts.CancelPointer();
   }
 };
 const auto updateScenarioModal=[&](uint64_t now) {
@@ -133,7 +146,19 @@ const auto updateScenarioModal=[&](uint64_t now) {
   scenarioSlotInput.Vertical.Held=modalVertical;scenarioOptionsInput.Vertical.Held=modalVertical;
   scenarioOptionsInput.HorizontalHeld=modalHorizontal;
   scenarioBacklogInput.Vertical.Held=modalVertical;
-  if(systemMenu) {
+  if(replayQuestion.Visible){
+    replayQuestionContacts.BeginFrame(contacts);
+    auto input=scenarioModalInput;
+    input.CollectActivations=[&]{return replayQuestionContacts.Collect(replayQuestion,endingLayer.Environment,inputEnvironment.HoldFrames,now);};
+    UpdateDialog(replayQuestion,input,now);
+    for(const auto id:replayQuestion.UiSounds)scenarioUiAudio.PlayUi(id);
+    if(!replayQuestion.Visible){
+      replayQuestionContacts.CancelPointer();sceneInput.CancelPointer();
+      if(!replayQuestion.Canceled && replayQuestion.Result==1){
+        returningReplay=true;replayReturnFade.Configure(0,255,uint32_t(replayFadeDuration),true,now);
+      }
+    }
+  }else if(systemMenu) {
     systemMenu->BeginFrame(contacts,scenarioModalInput,now);
     const auto action=systemMenu->Update(systemMenuInput);
     if(action) {
@@ -195,6 +220,10 @@ const auto updateScenarioModal=[&](uint64_t now) {
       transfer->Title=true;quit=true;return;
     }
   }
+  if(returningReplay){
+    replayReturnFade.Tick(now);
+    if(replayReturnFade.Finished()){transfer->Replay=true;quit=true;return;}
+  }
   scenarioAttenuation.Update(now);
   playback.Update(float(now-previous)/1000);previous=now;
   if(capture){std::array<int16_t,1536> samples{};playback.Render(samples);}
@@ -206,6 +235,14 @@ const auto updateScenarioModal=[&](uint64_t now) {
   if(systemMenu)systemMenu->Draw(vm->State().ChapterId,vm->State().Titles.empty()?u"":vm->State().Titles[0]);
   if(scenarioSlots)scenarioSlots->Draw();if(scenarioOptions)scenarioOptions->Draw();
   if(scenarioBacklog)scenarioBacklog->Draw();
+  if(replayQuestion.Visible){
+    endingLayer.Draw(replayQuestion,replayQuestionPrompt,replayQuestionLayout,1,{255,255,255,90});
+    replayQuestionContacts.Latch(replayQuestion,replayQuestionLayout,endingLayer.Environment);
+  }
+  if(returningReplay){
+    UiRenderCommand fade;fade.Kind=UiRenderKind::Rectangle;fade.Rectangle={0,0,960,544};
+    fade.Color={255,255,255,uint8_t(replayReturnFade.Value.Current)};renderer.Execute(std::span<const UiRenderCommand>(&fade,1));
+  }
   if(captureBacklogImage){Capture(captureDirectory/"backlog.bmp",width,height);captureBacklogImage=false;}
   if(returningTitle) {
     UiRenderCommand fade;fade.Kind=UiRenderKind::Rectangle;fade.Rectangle={0,0,960,544};

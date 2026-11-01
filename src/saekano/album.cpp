@@ -145,6 +145,42 @@ ExtrasScreenEnvironment ExtrasScreenEnvironment::DecodeThroughMovies(std::span<c
   sprite(0xda84);sprite(0xdaa8);scalar(0xdacc);scalar(0xdad0);
   e.PrefixBytes=bytes.size()-r.Remaining();return e;
 }
+ExtrasScreenEnvironment ExtrasScreenEnvironment::DecodeThroughBattle(std::span<const uint8_t> bytes){
+  auto e=DecodeThroughMovies(bytes);PayloadReader r(bytes.subspan(e.PrefixBytes));
+  const auto scalar=[&](uint16_t k){e.Scalars.emplace(k,r.U32());};
+  const auto point=[&](uint16_t k){e.Points.emplace(k,std::array<int32_t,2>{r.I32(),r.I32()});};
+  const auto rect=[&](uint16_t k){e.Rectangles.emplace(k,std::array<int32_t,4>{r.I32(),r.I32(),r.I32(),r.I32()});};
+  const auto sprite=[&](uint16_t k){e.Sprites.emplace(k,UiSpriteDefinition::ReadLegacy(r));};
+  scalar(0xdad4);scalar(0xdad8);rect(0xdadc);point(0xdaec);point(0xdaf4);
+  sprite(0xdafc);sprite(0xdb20);point(0xdb44);sprite(0xdb4c);sprite(0xdb70);sprite(0xdb94);sprite(0xdbb8);
+  point(0xdbdc);rect(0xdbe4);point(0xdbf4);scalar(0xdbfc);scalar(0xdc00);sprite(0xdc04);
+  scalar(0xdc28);scalar(0xdc2c);sprite(0xdc30);point(0xdc54);scalar(0xdc5c);scalar(0xdc60);sprite(0xdc64);
+  scalar(0xdc88);scalar(0xdc8c);
+  auto count=r.U32();r.CheckCount(count,16);
+  for(uint32_t i=0;i<count;++i)e.BattleRectangles.push_back({r.I32(),r.I32(),r.I32(),r.I32()});
+  point(0xdca0);point(0xdca8);point(0xdcb0);scalar(0xdcb8);scalar(0xdcbc);point(0xdcc0);scalar(0xdcc8);
+  point(0xdccc);scalar(0xdcd4);scalar(0xdcd8);sprite(0xdcdc);
+  count=r.U32();r.CheckCount(count,16);
+  for(uint32_t i=0;i<count;++i){BattleReplay entry;for(auto& text:entry.Text)text=r.String();e.BattleReplays.push_back(std::move(entry));}
+  sprite(0xdd10);scalar(0xdd34);
+  for(const auto key:{0xdd38,0xdd5c,0xdd80,0xdda4,0xddc8,0xddec,0xde10,0xde34})sprite(uint16_t(key));
+  scalar(0xde58);scalar(0xde5c);
+  for(const auto key:{0xde60,0xde98,0xded0,0xdf08,0xdf40,0xdf78})e.Strings.emplace(uint16_t(key),r.String());
+  e.PrefixBytes=bytes.size()-r.Remaining();return e;
+}
+std::vector<std::string> DecodeBattleReplayScripts(std::span<const uint8_t> bytes){
+  if(bytes.size()>1024*1024)throw FormatError("battle replay script list exceeds budget");
+  std::u16string text;for(const auto c:bytes){if(c>127)throw FormatError("non-ASCII replay script list");text.push_back(char16_t(c));}
+  Tokens tokens(std::move(text));std::vector<std::string> result;
+  while(!tokens.Done()){
+    tokens.BeginRow();const auto first=tokens.Next();
+    if(first.starts_with(u"//")){tokens.FinishRow();continue;}
+    const auto name=tokens.Next();
+    if(name.empty())throw FormatError("empty battle replay script name");
+    result.emplace_back(name.begin(),name.end());tokens.FinishRow();
+  }
+  return result;
+}
 std::vector<AlbumEntry> DecodeAlbumEntries(std::span<const uint8_t> bytes,
                                              uint32_t imageColumns) {
   if (imageColumns > 20)
