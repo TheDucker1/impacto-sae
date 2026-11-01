@@ -28,6 +28,9 @@ class PcExtrasOwner final:public ExtrasServices {
     else throw FormatError("Extras draw lost its actual child");
   });}
   const ExtrasRoot& State()const{return root_;}
+  const PcExtrasMusic* MusicChild()const{return musicChild_.get();}
+  const DialogState& Question()const{return presentation_.Question();}
+  const SaveManagerDialogHost& Save()const{return presentation_.Save();}
   bool WindowClosed()const{return windowClosed_;}
   bool ConsumeInputReset(){const bool result=inputReset_;inputReset_=false;return result;}
   void UiSound(int32_t id)override{audio_.PlayUi(id);}

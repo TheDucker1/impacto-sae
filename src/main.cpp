@@ -343,6 +343,7 @@ int main(int argc, char* argv[]) {
       return Saekano::RunTitleScene(argv[2],argv[6],argv[4],false,false,0,0,4);
     if(argc==7 && std::string_view(argv[3])=="--capture-continue-choice-pointer" && std::string_view(argv[5])=="--save-dir")
       return Saekano::RunTitleScene(argv[2],argv[6],argv[4],false,false,0,0,5);
+    if(argc==5 && std::string_view(argv[3])=="--capture-extras-music")return Saekano::RunTitleScene(argv[2],{},argv[4],false,false,0,0,0,0,{},true);
     if(argc==3)return Saekano::RunTitleScene(argv[2]);
     if(argc==5 && std::string_view(argv[3])=="--save-dir")return Saekano::RunTitleScene(argv[2],argv[4]);
     if(argc==5 && (std::string_view(argv[3])=="--capture-title" || std::string_view(argv[3])=="--capture-title-pointer"))

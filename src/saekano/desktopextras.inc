@@ -61,6 +61,8 @@ class PcExtrasPresentation {
   void CancelPointer(){questionContacts_.CancelPointer();saveContacts_.CancelPointer();}
   void UiSound(int32_t id){audio_.PlayUi(id);}
   SceneDialogLayer& Ui(){return shared_;}
+  const DialogState& Question()const{return question_;}
+  const SaveManagerDialogHost& Save()const{return save_;}
   void SetExtrasAudio(bool active){switchAudio_(active);}
   void BeginSaveQuestion(const std::u16string& prompt){
     if(question_.Visible || save_.State().Active)throw FormatError("Extras modal is already active");

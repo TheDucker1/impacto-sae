@@ -3137,6 +3137,7 @@ int RunScenarioScene(ViewerWindow& window,UiBlitRenderer& renderer,
 #include "desktopextrasbattle.inc"
 #include "desktopextrasowner.inc"
 #include "desktoptitle.inc"
+#include "desktopcaptureextras.inc"
 }  // namespace
 
 int RunSceneSdkUiProbe(const std::filesystem::path& usrdir,
@@ -5174,11 +5175,12 @@ int RunMovieInfoProbe(const std::filesystem::path& path,const std::filesystem::p
   }
 }
 int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::path& requestedProgressRoot,
-    const std::filesystem::path& requestedCaptureDirectory,bool capturePointer,bool captureOpening,uint8_t captureMovie,uint8_t captureOptions,uint8_t captureContinue,uint8_t captureScenarioMenu,std::optional<size_t> replayRow){
+    const std::filesystem::path& requestedCaptureDirectory,bool capturePointer,bool captureOpening,uint8_t captureMovie,uint8_t captureOptions,uint8_t captureContinue,uint8_t captureScenarioMenu,std::optional<size_t> replayRow,bool captureExtras){
   auto captureDirectory=requestedCaptureDirectory;
   bool created=false;
   try{
     const bool capture=!captureDirectory.empty();
+    if(captureExtras && (!capture || replayRow || captureOptions || captureContinue || captureMovie || captureScenarioMenu))throw FormatError("Extras witness requires its own bounded capture");
     if(capture){
       const auto out=std::filesystem::weakly_canonical(captureDirectory),input=std::filesystem::weakly_canonical(usrdir);
       for(auto parent=out;!parent.empty();parent=parent.parent_path()){
@@ -5195,6 +5197,8 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     const auto utilityRaw=SceneRead(usrdir/"env/env_game_utility.dat");
     const auto utility=AudioEnvironment::Decode(utilityRaw);
     const auto widget=WidgetInputEnvironment::DecodeUtility(utilityRaw);
+    std::optional<ExtrasScreenEnvironment> extrasCaptureEnv;
+    if(captureExtras)extrasCaptureEnv=ExtrasScreenEnvironment::DecodeThroughMovies(SceneRead(usrdir/"env/env_omake.dat"));
     auto owner=std::make_unique<SemanticState>();
     InitializeFreshAudioOwner(*owner);InitializeFreshOptionsRuntime(*owner);InitializeFreshBattleOwner(*owner);InitializeFreshMessageOwner(*owner);
     InitializeFreshCgHistory(*owner,LoadAlbumConfiguration(first,SceneRead(usrdir/"env/env_omake.dat")).RequiredImages);
@@ -5254,6 +5258,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     uint32_t optionsStage=0,optionsGesture=0;bool optionsOpenImage=false,optionsQuestionImage=false,optionsPreviewImage=false;
     uint32_t continueStage=0;bool continueOpenImage=false;
     bool sawMovie=false,movieReturned=false,movieSkipped=false,movieImage=false;
+    ExtrasMusicCapture extrasCapture;
     std::array<float,2> pointer{};int pointerCapture=0;int32_t previousPhase=-1;size_t frames=0;uint64_t epoch=SDL_GetTicks();
     for(;!quit && !title.RequestedScene;++frames){
       if(capture && frames>=(captureMovie==2?10000u:captureMovie?4000u:1250u))throw FormatError("title capture exhausted its bounded frame budget");
@@ -5283,7 +5288,8 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
         if(sawMovie && title.State.Phase==5)movieReturned=true;
         if(title.State.Phase==5 && title.State.Fade.Finished() && !pressedStart && (!captureMovie || movieReturned)){key(SDLK_RETURN);pressedStart=true;}
         if(title.State.Phase==10 && !chose){
-          if(captureContinue){if(title.State.Selected<1)key(SDLK_DOWN);else{key(SDLK_RETURN);chose=true;}}
+          if(captureExtras){chose=true;}
+          else if(captureContinue){if(title.State.Selected<1)key(SDLK_DOWN);else{key(SDLK_RETURN);chose=true;}}
           else if(captureOptions){if(title.State.Selected<2)key(SDLK_DOWN);else{key(SDLK_RETURN);chose=true;}}
           else if(!capturePointer && !returnedTitleCapture){key(SDLK_RETURN);chose=true;}
           else {
@@ -5343,6 +5349,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
           if(save.State().Phase==19 && save.Modal.Visible && save.Modal.Phase==3 && !save.Modal.PendingPhase)key(SDLK_RETURN);
         }
         if(title.State.Phase==21 && !skippedVoice){key(SDLK_RETURN);skippedVoice=true;}
+        if(captureExtras)extrasCapture.Tick(title,*owner,playback,*extrasCaptureEnv,now,key);
       }
       SDL_Event event{};
       while(SDL_PollEvent(&event)){
@@ -5430,6 +5437,10 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
           <<",\"continue_browser\":";
           if(c && c->BrowserUpdated)c->WriteBrowserSnapshot(trace);else trace<<"null";
         }
+        if(captureExtras){const auto* e=title.Extras();const auto* m=e?e->MusicChild():nullptr;
+          trace<<",\"extras_stage\":"<<extrasCapture.Stage<<",\"extras_phase\":"<<(e?e->State().Phase():-1)
+            <<",\"music_phase\":"<<(m?m->State().Phase():-1)<<",\"question_phase\":"<<(e?e->Question().Phase:-1)
+            <<",\"save_phase\":"<<(e?e->Save().State().Phase:-1);}
         trace<<"}\n";
       }
       attenuation.Update(audioClock());
@@ -5449,6 +5460,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
           (title.State.Phase==5 && title.State.Fade.Finished() && !pressedStart)))
         Capture(captureDirectory/("phase-"+std::to_string(title.State.Phase)+".bmp"),width,height);
       previousPhase=title.State.Phase;SdlCheck(SDL_GL_SwapWindow(window.Window),"title frame swap");
+      if(captureExtras && extrasCapture.Finished){++frames;break;}
       if(returnedTitleCapture && title.State.Phase==10){++frames;break;}
       if(captureOptions && title.ConfigReturns==1 && title.State.Phase==10){Capture(captureDirectory/"options-return.bmp",width,height);++frames;break;}
       if(captureContinue && title.ContinueReturns==1 && title.State.Phase==10){Capture(captureDirectory/"continue-return.bmp",width,height);++frames;break;}
@@ -5456,7 +5468,10 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     }
     if(capture){
       trace.close();pcm.close();if(!trace || !pcm)throw FormatError("cannot save title trace/PCM");
-      if(captureContinue && captureContinue<3){
+      if(captureExtras){
+        if(quit || title.RequestedScene)throw FormatError("Extras witness left its normal title lifecycle");
+        extrasCapture.Verify(progressRoot,captureDirectory,session,*owner,frames);
+      }else if(captureContinue && captureContinue<3){
         const auto stored=ReadProgressStore(progressRoot);
         if(quit || title.RequestedScene || title.ContinueEntries!=1 || title.ContinueReturns!=1 || title.ContinueResult!=2 || !continueOpenImage || !title.ContinueDraws || !title.ContinueCards ||
            !stored || stored->Generation!=session.Generation || stored->Slots.Encode()!=initialSlotBytes || session.Slots.Encode()!=initialSlotBytes)
@@ -5515,7 +5530,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
       report<<"{\"passed\":true,\"textures\":0,\"ui_playing\":false,\"voice_playing\":false}\n";
       report.close();if(!report)throw FormatError("cannot save title retirement report");
     }
-    if(quit || returnedTitleCapture || captureOptions || (captureContinue && captureContinue<3))return 0;
+    if(quit || returnedTitleCapture || captureOptions || captureExtras || (captureContinue && captureContinue<3))return 0;
     if(title.RequestedScene!=2)throw UnsupportedCommand("unknown PC title scene request");
     if(capture)std::filesystem::create_directory(captureDirectory/"entry");
     std::unique_ptr<SemanticState> returnedTitle;
