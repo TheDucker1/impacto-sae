@@ -24,6 +24,7 @@
 #include "profilemode.h"
 #include "musicplayback.h"
 #include "album.h"
+#include "extras.h"
 #include "scenemessage.h"
 #include "messagedraw.h"
 #include "battledialogue.h"
@@ -1111,6 +1112,7 @@ struct SceneDialogLayer {
 #include "desktopslotowner.inc"
 #include "desktopsystemmenu.inc"
 #include "desktopbacklog.inc"
+#include "desktopextras.inc"
 #include "desktoptitle.inc"
 #include "desktopprofile.inc"
 

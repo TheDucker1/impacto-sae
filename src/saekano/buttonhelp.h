@@ -30,6 +30,13 @@ struct SlotButtonHelpEnvironment {
   size_t PrefixBytes=0;
   static SlotButtonHelpEnvironment Decode(std::span<const uint8_t> bytes);
 };
+struct ExtrasButtonHelpEnvironment {
+  std::array<int32_t,4> Rectangle{};
+  std::vector<ButtonHelpItem> Items;
+  size_t PrefixBytes=0;
+  // env_help_mgr: cb28 rectangle and caa8 items, after the save/load rows.
+  static ExtrasButtonHelpEnvironment Decode(std::span<const uint8_t> bytes);
+};
 // Shared37a16/37c04 row layout/drawing. Options uses alignment5 and opacity1.
 std::vector<UiTextBlit> BuildButtonHelp(std::span<const ButtonHelpItem> items,
     std::array<int32_t,4> rectangle,const ButtonHelpStyle& style,const GsfFont& font,

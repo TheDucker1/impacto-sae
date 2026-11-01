@@ -27,6 +27,13 @@ SlotButtonHelpEnvironment SlotButtonHelpEnvironment::Decode(std::span<const uint
   if(e.Rows.size()<2)throw FormatError("save/load button-help rows are missing");
   e.PrefixBytes=bytes.size()-r.Remaining();return e;
 }
+ExtrasButtonHelpEnvironment ExtrasButtonHelpEnvironment::Decode(std::span<const uint8_t> bytes){
+  const auto prefix=SlotButtonHelpEnvironment::Decode(bytes).PrefixBytes;
+  PayloadReader r(bytes.subspan(prefix));ExtrasButtonHelpEnvironment e;
+  for(auto& v:e.Rectangle)v=r.I32();
+  e.Items=Table(r,8,[&]{ButtonHelpItem v;v.Key=r.I32();v.Text=r.String();return v;});
+  e.PrefixBytes=bytes.size()-r.Remaining();return e;
+}
 ButtonHelpStyle ButtonHelpStyle::Decode(std::span<const uint8_t> bytes){
   PayloadReader r(bytes);for(size_t i=0;i<3;++i)r.U8();
   const auto words=[&](uint32_t n){r.CheckCount(n,4);for(uint32_t i=0;i<n;++i)r.U32();};
