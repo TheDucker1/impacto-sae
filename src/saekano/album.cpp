@@ -1,39 +1,11 @@
 #include "album.h"
+#include "commands.h"
 
 #include <bit>
 #include <string>
 
 namespace Impacto::Saekano {
 namespace {
-class Cursor {
- public:
-  explicit Cursor(std::span<const uint8_t> data) : data_(data) {}
-  void Skip(size_t count) {
-    if (count > data_.size() - position_)
-      throw FormatError("truncated album environment prefix");
-    position_ += count;
-  }
-  uint32_t U32() {
-    const auto start = position_;
-    Skip(4);
-    uint32_t value = 0;
-    for (size_t i = 0; i < 4; ++i)
-      value |= uint32_t(data_[start + i]) << (8 * i);
-    return value;
-  }
-  uint32_t Count(size_t stride) {
-    const auto count = U32();
-    if (count > 1000000 || count > (data_.size() - position_) / stride)
-      throw FormatError("album environment collection exceeds input/budget");
-    return count;
-  }
-  void String() { Skip(size_t(Count(2)) * 2); }
-  size_t Position() const { return position_; }
-
- private:
-  std::span<const uint8_t> data_;
-  size_t position_ = 0;
-};
 int32_t Numeric(std::u16string_view text) {
   uint32_t value = 0;
   bool negative = false;
@@ -93,28 +65,44 @@ class Tokens {
 AlbumEnvironment AlbumEnvironment::Decode(std::span<const uint8_t> bytes) {
   if (bytes.size() > 32 * 1024 * 1024)
     throw FormatError("album environment exceeds file budget");
-  Cursor cursor(bytes);
-  // Neutral serialized fields preceding global8025d224. Native UI descriptor
-  // reader801bf4e8 consumes I16 + eight words (34 serialized bytes).
-  cursor.Skip(3 + 3 * 4 + 2 * 4);
-  cursor.Skip(2 * 34 + 8 + 4 * 34 + 16 + 2 * 8 + 4 + 2 * 4);
-  cursor.String();
-  cursor.Skip(10 * 34 + 4);
-  const auto groups = cursor.Count(4);
-  for (uint32_t i = 0; i < groups; ++i)
-    cursor.Skip(size_t(cursor.Count(16)) * 16);
-  const auto strings = cursor.Count(4);
-  for (uint32_t i = 0; i < strings; ++i) cursor.String();
-  cursor.Skip(4 + 8);
-  const auto columns = cursor.U32();
-  // Native has twenty scratch slots. Reject malformed configuration instead
-  // of reproducing its potential stack overwrite.
-  if (columns > 20)
-    throw FormatError(
-        "album image column count exceeds native scratch capacity");
-  return {columns, cursor.Position()};
+  PayloadReader reader(bytes);
+  AlbumEnvironment result;
+  for(auto& flag:result.Flags)flag=reader.U8();
+  for(auto& word:result.ColorWords)word=reader.U32();
+  for(auto& word:result.SharedWords)word=reader.I32();
+  for(size_t i=0;i<2;++i)result.SharedSprites[i]=UiSpriteDefinition::ReadLegacy(reader);
+  result.StretchSize={reader.I32(),reader.I32()};
+  for(size_t i=2;i<6;++i)result.SharedSprites[i]=UiSpriteDefinition::ReadLegacy(reader);
+  for(auto& word:result.CancelRectangle)word=reader.I32();
+  for(auto& point:result.SharedPoints)point={reader.I32(),reader.I32()};
+  result.SharedScale=std::bit_cast<float>(reader.U32());
+  result.SharedValue=reader.I32();result.FadeDuration=reader.I32();
+  result.SavePrompt=reader.String();
+  result.Backdrop=UiSpriteDefinition::ReadLegacy(reader);
+  for(auto& sprite:result.SectionHeaders)sprite=UiSpriteDefinition::ReadLegacy(reader);
+  for(auto& sprite:result.Buttons)sprite=UiSpriteDefinition::ReadLegacy(reader);
+  result.SelectedMarker=UiSpriteDefinition::ReadLegacy(reader);
+  result.SelectedOffset=reader.I32();
+  const auto groups=reader.U32();reader.CheckCount(groups,4);
+  if(groups>1000000)throw FormatError("album environment groups exceed budget");
+  for(uint32_t i=0;i<groups;++i) {
+    const auto count=reader.U32();reader.CheckCount(count,16);
+    if(count>1000000)throw FormatError("album environment rectangles exceed budget");
+    auto& rectangles=result.ButtonRectangles.emplace_back();
+    for(uint32_t j=0;j<count;++j)rectangles.push_back({reader.I32(),reader.I32(),reader.I32(),reader.I32()});
+  }
+  const auto labels=reader.U32();reader.CheckCount(labels,4);
+  if(labels>1000000)throw FormatError("album environment labels exceed budget");
+  for(uint32_t i=0;i<labels;++i)result.MenuLabels.push_back(reader.String());
+  result.MenuTextScale=std::bit_cast<float>(reader.U32());
+  result.MenuTextPosition={reader.I32(),reader.I32()};
+  result.ImageColumns=reader.U32();
+  // Native has twenty scratch slots; preserve the safe existing host limit.
+  if(result.ImageColumns>20)throw FormatError("album image column count exceeds native scratch capacity");
+  result.PrefixBytes=bytes.size()-reader.Remaining();
+  return result;
 }
-std::vector<int32_t> DecodeAlbumRequirements(std::span<const uint8_t> bytes,
+std::vector<AlbumEntry> DecodeAlbumEntries(std::span<const uint8_t> bytes,
                                              uint32_t imageColumns) {
   if (imageColumns > 20)
     throw FormatError(
@@ -127,7 +115,8 @@ std::vector<int32_t> DecodeAlbumRequirements(std::span<const uint8_t> bytes,
   for (size_t i = 2; i < bytes.size(); i += 2)
     text.push_back(char16_t(uint16_t(bytes[i]) | uint16_t(bytes[i + 1]) << 8));
   Tokens tokens(std::move(text));
-  std::vector<int32_t> result;
+  std::vector<AlbumEntry> result;
+  size_t imageCount=0;
   while (!tokens.Done()) {
     tokens.BeginRow();
     const auto enabled = tokens.Next();
@@ -157,12 +146,22 @@ std::vector<int32_t> DecodeAlbumRequirements(std::span<const uint8_t> bytes,
     const auto first = tokens.Next(), second = tokens.Next();
     if (Numeric(category) >= 0 && !first.empty() && !second.empty() &&
         Numeric(first) >= 0 && Numeric(second) >= 0) {
-      if (images.size() > 1000000 - result.size())
+      if (result.size() >= 1000000)
+        throw FormatError("album entries exceed allocation budget");
+      if (images.size() > 1000000-imageCount)
         throw FormatError("album requirements exceed allocation budget");
-      result.insert(result.end(), images.begin(), images.end());
+      imageCount+=images.size();
+      result.push_back({title,Numeric(category),std::move(images),{Numeric(first),Numeric(second)}});
     }
     tokens.FinishRow();
   }
+  return result;
+}
+std::vector<int32_t> DecodeAlbumRequirements(std::span<const uint8_t> bytes,
+                                             uint32_t imageColumns) {
+  std::vector<int32_t> result;
+  for(const auto& entry:DecodeAlbumEntries(bytes,imageColumns))
+    result.insert(result.end(),entry.Images.begin(),entry.Images.end());
   return result;
 }
 AlbumConfiguration LoadAlbumConfiguration(
@@ -176,6 +175,11 @@ AlbumConfiguration LoadAlbumConfiguration(
   const GpdaArchive cg(first.Data(0));
   if (cg.Entries().empty() || cg.Entries()[0].Type != 0)
     throw FormatError("unsupported CG album text section");
-  return {config, DecodeAlbumRequirements(cg.Data(0), config.ImageColumns)};
+  AlbumConfiguration result;
+  result.Environment=config;
+  result.Entries=DecodeAlbumEntries(cg.Data(0),config.ImageColumns);
+  for(const auto& entry:result.Entries)
+    result.RequiredImages.insert(result.RequiredImages.end(),entry.Images.begin(),entry.Images.end());
+  return result;
 }
 }  // namespace Impacto::Saekano
