@@ -203,7 +203,13 @@ OrdinaryWidgetInput::OrdinaryWidgetInput(
                       WidgetEventHistory(holdFrames),
                       WidgetEventHistory(holdFrames)} {
   components_.reserve(10);
+  ResetWidgets();
+}
+void OrdinaryWidgetInput::ResetWidgets() {
+  const auto holdFrames=uint32_t(menuComponents_[2].HeldHistory.size());
+  components_.clear();
   for (size_t i = 0; i < 10; ++i) components_.emplace_back(holdFrames);
+  for(auto& component:menuComponents_)component=WidgetEventHistory(holdFrames);
   menuComponents_[0].Enabled = menuComponents_[1].Enabled = false;
 }
 void OrdinaryWidgetInput::BeginFrame(WidgetInputHistory::Snapshot snapshot) {

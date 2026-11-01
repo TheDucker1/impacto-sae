@@ -1153,7 +1153,8 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
   const bool captureReplay=capture && replayScript.has_value();
   PcSceneThumbnail sceneThumbnail;
   const bool captureEnding=captureMenuInput==16;
-  const bool captureScenarioMenu=captureMenuInput>=19 && captureMenuInput<=21;
+  const bool captureVisibility=captureMenuInput==22;
+  const bool captureScenarioMenu=captureMenuInput>=19 && captureMenuInput<=22;
   const bool captureParticles=captureMenuInput==4;
   const bool captureChapter=captureMenuInput==7;
   const bool captureLip=captureMenuInput==9;
@@ -1362,7 +1363,11 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
   std::unique_ptr<PlaybackScriptMovie> scenarioMovie;
   int32_t voiceScript = -1;
   const auto bindScriptVoices = [&] {
-    if (voiceScript == vm->State().ScriptFileId) return;
+    if (voiceScript == vm->State().ScriptFileId &&
+        vm->Boundary()!=VmBoundary::FileLoadedBeforeStart &&
+        vm->Boundary()!=VmBoundary::ProfileDestinationLoaded) return;
+    sceneInput.ResetWidgets();
+    autoRotation.Begin(visual.Window.AutoRotationDuration,particleClock);
     backend.MovieOutput = nullptr;
     if (scenarioMovie) {
       scenarioMovie->Stop();
@@ -1574,13 +1579,15 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
     particleClock=now;
     messageCursor.Update(now);
     CommandInput input;
+    bool hideTextPressed=false,wakeTextPressed=false;
     systemMenuInput={};scenarioSlotInput={};scenarioOptionsInput={};scenarioBacklogInput={};scenarioModalInput={};requestSystemMenu=false;
     uint32_t battleFaces=0;
     WidgetInputHistory::Snapshot pointerSnapshot;
     SkipAutoInput policyInput;
     SDL_Event event;
     DialogInput modalInput;
-    if(captureScenarioMenu)captureScenarioMenuInput(now);
+    if(captureScenarioMenu && !captureVisibility)captureScenarioMenuInput(now);
+    if(captureVisibility)captureMessageVisibility(now);
     if(captureReplay){
       SDL_Keycode key=0;
       if(replayCaptureStage==0 && backend.CurrentMessage() && backend.CurrentMessage()->Reveal.Revealed && !vm->State().ScenarioMenuBlocked){
@@ -1784,13 +1791,13 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       if(replayScript &&
           ((event.type==SDL_EVENT_KEY_DOWN && event.key.key==SDLK_ESCAPE && !event.key.repeat) ||
            event.type==SDL_EVENT_GAMEPAD_BUTTON_DOWN && event.gbutton.button==SDL_GAMEPAD_BUTTON_START)){
-        replayInterrupt=true;continue;
+        replayInterrupt=true;wakeTextPressed=true;continue;
       }
       if(!endingState.Started && !vm->CurrentProfile() &&
           !vm->State().ApproachSelection.Visible && !vm->State().OrdinaryChoice.Visible &&
           ((event.type==SDL_EVENT_KEY_DOWN && event.key.key==SDLK_ESCAPE && !event.key.repeat) ||
            (event.type==SDL_EVENT_GAMEPAD_BUTTON_DOWN && event.gbutton.button==SDL_GAMEPAD_BUTTON_START))) {
-        requestSystemMenu=true;continue;
+        requestSystemMenu=true;wakeTextPressed=true;continue;
       }
       if(endingState.Started) {
         if(event.type==SDL_EVENT_KEY_DOWN && !event.key.repeat) {
@@ -1843,7 +1850,20 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
           event.key.key == SDLK_RETURN)
         input.Advance = true;
-      if (vm->MovieActive() && event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN &&
+      if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
+        const auto key=event.key.key;
+        hideTextPressed |= key==SDLK_SPACE;
+        wakeTextPressed |= key==SDLK_RETURN || key==SDLK_A || key==SDLK_TAB ||
+            key==SDLK_LCTRL || key==SDLK_RCTRL || key==SDLK_UP || key==SDLK_DOWN ||
+            key==SDLK_LEFT || key==SDLK_RIGHT || key==SDLK_BACKSPACE;
+      }
+      if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+        hideTextPressed |= event.gbutton.button==SDL_GAMEPAD_BUTTON_WEST;
+        wakeTextPressed |= event.gbutton.button==SDL_GAMEPAD_BUTTON_EAST ||
+            event.gbutton.button==SDL_GAMEPAD_BUTTON_DPAD_UP || event.gbutton.button==SDL_GAMEPAD_BUTTON_DPAD_DOWN ||
+            event.gbutton.button==SDL_GAMEPAD_BUTTON_DPAD_LEFT || event.gbutton.button==SDL_GAMEPAD_BUTTON_DPAD_RIGHT;
+      }
+      if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN &&
           event.gbutton.button == SDL_GAMEPAD_BUTTON_EAST)
         input.Advance = true;
       if ((event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) &&
@@ -1867,6 +1887,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       if (event.type == SDL_EVENT_MOUSE_MOTION)
         pointerPosition = {event.motion.x, event.motion.y};
       if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
+        hideTextPressed=wakeTextPressed=false;
         pointerDown = false;
         autoKeyHeld = false;
         policyInput.AutoPressed = false;
@@ -1879,14 +1900,8 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       }
     }
     if (quit) break;
+    input.RevealOnly=hideTextPressed;
     if(replayScript && requestSystemMenu){replayInterrupt=true;requestSystemMenu=false;}
-    if(requestSystemMenu && !endingState.Started && !vm->CurrentProfile() &&
-        !vm->State().OrdinaryChoice.Visible && sceneThumbnail.Ready()) {
-      const auto& s=vm->State();
-      if(ShouldEnterScenarioMenu({s.ExitRequested!=0,s.BattleEntry.Enabled,
-          s.ApproachMode.Enabled.value_or(false),backend.CursorVisible(),s.ScenarioMenuBlocked,true,false}))
-        enterSystemMenu();
-    }
     if(modalOwned()) {
       updateScenarioModal(now);
       if(quit)break;
@@ -2000,6 +2015,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
         resultTouch.TrackedId,resultPointer.Velocity(0)));
     resultPointer.Publish(resultTouch.Flags);
     const bool ordinaryRelease=!menuState.Visible && !ordinary.Visible && sceneInput.UpdatePrimary();
+    wakeTextPressed |= ordinaryRelease;
     const bool resultInput=vm->Opcode()==0x3f8 || vm->Opcode()==0x3f9 || vm->MovieActive();
     const bool pointerAdvance=resultInput ? resultTouch.Enabled && (resultTouch.Flags&8) : ordinaryRelease;
     input.Advance = input.Advance || pointerAdvance;
@@ -2025,7 +2041,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
     if (capture && now > previous) {
       std::vector<int16_t> samples(size_t(now - previous) * 96);
       playback.Render(samples);
-      if (captureActive && !captureReplay) {
+      if (captureActive && !captureReplay && !captureVisibility) {
         if (!pcmEpoch) pcmEpoch = previous;
         pcm.write(reinterpret_cast<const char*>(samples.data()),
                   samples.size() * sizeof(int16_t));
@@ -2187,6 +2203,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       if (!captureConfirmInput && captureFromCommand && step.Script == captureScript &&
           size_t(step.Command) == *captureFromCommand) captureActive = true;
       input.Advance = false;
+      input.RevealOnly = false;
       input.Approach={};
       syncMouths();
       if (capture && captureActive && (step.Boundary == VmBoundary::CommandStarted ||
@@ -2269,6 +2286,12 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       }
       if (work == 255)
         throw UnsupportedCommand("scene per-frame command budget exceeded");
+    }
+    // Native queues message draws before processing this frame's hide toggle.
+    const bool messageHiddenForDraw=vm->State().MessageHidden;
+    if(!endingState.Started && !vm->CurrentProfile()) {
+      vm->UpdateMessageVisibility(skipAuto,hideTextPressed,wakeTextPressed);
+      backend.AutoAdvance=skipAuto.Auto;
     }
     // Native49122 checks the queued interruption after updating the manager,
     // using that update's menu-blocking gate. A completed manager wins.
@@ -2401,7 +2424,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
         std::bit_cast<int32_t>(uint32_t(visual.Window.WindowTravel) *
                                (100u - state.WindowOpenness[0])) /
         100;
-    sceneInput.UpdateButtons(
+    if(!state.MessageHidden)sceneInput.UpdateButtons(
         {(*state.Quake[2])[0],
          std::bit_cast<int32_t>(uint32_t(slide) +
                                 uint32_t((*state.Quake[2])[1]))});
@@ -2409,12 +2432,12 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
     if (!quit && !replayScript && !endingState.Started && !vm->CurrentProfile() &&
         !state.OrdinaryChoice.Visible && sceneThumbnail.Ready() &&
         ShouldEnterScenarioMenu({state.ExitRequested != 0, state.BattleEntry.Enabled,
-            state.ApproachMode.Enabled.value_or(false), backend.CursorVisible(),
-            state.ScenarioMenuBlocked, false, sceneInput.MenuReleased()})) {
+            state.ApproachMode.Enabled.value_or(false), state.ScenarioInputReady,
+            state.ScenarioMenuBlocked, requestSystemMenu, sceneInput.MenuReleased()})) {
       enterSystemMenu();
       continue;
     }
-    autoRotation.Update(now);
+    if(!state.MessageHidden)autoRotation.Update(now);
     int width = 0, height = 0;
     SdlCheck(SDL_GetWindowSizeInPixels(window.Window, &width, &height),
              "scene frame size");
@@ -2462,7 +2485,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
     }
     SceneQueueInputs gates;
     gates.ModeVisible=state.BattleEntry.Enabled;
-    gates.MessageHidden = vm->MovieActive();
+    gates.MessageHidden = vm->MovieActive() || messageHiddenForDraw;
     gates.ForegroundLetterbox=state.Letterbox.Foreground;
     gates.SplitMessage=state.BattleEntry.Enabled;
     gates.ApproachSelectionVisible=state.ApproachSelection.Visible;
@@ -2479,6 +2502,16 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       if (slot.GeometryAndTexture[6] >= 0)
         throw UnsupportedCommand("first-scene free-image drawing is not bound");
     const auto queue = BuildSceneDrawQueue(state.SceneImages.Slots, gates);
+    if(captureVisibility && (hideTextPressed || wakeTextPressed ||
+        visibilityCaptureStage==1 || visibilityCaptureStage==2)) {
+      const auto messagePasses=std::count_if(queue.begin(),queue.end(),[](const auto& p){
+        return p.Kind==SceneDrawKind::MessageWindow || p.Kind==SceneDrawKind::MessageText ||
+            p.Kind==SceneDrawKind::MessageDecoration;
+      });
+      events<<"{\"kind\":\"message_visibility_draw\",\"now\":"<<now<<",\"hidden\":"<<state.MessageHidden
+        <<",\"queued_hidden\":"<<messageHiddenForDraw<<",\"ready\":"<<state.ScenarioInputReady
+        <<",\"message_passes\":"<<messagePasses<<"}\n";
+    }
     const auto camera=UpdateSceneCamera(particleCamera);
     ParticleProjectionUniforms particleProjection;
     particleProjection.View=camera.View;particleProjection.Projection=camera.Projection;
@@ -2704,7 +2737,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       const auto banner=BuildChapterTitleBanner(chapterVisual,state.ChapterId);
       uploadMain(banner.Texture.Entry);drawSprite(banner);spriteDraws.push_back(banner);
     }
-    if (!vm->MovieActive() && !state.TitleDisplay.value_or(false) &&
+    if (!vm->MovieActive() && !state.MessageHidden && !state.TitleDisplay.value_or(false) &&
         !state.BattleEntry.Enabled && !approach) {
       // HUD766b4..767d2: authored MainUi7 hint and the separate menu widget.
       uploadMain(7);
@@ -2849,7 +2882,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
     }
     if(captureRuby)signature=std::to_string(message->Command)+':'+std::to_string(message->Reveal.Revealed)+':'+
         std::to_string((now-message->Epoch)/500)+':'+std::to_string(quit);
-    if (capture && captureActive && captureMenuInput!=21 && (saved == 0 || signature != previousSignature ||
+    if (capture && captureActive && captureMenuInput!=21 && !captureVisibility && (saved == 0 || signature != previousSignature ||
                     now - lastSaved >= 1500 || quit)) {
       const auto file = captureReplay ? std::string{} : "scene-" + std::to_string(saved) + ".bmp";++saved;
       if(!captureReplay)Capture(captureDirectory / file, width, height);
@@ -3127,6 +3160,8 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
     report.close();
     pcm.close();
     events.close();
+    if(captureVisibility && visibilityCaptureStage!=8)
+      throw UnsupportedCommand("message visibility witness did not complete");
     if (!quit || firstMessage == UINT64_MAX || ((captureUntilMessage || captureResult) && !targetCompleted) ||
         ((captureWaitingInput || captureConfirmInput) && !targetWaitingReached) ||
         (captureConfirmInput && !confirmSent))
@@ -5473,7 +5508,8 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
       }
       playback.Update(0.016f);
       if(capture){
-        std::array<int16_t,1536> samples{};playback.Render(samples);pcm.write(reinterpret_cast<const char*>(samples.data()),sizeof(samples));audioFrames+=768;
+        std::array<int16_t,1536> samples{};playback.Render(samples);
+        if(captureScenarioMenu!=4)pcm.write(reinterpret_cast<const char*>(samples.data()),sizeof(samples));audioFrames+=768;
         trace << "{\"frame\":"<<frames<<",\"now\":"<<now<<",\"phase\":"<<title.State.Phase<<",\"pending\":"<<title.State.PendingPhase.value_or(-1)
           <<",\"selected\":"<<title.State.Selected<<",\"character\":"<<title.State.VoiceCharacter<<",\"fade\":"<<title.State.Fade.Value.Current
           <<",\"accept\":"<<title.Input.Accept<<",\"pointer_release\":"<<(title.Input.ReleasedMenuButton?int(*title.Input.ReleasedMenuButton):-1)
@@ -5523,7 +5559,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
       if(captureMovie && !movieImage && title.State.Phase==25 && movie.State().VideoPresented>=6){Capture(captureDirectory/"movie-playing.bmp",width,height);movieImage=true;}
       if(capture && ((title.State.Phase!=previousPhase && (title.State.Phase==10 || title.State.Phase==21)) ||
           (title.State.Phase==5 && title.State.Fade.Finished() && !pressedStart)))
-        Capture(captureDirectory/("phase-"+std::to_string(title.State.Phase)+".bmp"),width,height);
+        if(captureScenarioMenu!=4)Capture(captureDirectory/("phase-"+std::to_string(title.State.Phase)+".bmp"),width,height);
       previousPhase=title.State.Phase;SdlCheck(SDL_GL_SwapWindow(window.Window),"title frame swap");
       if(captureExtras && extrasCapture.Finished){++frames;break;}
       if(returnedTitleCapture && title.State.Phase==10){++frames;break;}
@@ -5602,7 +5638,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     const auto result=RunScenarioScene(window,renderer,textures,font,resources,playback,music,sounds,std::move(*owner),nullptr,
       usrdir,capture?captureDirectory/"entry":std::filesystem::path{},captureOpening || captureContinue>=3,false,captureContinue>=3,
       captureContinue>=3?std::optional<size_t>(captureContinue==4?149:captureContinue==5?297:size_t(title.PendingLoad->Context.ResumeCommand)):std::nullopt,{},{},captureContinue>=3,false,
-      capture?(captureScenarioMenu==3?21:captureScenarioMenu==2?20:captureScenarioMenu?19:captureContinue>=3?0:captureOpening?18:17):0,{},progressRoot,&session.Slots,title.PendingLoad.get(),captureContinue>=4?captureContinue-3:0,&returnedTitle);
+      capture?(captureScenarioMenu==4?22:captureScenarioMenu==3?21:captureScenarioMenu==2?20:captureScenarioMenu?19:captureContinue>=3?0:captureOpening?18:17):0,{},progressRoot,&session.Slots,title.PendingLoad.get(),captureContinue>=4?captureContinue-3:0,&returnedTitle);
     if(!returnedTitle)return result;
     if(captureScenarioMenu==2)returnedSystemExpected=SnapshotSystemOwner(*returnedTitle,
       RestoreSystemReadHistory(*returnedTitle->SystemProgress)).Encode();

@@ -57,6 +57,7 @@ class VmBackend {
   virtual int32_t MessageBacklogVoice(size_t) const { return -1; }
   virtual std::optional<bool> MessageWasRead(int32_t,uint32_t,std::span<const ScriptRecord>) const { return std::nullopt; }
   virtual bool MessageRevealed(size_t command, uint64_t now) = 0;
+  virtual bool CursorVisible() const { return false; }
   virtual bool MessageAdvanceAllowed(size_t command, uint64_t now) = 0;
   virtual void RevealMessage(size_t command) = 0;
   // Native prepared-voice early return precedes input/reveal/auto decisions.
@@ -172,6 +173,10 @@ class VirtualMachine {
   VmEvent Step(uint64_t now, const CommandInput& input = {});
   void UpdateSkipAuto(SkipAutoState& policy, const SkipAutoInput& input,
                       int32_t autoKeyDuration, uint64_t now);
+  // Call once after a physical frame's command work, before button collection
+  // and outer menu handling. Polls are non-consuming: wake may also advance.
+  void UpdateMessageVisibility(SkipAutoState& policy, bool togglePressed,
+                                bool wakePressed, bool servicesBlocked = false);
   bool SkipHistoryGate(const HistoryEnvironment& environment,
                        const ScriptReadHistory* currentFileHistory) const;
   void SetGauge(bool battle, int32_t value);

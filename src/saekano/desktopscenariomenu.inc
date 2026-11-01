@@ -369,3 +369,72 @@ const auto captureScenarioMenuInput=[&](uint64_t now) {
       break;
   }
 };
+
+// One actual-input visibility lifecycle, using the normal title/New Game owner.
+// Native polling is non-consuming: hide toggle preserves the message; menu and
+// confirm wake actions also retain their ordinary action in that same frame.
+uint32_t visibilityCaptureStage=0;
+std::pair<int32_t,int32_t> visibilityOrigin{-1,-1};
+const auto captureMessageVisibility=[&](uint64_t now) {
+  const auto site=std::pair{vm->State().ScriptFileId,vm->State().CurrentCommandIndex};
+  const auto key=[&](SDL_Keycode code,uint32_t next) {
+    for(const auto type:{SDL_EVENT_KEY_DOWN,SDL_EVENT_KEY_UP}) {
+      SDL_Event e{};e.type=type;e.key.windowID=SDL_GetWindowID(window.Window);
+      e.key.key=code;e.key.down=type==SDL_EVENT_KEY_DOWN;
+      SdlCheck(SDL_PushEvent(&e),"message visibility input");
+    }
+    events<<"{\"kind\":\"message_visibility_input\",\"stage\":"<<visibilityCaptureStage
+      <<",\"now\":"<<now<<",\"key\":"<<code<<",\"hidden\":"<<vm->State().MessageHidden
+      <<",\"ready\":"<<vm->State().ScenarioInputReady<<"}\n";
+    visibilityCaptureStage=next;
+  };
+  if(visibilityCaptureStage>0 && visibilityCaptureStage<7 && site!=visibilityOrigin)
+    throw FormatError("hide toggle/menu changed the retained message");
+  switch(visibilityCaptureStage) {
+    case 0:
+      if(vm->Opcode()==0x64 && backend.CurrentMessage() && backend.CurrentMessage()->Reveal.Started &&
+          !backend.CurrentMessage()->Reveal.Revealed && !backend.CursorVisible() && sceneThumbnail.Ready()) {
+        visibilityOrigin=site;key(SDLK_SPACE,9);
+      }
+      break;
+    case 9:
+      if(site!=visibilityOrigin || vm->State().MessageHidden)
+        throw FormatError("unrevealed input2 advanced or hid the message");
+      if(backend.CursorVisible())key(SDLK_SPACE,1);
+      break;
+    case 1:
+      if(!vm->State().MessageHidden || vm->State().ScenarioInputReady || skipAuto.Auto || vm->State().SkipMode)
+        throw FormatError("hide toggle did not apply native readiness/policy");
+      key(SDLK_SPACE,2);break;
+    case 2:
+      if(vm->State().MessageHidden || vm->State().ScenarioInputReady)
+        throw FormatError("nonadvancing show toggle differs");
+      key(SDLK_SPACE,3);break;
+    case 3:
+      if(!vm->State().MessageHidden)throw FormatError("second hide did not take effect");
+      key(SDLK_ESCAPE,4);break;
+    case 4:
+      if(systemMenu && systemMenu->Phase()==5) {
+        if(vm->State().MessageHidden)throw FormatError("menu wake did not restore text visibility");
+        key(SDLK_ESCAPE,5);
+      }
+      break;
+    case 5:
+      if(!modalOwned())key(SDLK_SPACE,6);
+      break;
+    case 6:
+      if(!vm->State().MessageHidden)throw FormatError("confirmation wake needs an actually hidden message");
+      key(SDLK_RETURN,7);break;
+    case 7:
+      if(vm->Opcode()==0x64 && site!=visibilityOrigin) {
+        if(vm->State().MessageHidden || modalOwned())throw FormatError("confirmation did not restore and advance");
+        std::ofstream result(captureDirectory/"message-visibility.json");
+        result<<"{\"passed\":true,\"origin\":["<<visibilityOrigin.first<<','<<visibilityOrigin.second
+          <<"],\"resumed\":["<<site.first<<','<<site.second<<"],\"now\":"<<now
+          <<",\"unrevealed_input2_reveals_only\":true,\"toggle_preserves_message\":true,\"toggle_clears_policy_and_readiness\":true,\"hidden_menu_wake_opens_menu\":true,\"cancel_preserves_message\":true,\"hidden_confirm_wake_advances\":true,\"native_nonconsuming_input\":true,\"manual_visual_acceptance\":false}\n";
+        result.close();if(!result)throw FormatError("cannot save message visibility result");
+        targetCompleted=true;quit=true;visibilityCaptureStage=8;
+      }
+      break;
+  }
+};

@@ -92,6 +92,7 @@ class OrdinaryWidgetInput {
   void BeginFrame(WidgetInputHistory::Snapshot snapshot);
   bool UpdatePrimary();
   void UpdateButtons(std::array<int32_t, 2> offset);
+  void ResetWidgets();  // Fresh manager; retain the shared platform input history.
   void CancelPointer();  // PC focus/capture loss: discard contacts without
                          // activation.
   bool Query(uint32_t widget, WidgetQuery query, bool condition0 = false,

@@ -3,6 +3,7 @@
 #include "skipauto.h"
 #include "resources.h"
 #include "savepreview.h"
+#include "scenariomenu.h"
 
 #include <algorithm>
 #include <bit>
@@ -20,8 +21,26 @@ void VirtualMachine::UpdateSkipAuto(SkipAutoState& policy,
                                    const SkipAutoInput& input,
                                    int32_t autoKeyDuration, uint64_t now) {
   if (profile_) throw UnsupportedCommand("profile owns the active input loop");
-  UpdateSkipAutoPolicy(state_, policy, input, autoKeyDuration, now);
+  auto nativeInput = input;
+  nativeInput.HideMessages = nativeInput.HideMessages || state_.MessageHidden;
+  UpdateSkipAutoPolicy(state_, policy, nativeInput, autoKeyDuration, now);
   if(state_.BattleEntry.Known)state_.BattleEntry.MessageModeByte=uint8_t(policy.Auto);
+}
+void VirtualMachine::UpdateMessageVisibility(SkipAutoState& policy,
+    bool togglePressed, bool wakePressed, bool servicesBlocked) {
+  if(profile_)throw UnsupportedCommand("profile owns the active input loop");
+  const bool revealed = backend_.CursorVisible();
+  state_.ScenarioInputReady = ScenarioMenuInputReady(revealed, togglePressed, state_.BattleEntry.Enabled);
+  if(revealed && togglePressed && !state_.BattleEntry.Enabled) {
+    state_.PendingEvents.push_back({GameEventKind::Sound,6});
+    state_.MessageHidden = !state_.MessageHidden;
+    state_.SkipMode = 0;
+    policy.Auto = false;
+  }
+  if(state_.MessageHidden && wakePressed && !servicesBlocked) {
+    state_.PendingEvents.push_back({GameEventKind::Sound,6});
+    state_.MessageHidden = false;
+  }
 }
 
 CompletedCommand VmBackend::Route(uint16_t, std::span<const uint8_t>) const { return {}; }
@@ -248,6 +267,9 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     state_.SpeakerId = -1;
     state_.ActiveText.clear();
     state_.Messages = {};
+    backend_.ClearMessage(0);backend_.ClearMessage(1);
+    state_.MessageHidden = false;
+    state_.ScenarioInputReady = false;
     state_.LaneCommandIndex.fill(-1);
     state_.FirstAsyncCommandIndex = -1;
     // BindScenarioOwner80071c3c..c62 clears these owner bytes even though
@@ -940,7 +962,8 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
     }
     if (!backend_.BeginMessageUpdate(index, now, input.Route)) return false;
     if (!backend_.MessageRevealed(index, now)) {
-      if (input.Advance || input.Route == UpdateRoute::Skipping) backend_.RevealMessage(index);
+      if (input.Advance || (input.RevealOnly && !state_.BattleEntry.Enabled) ||
+          input.Route == UpdateRoute::Skipping) backend_.RevealMessage(index);
       if (input.Route == UpdateRoute::Normal) backend_.EndMessageUpdate(index, now);
       return false;
     }

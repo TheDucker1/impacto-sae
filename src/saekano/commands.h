@@ -64,6 +64,8 @@ struct SemanticState {
   // C14514 / M1451c. Native context reset initializes this independent gate
   // to0; retain it separately from the approach-gauge-changing byte C1451c.
   bool ScenarioMenuBlocked = false;
+  bool MessageHidden = false;       // C151d / M1525; fresh manager state.
+  bool ScenarioInputReady = false;  // C14fbc / M14fc4; per-update publication.
   std::optional<OrdinaryVoiceSettings> VoiceSettings;
   int32_t ScriptFileId = 0;
   int32_t CurrentCommandIndex = 0;
@@ -205,6 +207,7 @@ struct CommandInput {
   ProfileSelectionInput Profile;
   ApproachSelectionInput Approach;
   OrdinaryChoiceInput Ordinary;
+  bool RevealOnly = false;  // Native input2 reveals ordinary text, never advances it.
 };
 
 struct MessageCommand {

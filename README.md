@@ -20,6 +20,10 @@ real-data cases. The implementation plan, measured native-reference
 coverage and next work are in [doc/saekano/STATUS.md](doc/saekano/STATUS.md) and
 [doc/saekano/PLAN.md](doc/saekano/PLAN.md).
 
+PC ordinary dialogue controls: Enter/gamepad East confirms; Space/gamepad West reveals
+unfinished text or toggles the completed dialogue window; Escape/gamepad Start
+opens the scenario menu. [Visibility behavior and verification](doc/saekano/MESSAGE_VISIBILITY.md).
+
 On the documented Windows Build Tools installation, build and test its standalone
 C++ core with `./tools/saekano/build.ps1`. This does not require the graphical
 application's dependencies. See [the VM bridge documentation](doc/saekano/VM_PROTOCOL.md)

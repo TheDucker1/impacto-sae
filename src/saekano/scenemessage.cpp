@@ -278,6 +278,7 @@ bool SceneMessageBackend::BeginMessageUpdate(size_t command, uint64_t now,
 void SceneMessageBackend::CompleteMessage(size_t command, uint64_t now) {
   if (!current_ || current_->Command != command)
     throw UnsupportedCommand("scene message has not started");
+  cursorVisible_ = false; // Native848ba clears C1660 on actual completion.
   if (!voices_) {
     if (current_->VoiceId >= 0)
       throw UnsupportedCommand("ordinary voice owner is unavailable");

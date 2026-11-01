@@ -82,7 +82,7 @@ class SceneMessageBackend : public HeadlessBackend {
   void SetPreferences(uint8_t textSpeed,std::optional<uint8_t> autoSpeed);
   bool ConsumeVoiceEvent(const GameEvent& event);
   void UpdateMessage(uint64_t now);
-  bool CursorVisible() const { return cursorVisible_; }
+  bool CursorVisible() const override { return cursorVisible_; }
   const SceneMessageTextState* CurrentMessage() const;
   const SceneMessageTextState* MessageSide(size_t side) const;
   void ResetMessages();  // Owning frontend calls this on manager replacement.

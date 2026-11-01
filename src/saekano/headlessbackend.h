@@ -131,14 +131,23 @@ class HeadlessBackend : public VmBackend {
   const BattleGaugeEnvironment* BattleEnvironment() const override {
     return BattleConfig ? &*BattleConfig : nullptr;
   }
-  void BeginMessage(size_t command, const MessageCommand&, size_t, uint64_t) override {
+  void BeginMessage(size_t command, const MessageCommand&, size_t side, uint64_t) override {
     revealed_[command] = AutoReveal;
+    cursorVisible_ = false; messageSide_ = side;
   }
-  bool MessageRevealed(size_t command, uint64_t) override { return revealed_.at(command); }
+  bool MessageRevealed(size_t command, uint64_t) override {
+    if(revealed_.at(command))cursorVisible_=true;
+    return revealed_.at(command);
+  }
+  bool CursorVisible() const override { return cursorVisible_; }
+  void CompleteMessage(size_t, uint64_t) override { cursorVisible_=false; }
+  void ClearMessage(size_t side) override { if(side==messageSide_)cursorVisible_=false; }
   bool MessageAdvanceAllowed(size_t, uint64_t) override { return AutoAdvanceEnabled(); }
   void RevealMessage(size_t command) override { revealed_.at(command) = true; }
 
  private:
+  bool cursorVisible_ = false;
+  size_t messageSide_ = 0;
   std::map<size_t, bool> revealed_;
 };
 
