@@ -139,7 +139,7 @@ class VirtualMachine {
   const SemanticState& State() const { return state_; }
   const MessageRuntimeContext& MessageContext() const { return messageContext_; }
   const NativeWorkingContext* WorkingContext() const {
-    return workingContext_ ? &*workingContext_ : nullptr;
+    return state_.WorkingSave ? &state_.WorkingSave->Context : nullptr;
   }
   NativeSlotRecord CaptureWorkingRecord() const;
   const DispatchState& Dispatcher() const { return dispatcher_; }
@@ -238,8 +238,6 @@ class VirtualMachine {
   VmBackend& backend_;
   SemanticState state_;
   MessageRuntimeContext messageContext_;
-  std::optional<NativeWorkingContext> workingContext_;
-  std::unique_ptr<NativeSlotRecord> workingRecordMetadata_;
   DispatchState dispatcher_;
   std::unique_ptr<ScriptObject> script_;
   std::vector<RuntimeCommand> commands_;

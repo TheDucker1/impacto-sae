@@ -6,6 +6,27 @@
 #include <bit>
 
 namespace Impacto::Saekano {
+NativeWorkingRecord MakeFreshNativeWorkingRecord() {
+  NativeWorkingRecord working;
+  working.Retained.Words1ad8[2] = 0xffffffff;
+  working.Retained.Word1b54 = 0xffffffff;
+  working.Retained.Words1b94[2] = working.Retained.Words1b94[3] = 0xffffffff;
+  working.Retained.Words2b8[6] = 0xffffffff;
+  working.Context.Header = working.Retained.Words1ad8;
+  working.Context.ResumeWords = {0xffffffff, 0xffffffff};
+  // Native leaves day/time/mode unwritten. Value initialization is intentional;
+  // no blank surface or fabricated context encoding is substituted here.
+  return working;
+}
+void InitializeFreshWorkingOwner(SemanticState& owner, const TitleSessionSeeds& seeds) {
+  if (owner.WorkingSave || owner.SavedChapter || owner.WorkingDayTime || !owner.ProfileOwner.Known)
+    throw FormatError("fresh working owner would overwrite existing or unknown state");
+  auto working = MakeFreshNativeWorkingRecord();
+  ResetTitleSession(owner, seeds);  // Validates authored seed extents before writes.
+  owner.SavedChapter = ChapterTitleCommand{-1, {}};
+  owner.WorkingDayTime = SavedDayTime{};
+  owner.WorkingSave = std::move(working);
+}
 NativeWorkingContext MakeNativeWorkingContext(const NativeSlotRecord& slot) {
   const auto context = DecodeNativeContextSave(slot.Bytesad8);
   const std::array<uint32_t, 3> header{uint32_t(context.File),

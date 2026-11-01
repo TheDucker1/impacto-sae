@@ -2,6 +2,7 @@
 
 #include "formats.h"
 #include "contextsnapshot.h"
+#include "workingcontext.h"
 #include "backlog.h"
 #include "systemsave.h"
 #include "ordinaryvoice.h"
@@ -48,6 +49,7 @@ struct GameEvent {
 struct SemanticState {
   BacklogHistory Backlog;  // Shared session owner; survives manager/file replacement.
   ContextSnapshotMetadata SnapshotMetadata;
+  std::optional<NativeWorkingRecord> WorkingSave;  // Session S5e814; absent in portable inputs.
   // Complete raw persistent owner retains all nine history groups, slot metadata,
   // unknown options/words. Typed gameplay consumers below overlay their fields.
   std::optional<NativeSystemSave> SystemProgress;

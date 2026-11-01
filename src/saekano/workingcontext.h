@@ -1,11 +1,13 @@
 #pragma once
 #include "formats.h"
+#include "slotdata.h"
 #include <array>
 
 namespace Impacto::Saekano {
 struct NativeSlotRecord;
 struct NativeContextSave;
 struct SemanticState;
+struct TitleSessionSeeds;
 // Only the verified context portion of S5e814's working record. This is not a
 // complete current save slot: shared bank/chapter/profile ownership is separate.
 struct NativeWorkingContext {
@@ -16,6 +18,14 @@ struct NativeWorkingContext {
   size_t Used = 0;
   uint64_t Refreshes = 0;  // Diagnostic, not serialized.
 };
+// S5e814 is session-owned, not manager-owned; both values survive file/profile
+// replacement. Context.Used==0 means constructor storage, not a loadable snapshot.
+struct NativeWorkingRecord {
+  NativeSlotRecord Retained;
+  NativeWorkingContext Context;
+};
+NativeWorkingRecord MakeFreshNativeWorkingRecord();
+void InitializeFreshWorkingOwner(SemanticState& owner, const TitleSessionSeeds& seeds);
 NativeWorkingContext MakeNativeWorkingContext(const NativeSlotRecord& slot);
 void RefreshNativeWorkingContext(NativeWorkingContext& working,
                                   const NativeContextSave& current, uint8_t mode);

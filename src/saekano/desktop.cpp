@@ -2053,7 +2053,18 @@ int RunScenarioScene(ViewerWindow& window, UiBlitRenderer& renderer,
           for(size_t i=0;i<state.Bank0.size();++i){if(i)snapshot<<',';snapshot<<state.Bank0[i];}
           snapshot<<"],\"stats\":[";
           for(size_t i=0;i<state.ProfileOwner.Stats.size();++i){if(i)snapshot<<',';snapshot<<state.ProfileOwner.Stats[i];}
-          snapshot<<"]}\n";snapshot.close();if(!snapshot)throw FormatError("cannot save opening owner snapshot");
+          const auto* working = vm->WorkingContext();
+          if (!working || !working->Used) throw FormatError("fresh opening has no working context snapshot");
+          const auto record = vm->CaptureWorkingRecord().Encode();
+          std::ofstream contextFile(captureDirectory/"working-context.bin",std::ios::binary);
+          contextFile.write(reinterpret_cast<const char*>(working->Buffer.data()),working->Buffer.size());
+          contextFile.close();
+          std::ofstream recordFile(captureDirectory/"working-record.bin",std::ios::binary);
+          recordFile.write(reinterpret_cast<const char*>(record.data()),record.size());recordFile.close();
+          if (!contextFile || !recordFile) throw FormatError("cannot save fresh opening working record");
+          snapshot<<"],\"working_context_used\":"<<working->Used<<",\"working_refreshes\":"<<working->Refreshes
+                  <<",\"backlog_count\":"<<state.Backlog.Count()<<",\"working_record_bytes\":"<<record.size()<<"}\n";
+          snapshot.close();if(!snapshot)throw FormatError("cannot save opening owner snapshot");
         }
         laidOut = false;
         capturePointerStage = 0;
@@ -4924,6 +4935,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     InitializeFreshAudioOwner(*owner);InitializeFreshOptionsRuntime(*owner);InitializeFreshBattleOwner(*owner);InitializeFreshMessageOwner(*owner);
     InitializeFreshCgHistory(*owner,LoadAlbumConfiguration(first,SceneRead(usrdir/"env/env_omake.dat")).RequiredImages);
     InitializeFreshProfileEntry(*owner,ProfileInitialStats::Decode(profile),LoadProfileItemCatalog(first));
+    InitializeFreshWorkingOwner(*owner, seeds);
     const auto history=HistoryEnvironment::DecodeDebug(SceneRead(usrdir/"env/env_debug.dat"));
     auto progress=MakeFreshSystemProgress(first,history.InitiallyRead!=0);
     const auto progressRoot=!requestedProgressRoot.empty()?requestedProgressRoot:

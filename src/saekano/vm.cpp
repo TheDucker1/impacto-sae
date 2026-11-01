@@ -110,8 +110,7 @@ std::unique_ptr<VirtualMachine> VirtualMachine::FromNativeSlot(
       scripts, backend, std::move(owner), messageContext, true));
   ApplyNativeSlotWorkingOwner(vm->state_, pending);
   vm->state_.Backlog.Clear();  // Native wrapper309a4, immediately after Load preparation.
-  vm->workingContext_ = MakeNativeWorkingContext(pending.Record);
-  vm->workingRecordMetadata_ = std::make_unique<NativeSlotRecord>(pending.Record);
+  vm->state_.WorkingSave = NativeWorkingRecord{pending.Record, MakeNativeWorkingContext(pending.Record)};
   QueueNativeSlotLoadStops(vm->state_);
   auto restore = std::make_unique<SlotRestore>();
   restore->Saved = pending.Context;
@@ -406,16 +405,16 @@ void VirtualMachine::ActivateLane(size_t lane) {
 }
 
 NativeSlotRecord VirtualMachine::CaptureWorkingRecord() const {
-  if (!workingRecordMetadata_ || !workingContext_)
-    throw UnsupportedCommand("working record requires a native owner source");
-  return ComposeNativeWorkingRecord(*workingRecordMetadata_, state_, *workingContext_);
+  if (!state_.WorkingSave || !state_.WorkingSave->Context.Used)
+    throw UnsupportedCommand("working record requires an initialized owner and context snapshot");
+  return ComposeNativeWorkingRecord(state_.WorkingSave->Retained, state_, state_.WorkingSave->Context);
 }
 void VirtualMachine::RefreshWorkingContext() {
-  if (!workingContext_) return;
+  if (!state_.WorkingSave) return;
   if (!state_.SnapshotMetadata.WorkingMode)
     throw UnsupportedCommand("working context has unknown current mode byte");
   const auto current = CaptureNativeContext(state_, messageContext_);
-  RefreshNativeWorkingContext(*workingContext_, current, *state_.SnapshotMetadata.WorkingMode);
+  RefreshNativeWorkingContext(state_.WorkingSave->Context, current, *state_.SnapshotMetadata.WorkingMode);
 }
 void VirtualMachine::SetupMessage(size_t index, uint64_t now) {
   if (!messageContext_.Known)
@@ -442,7 +441,7 @@ void VirtualMachine::SetupMessage(size_t index, uint64_t now) {
   backend_.SetSplitDialogue(messageContext_.SplitDialogue);
   backend_.SetMessageDualCleanup(state_.MouthControl && state_.MouthControl->DualCleanup);
   backend_.BeginMessage(index, message, context, now);
-  if(workingContext_) {
+  if(state_.WorkingSave) {
     if(!state_.BattleEntry.Known || !state_.ApproachMode.Enabled || !messageContext_.BacklogSuppressed)
       throw UnsupportedCommand("message backlog gate owners are unknown");
     const MessageBacklogGates gates{uint8_t(state_.BattleEntry.Enabled),uint8_t(*state_.ApproachMode.Enabled),
@@ -643,7 +642,7 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
     if (!models) throw UnsupportedCommand("Live2D resource/model backend is unavailable");
     StartLive2d(state_.Live2d, *command.Live2d, *models, now);
   } else if (opcode == 0x65 && !lane) {
-    if (workingContext_ && !backend_.BacklogConfig())
+    if (state_.WorkingSave && !backend_.BacklogConfig())
       throw UnsupportedCommand("native choice backlog environment is unavailable");
     command.SavedDay = uint8_t(state_.DayEnabled);
     state_.DayEnabled = 0;
@@ -941,7 +940,7 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
   if (opcode == 0x65) {
     const std::array<size_t,1> flags{*commitInput.Choice};
     backend_.RecordChoiceHistory(state_.ScriptFileId,uint32_t(index),flags);
-    if (workingContext_) {
+    if (state_.WorkingSave) {
       const auto* environment = backend_.BacklogConfig();
       if (!environment) throw UnsupportedCommand("native choice backlog environment is unavailable");
       state_.Backlog.AppendChoice(command.OrdinaryMenu->Entries.at(*commitInput.Choice).Label,
