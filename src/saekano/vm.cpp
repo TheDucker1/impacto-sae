@@ -104,6 +104,7 @@ std::unique_ptr<VirtualMachine> VirtualMachine::FromNativeSlot(
   auto vm = std::unique_ptr<VirtualMachine>(new VirtualMachine(
       scripts, backend, std::move(owner), messageContext, true));
   ApplyNativeSlotWorkingOwner(vm->state_, pending);
+  vm->workingContext_ = MakeNativeWorkingContext(pending.Record);
   QueueNativeSlotLoadStops(vm->state_);
   auto restore = std::make_unique<SlotRestore>();
   restore->Saved = pending.Context;
@@ -293,6 +294,8 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     const auto keywordSuppressed = messageContext_.KeywordSuppressed;
     messageContext_ = {};
     state_.SnapshotMetadata = {};
+    // Native reset801a02c8 clears context1b58 (=manager1b60).
+    state_.SnapshotMetadata.WorkingMode = 0;
     messageContext_.SnapshotCursors = FreshMessageSnapshotCursors();
     messageContext_.KeywordSuppressed = keywordSuppressed;  // owner S survives
     dispatcher_ = {};
@@ -388,6 +391,13 @@ void VirtualMachine::ActivateLane(size_t lane) {
     state_.LaneCommandIndex[lane] = 0;
 }
 
+void VirtualMachine::RefreshWorkingContext() {
+  if (!workingContext_) return;
+  if (!state_.SnapshotMetadata.WorkingMode)
+    throw UnsupportedCommand("working context has unknown current mode byte");
+  const auto current = CaptureNativeContext(state_, messageContext_);
+  RefreshNativeWorkingContext(*workingContext_, current, *state_.SnapshotMetadata.WorkingMode);
+}
 void VirtualMachine::SetupMessage(size_t index, uint64_t now) {
   if (!messageContext_.Known)
     throw UnsupportedCommand("restored message policy/split-side context is missing");
@@ -435,6 +445,7 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
     command.SelectedOrdinal = 0;
   }
   if (opcode == 0x64) {
+    if (!lane) RefreshWorkingContext();  // Native84748 snapshots before setup.
     if (lane || !command.Routing.QueueForLane) SetupMessage(index, now);
   } else if(opcode==0x2c6) {
     if(!lane)StartLipAction(state_,*command.LipAction);
@@ -867,6 +878,9 @@ bool VirtualMachine::Update(size_t index, uint64_t now, const CommandInput& inpu
   if (opcode == 0x65) {
     const std::array<size_t,1> flags{*commitInput.Choice};
     backend_.RecordChoiceHistory(state_.ScriptFileId,uint32_t(index),flags);
+    // Native choice refresh follows the old-record backlog append. Backlog
+    // ownership is not bound yet; do not dispatch or restore day before here.
+    RefreshWorkingContext();
     if(auto* policy=backend_.AutoPolicy())CompleteApproachResultPolicy(state_,*policy);
     state_.DayEnabled = int32_t(command.SavedDay);
   }

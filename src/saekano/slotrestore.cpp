@@ -71,8 +71,9 @@ void ApplyNativeSlotContextValues(SemanticState& state,
   auto next = std::make_unique<SemanticState>(state);
   auto context = message;
   context.SnapshotCursors = RestoreMessageSnapshotCursors(saved);
-  next->SnapshotMetadata = {saved.StringCodeUnits, uint16_t(field(0x1b9e, 2)),
-                             saved.FixedRecords};
+  next->SnapshotMetadata.RetainedString = saved.StringCodeUnits;
+  next->SnapshotMetadata.RetainedShort = uint16_t(field(0x1b9e, 2));
+  next->SnapshotMetadata.ScriptParticles = saved.FixedRecords;
   next->ScriptFileId = saved.File;
   next->CurrentCommandIndex = saved.ResumeCommand;
   next->PendingCommandIndex = -1;

@@ -14,6 +14,7 @@ struct ContextSnapshotMetadata {
   std::optional<std::vector<uint16_t>> RetainedString;
   std::optional<uint16_t> RetainedShort;
   std::optional<std::array<std::array<uint32_t, 6>, 6>> ScriptParticles;
+  std::optional<uint8_t> WorkingMode;  // Manager1b60, outside context stream.
 };
 // Current owner -> native typed stream. Resource reconstruction must have
 // completed. Wire offsets are produced by the encoder/decoder, not this builder.

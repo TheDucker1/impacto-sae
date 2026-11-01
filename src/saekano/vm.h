@@ -4,6 +4,7 @@
 #include "profilemode.h"
 #include "slotrestore.h"
 #include "messagesnapshot.h"
+#include "workingcontext.h"
 
 #include <memory>
 
@@ -129,6 +130,9 @@ class VirtualMachine {
       const ProfileMode& completed, MessageRuntimeContext messageContext = {});
   const SemanticState& State() const { return state_; }
   const MessageRuntimeContext& MessageContext() const { return messageContext_; }
+  const NativeWorkingContext* WorkingContext() const {
+    return workingContext_ ? &*workingContext_ : nullptr;
+  }
   const DispatchState& Dispatcher() const { return dispatcher_; }
   VmBoundary Boundary() const { return boundary_; }
   uint16_t Opcode() const;
@@ -221,6 +225,7 @@ class VirtualMachine {
   VmBackend& backend_;
   SemanticState state_;
   MessageRuntimeContext messageContext_;
+  std::optional<NativeWorkingContext> workingContext_;
   DispatchState dispatcher_;
   std::unique_ptr<ScriptObject> script_;
   std::vector<RuntimeCommand> commands_;
@@ -241,6 +246,7 @@ class VirtualMachine {
   void Start(size_t index, uint64_t now, bool lane);
   bool Update(size_t index, uint64_t now, const CommandInput& input, bool lane);
   void SetupMessage(size_t index, uint64_t now);
+  void RefreshWorkingContext();
   void CollectMessageKeywords(size_t index);
   void UpdateLanes(uint64_t now);
   VmEvent Event(VmBoundary boundary) const;

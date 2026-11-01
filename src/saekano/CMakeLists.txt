@@ -27,6 +27,7 @@ add_library(saekano_core STATIC formats.cpp commands.cpp flow.cpp vm.cpp resourc
 target_link_libraries(saekano_core PUBLIC ZLIB::ZLIB saekano_audio)
 target_sources(saekano_core PRIVATE messagesnapshot.cpp)
 target_sources(saekano_core PRIVATE contextsnapshot.cpp)
+target_sources(saekano_core PRIVATE workingcontext.cpp)
 add_executable(saekano_message_snapshot_probe ../../tools/saekano/message_snapshot_probe.cpp)
 target_link_libraries(saekano_message_snapshot_probe PRIVATE saekano_core)
 add_executable(saekano_model_snapshot_probe ../../tools/saekano/model_snapshot_probe.cpp)
