@@ -206,11 +206,15 @@ struct ParticlePointEmitter {
   std::string ParticleName, TextureName;
   std::array<int32_t, 3> Integers{};
   std::array<float, 9> Values{};
+  enum class Kind { Point, Cube };
+  Kind Type=Kind::Point;
+  bool CubeFilled=true;
+  std::array<float,3> CubeExtent{},CubeInnerCenter{},CubeInnerExtent{};
   static ParticlePointEmitter DecodeRow(std::span<const uint8_t> bytes);
   // Native creation type5: base + from + (to-from)*emitted/count, f32 stages.
   std::array<float, 3> Origin(int32_t emitted) const;
   std::array<float, 14> Creation(int32_t emitted,
-      const std::array<float, 14>& owner, float headerScalar) const;
+      const std::array<float, 14>& owner, float headerScalar,GameRandom* random=nullptr) const;
 };
 struct ParticleEffectHeader {
   std::string Name;
@@ -231,6 +235,8 @@ struct ParticleEffectProgram {
   ParticleEffectHeader Header;
   std::vector<ParticlePointEmitter> Points;
   bool Batched = false;  // Native runtime resource28; header construction initializes0.
+  struct NestedEffect { size_t Program=0;int32_t Start=0;std::array<float,3> Position{}; };
+  std::vector<NestedEffect> Nested;
 };
 // Plan due emissions in native row order. The caller executes each event with
 // Emit (which advances its row count); this planner does not mutate storage.
@@ -254,13 +260,18 @@ struct PreparedParticleEffects {
 };
 struct ParticleEffectState {
   std::vector<ParticleEmitterState> Rows;
+  std::vector<ParticleEffectState> Children;
+  std::optional<size_t> BoundProgram;
   std::array<float, 14> Owner{};
   std::array<float, 2> OriginOffset{};
   int32_t Counter = 0, StartOffset = 0, Repeats = 0;
   bool Enabled = true, Running = true, Emitting = true;
+  void Clear(); // Retire local rows and all child owners, retaining bindings/counters.
   // Native494e updates all stored particles, including retired entries.
   void SetOriginOffset(const std::array<float, 2>& offset);
   void Start(const ParticleEffectProgram& program, const PreparedParticleEffects& assets, GameRandom& random);
+  void StartChild(size_t index,const ParticleEffectProgram& program,
+      const PreparedParticleEffects& assets,GameRandom& random,bool propagateOrigin);
   bool Update(const ParticleEffectProgram& program, const PreparedParticleEffects& assets,
               uint64_t elapsedDelta, GameRandom& random);
 };

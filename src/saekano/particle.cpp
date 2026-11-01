@@ -532,13 +532,27 @@ bool AdvanceParticle(ParticleRuntimeState& state, const ParticleDefinition* defi
   return true;
 }
 std::array<float, 14> ParticlePointEmitter::Creation(int32_t emitted,
-    const std::array<float, 14>& owner, float headerScalar) const {
+    const std::array<float, 14>& owner, float headerScalar,GameRandom* random) const {
   // Native186bc4 defaults, then ADD_POINT_POINT overrides position only in
   // the local14 block. Its from/to triples feed Origin separately.
   std::array<float, 14> local{};
   local[9] = local[13] = 1.0f;
   const std::array<float, 3> pivot{Values[0], Values[1], Values[2]};
-  const auto position = TransformParticleEmitterPosition(Origin(emitted), pivot, {0, 0, 0});
+  auto origin=pivot;
+  if(Type==Kind::Point)origin=Origin(emitted);
+  else {
+    if(!random)throw FormatError("cube emission needs the owning particle RNG");
+    const bool inner=std::all_of(CubeInnerExtent.begin(),CubeInnerExtent.end(),[](float value){return ParticleSignedWord(value*100.f)!=0;});
+    if(!CubeFilled || inner)throw UnsupportedCommand("cube surface/inner exclusion variant is not implemented");
+    // Native174a..1960: each axis samples the hundredth-unit integer range,
+    // including zero-sized ranges. Sampling precedes all PRTF births for a row.
+    for(size_t axis=0;axis<3;++axis) {
+      const auto low=ParticleSignedWord((pivot[axis]-CubeExtent[axis])*100.f);
+      const auto high=ParticleSignedWord((pivot[axis]+CubeExtent[axis])*100.f);
+      origin[axis]=float(random->Range(low,high))/100.f;
+    }
+  }
+  const auto position = TransformParticleEmitterPosition(origin, pivot, {0, 0, 0});
   std::copy(position.begin(), position.end(), local.begin());
   return ComposeParticleCreation(local, owner, headerScalar);
 }
@@ -546,7 +560,7 @@ void ParticleEmitterState::Emit(const ParticlePointEmitter& point,
     const ParticleDefinition& definition, const std::array<float, 14>& owner,
     const ParticleEffectHeader& header, const std::array<float, 2>& originOffset,
     GameRandom& random) {
-  const auto creation = point.Creation(Emitted, owner, header.Scalar);
+  const auto creation = point.Creation(Emitted, owner, header.Scalar,&random);
   const auto count = std::bit_cast<int32_t>(definition.Bits(0x290));
   for (int32_t i = 0; i < count; ++i) {
     ParticleRuntimeState particle;
@@ -734,6 +748,19 @@ void ParticleEffectState::SetOriginOffset(const std::array<float, 2>& offset) {
   OriginOffset = offset;
   for (auto& row : Rows)
     for (auto& particle : row.Particles) particle.OriginOffset = OriginOffset;
+  for(auto& child:Children)child.SetOriginOffset(offset);
+}
+void ParticleEffectState::Clear() {
+  Rows.clear();Enabled=Running=Emitting=false;
+  for(auto& child:Children)child.Clear();
+}
+void ParticleEffectState::StartChild(size_t index,const ParticleEffectProgram& program,
+    const PreparedParticleEffects& assets,GameRandom& random,bool propagateOrigin) {
+  const auto& nested=program.Nested.at(index);auto& child=Children.at(index);
+  child.BoundProgram=nested.Program;child.StartOffset=StartOffset;child.Owner=Owner;
+  // Native stores ADD_EFFECT's XYZ but does not consume it in this lifecycle.
+  child.Start(assets.Catalog.Programs.at(nested.Program),assets,random);
+  if(propagateOrigin)child.SetOriginOffset(OriginOffset);
 }
 void ParticleEffectState::Start(const ParticleEffectProgram& program,
     const PreparedParticleEffects& assets, GameRandom& random) {
@@ -741,11 +768,16 @@ void ParticleEffectState::Start(const ParticleEffectProgram& program,
   Enabled = Running = Emitting = true;
   for (const auto row : DueParticleEmissions(program, Rows, Counter, StartOffset, true))
     EmitEffectRow(*this, program, assets, row, random);
+  const auto previous=Children.size();Children.resize(program.Nested.size());
+  for(size_t i=previous;i<Children.size();++i)Children[i].Enabled=Children[i].Running=Children[i].Emitting=false;
+  for(size_t i=0;i<Children.size();++i)
+    if(uint32_t(program.Nested[i].Start)<=uint32_t(Counter))StartChild(i,program,assets,random,true);
+  Repeats=0;OriginOffset={}; // Native3df8..3e00; inline repeat preserves these separately.
 }
 bool ParticleEffectState::Update(const ParticleEffectProgram& program,
     const PreparedParticleEffects& assets, uint64_t elapsedDelta, GameRandom& random) {
   if (!Enabled || !Running) return true;
-  if (Rows.size() != program.Points.size()) throw FormatError("particle effect row mismatch");
+  if (Rows.size() != program.Points.size() || Children.size()!=program.Nested.size())throw FormatError("particle effect row/child mismatch");
   Counter = std::bit_cast<int32_t>(uint32_t(Counter) + 1);
   const uint32_t deadline = uint32_t(StartOffset) + uint32_t(program.Header.Integers[0]);
   if (deadline > uint32_t(Counter)) {
@@ -755,6 +787,11 @@ bool ParticleEffectState::Update(const ParticleEffectProgram& program,
       while (event < due.size() && due[event] == row) { EmitEffectRow(*this, program, assets, row, random); ++event; }
       AgeEffectRow(*this, program, assets, row, elapsedDelta, random);
     }
+    for(size_t i=0;i<Children.size();++i) {
+      auto& child=Children[i];
+      if(child.Enabled)child.Update(assets.Catalog.Programs.at(*child.BoundProgram),assets,elapsedDelta,random);
+      else if(uint32_t(program.Nested[i].Start)<=uint32_t(Counter))StartChild(i,program,assets,random,false);
+    }
     return true;
   }
   bool restarted = false;
@@ -762,9 +799,15 @@ bool ParticleEffectState::Update(const ParticleEffectProgram& program,
   if (Repeats != repeatLimit) {
     if (repeatLimit != -1) {
       Repeats = std::bit_cast<int32_t>(uint32_t(Repeats) + 1);
+      for(auto& row:Rows)row.Emitted=0;
+      restarted=true;
     }
-    Start(program, assets, random);  // No nested effects in the supported point catalog.
-    restarted = true;  // Native42c6 sets success for both finite and-1 repeats.
+    // Native restarts point-only owners inline. A nested infinite owner returns
+    // false once, letting the outer manager spawn the next overlapping handle.
+    if(Children.empty()) {
+      const auto repeats=Repeats;const auto origin=OriginOffset;
+      Start(program,assets,random);Repeats=repeats;OriginOffset=origin;restarted=true;
+    }
   } else Running = false;
   bool result = false;
   if (!Emitting || restarted) {
@@ -776,6 +819,8 @@ bool ParticleEffectState::Update(const ParticleEffectProgram& program,
   } else Emitting = false;
   for (size_t row = 0; row < Rows.size(); ++row)
     AgeEffectRow(*this, program, assets, row, elapsedDelta, random);
+  for(auto& child:Children)if(child.Enabled)
+    child.Update(assets.Catalog.Programs.at(*child.BoundProgram),assets,elapsedDelta,random);
   return result;
 }
 uint32_t ParticleDefinition::Bits(size_t nativeOffset) const {
@@ -893,14 +938,21 @@ float ParticleFloat(const std::string& text) {
 }  // namespace
 ParticlePointEmitter ParticlePointEmitter::DecodeRow(std::span<const uint8_t> bytes) {
   const auto fields = ParticleFields(bytes);
-  if (fields.size() != 16 || fields[0] != "ON" || fields[1] != "ADD_POINT_POINT")
+  const bool cube=fields.size()==20 && fields[1]=="ADD_CUBE";
+  if ((!cube && (fields.size()!=16 || fields[1]!="ADD_POINT_POINT")) || fields[0] != "ON")
     throw FormatError("unsupported particle point row");
   ParticlePointEmitter result;
   result.ParticleName = fields[2]; result.TextureName = fields[3];
   if (result.ParticleName.empty() || result.TextureName.empty())
     throw FormatError("empty particle point resource name");
   for (size_t i = 0; i < 3; ++i) result.Integers[i] = ParticleInteger(fields[4 + i]);
-  for (size_t i = 0; i < 9; ++i) result.Values[i] = ParticleFloat(fields[7 + i]);
+  if(cube) {
+    result.Type=Kind::Cube;result.CubeFilled=ParticleInteger(fields[10])==0;
+    for(size_t i=0;i<3;++i) {
+      result.Values[i]=ParticleFloat(fields[7+i]);result.CubeExtent[i]=ParticleFloat(fields[11+i]);
+      result.CubeInnerCenter[i]=ParticleFloat(fields[14+i]);result.CubeInnerExtent[i]=ParticleFloat(fields[17+i]);
+    }
+  } else for (size_t i = 0; i < 9; ++i) result.Values[i] = ParticleFloat(fields[7 + i]);
   return result;
 }
 ParticleEffectHeader ParticleEffectHeader::DecodeRow(std::span<const uint8_t> bytes) {
@@ -934,9 +986,18 @@ void ParticleEffectCatalog::AppendCsv(std::span<const uint8_t> bytes) {
       if (Names.contains(header.Name)) { Active.reset(); return; }
       Active = Programs.size(); Names.emplace(header.Name, *Active);
       Programs.push_back({std::move(header), {}});
-    } else if (fields[1] == "ADD_POINT_POINT") {
+    } else if (fields[1] == "ADD_POINT_POINT" || fields[1]=="ADD_CUBE") {
       auto point = ParticlePointEmitter::DecodeRow(row);
       if (Active) Programs.at(*Active).Points.push_back(std::move(point));
+    } else if(fields[1]=="ADD_EFFECT") {
+      if(fields.size()<3)throw FormatError("missing nested particle name");
+      const auto child=Names.find(fields[2]);
+      // Nativeeabc ignores names not registered yet; this is not a deferred link.
+      if(child==Names.end())return;
+      if(fields.size()!=7)throw FormatError("invalid nested particle row");
+      ParticleEffectProgram::NestedEffect nested{child->second,ParticleInteger(fields[3]),
+        {ParticleFloat(fields[4]),ParticleFloat(fields[5]),ParticleFloat(fields[6])}};
+      if(Active)Programs.at(*Active).Nested.push_back(nested);
     } else throw FormatError("unbound particle CSV command");
   };
   for (size_t i = 0; i < bytes.size(); ++i) {
@@ -994,11 +1055,8 @@ PreparedParticleEffects PreparedParticleEffects::Prepare(const EffectResourceAss
     } else if (extension == ".csv") result.Catalog.AppendCsv(file.Data);
     else if (extension != ".fls") throw FormatError("unbound particle asset type");
   }
-  // Defer linking until every file has loaded; the archive can place CSV first.
-  for (const auto& program : result.Catalog.Programs)
-    for (const auto& point : program.Points)
-      if (!result.Definitions.contains(point.ParticleName) || !result.Textures.contains(point.TextureName))
-        throw FormatError("particle point references missing definition or texture");
+  // Native resolves definitions at emission. Unused programs can name absent
+  // assets (original smoke pack does); validate the requested closure at Load.
   return result;
 }
 ConfiguredParticleEffect ConfiguredParticleEffect::Load(const GameResources& resources,
@@ -1039,6 +1097,17 @@ ConfiguredParticleEffect ConfiguredParticleEffect::Load(const GameResources& res
     if (found) {
       auto assets = PreparedParticleEffects::Prepare(raw);
       const size_t program = assets.Catalog.Names.at(requested);
+      std::vector<uint8_t> visiting(assets.Catalog.Programs.size());
+      const auto visit=[&](auto&& self,size_t index)->void {
+        if(visiting.at(index)==1)throw FormatError("cyclic nested particle resources");
+        if(visiting[index]==2)return;visiting[index]=1;
+        for(const auto& point:assets.Catalog.Programs[index].Points)
+          if(!assets.Definitions.contains(point.ParticleName) || !assets.Textures.contains(point.TextureName))
+            throw FormatError("particle effect references missing definition or texture");
+        for(const auto& child:assets.Catalog.Programs[index].Nested)self(self,child.Program);
+        visiting[index]=2;
+      };
+      visit(visit,program);
       return {archive, program, std::move(assets)};
     }
   }
@@ -1129,7 +1198,7 @@ bool ParticleManager::Request(size_t effectId, const ParticleEffectRequest& requ
     auto& state = handle.State;
     if (state.Running) continue;
     // Native reset clears row storage/flags, but retains repeat index80.
-    state.Rows.clear(); state.Enabled = state.Running = state.Emitting = false;
+    state.Clear();
     handle.EffectId = effectId;
     state.StartOffset = request.StartOffset; state.Owner = request.Owner;
     state.Start(effect->second.Program(), effect->second.Assets, random_.Generator);
@@ -1149,9 +1218,11 @@ void ParticleManager::Update() {
     for (auto& handle : groups_[group]) {
       if (!handle.EffectId) continue;
       const auto& effect = effects_.at(*handle.EffectId);
-      // Supported catalogs have no nested effects, so native's nested restart
-      // fallback cannot apply. EffectState owns ordinary point repeat behavior.
-      handle.State.Update(effect.Program(), effect.Assets, *delta, random_.Generator);
+      const bool complete=handle.State.Update(effect.Program(),effect.Assets,*delta,random_.Generator);
+      if(!complete && effect.Program().Header.Integers[1]==-1 && !effect.Program().Nested.empty()) {
+        ParticleEffectRequest next{handle.State.StartOffset,uint32_t(group),handle.State.Owner};
+        Request(*handle.EffectId,next); // Native dae6: next free handle, no prewarm.
+      }
     }
   }
 }
@@ -1160,10 +1231,7 @@ void ParticleManager::SetPaused(size_t group, bool paused) {
   clock_.Paused[group] = paused;
 }
 void ParticleManager::ClearGroup(size_t group) {
-  for(auto& handle:groups_.at(group)) {
-    handle.State.Rows.clear();
-    handle.State.Enabled=handle.State.Running=handle.State.Emitting=false;
-  }
+  for(auto& handle:groups_.at(group))handle.State.Clear();
 }
 void ParticleManager::SetOriginOffset(size_t group, const std::array<float, 2>& offset) {
   if (group >= GroupCount) throw FormatError("particle origin group outside manager");
@@ -1181,9 +1249,9 @@ std::vector<ParticleDrawSource> CollectParticleDrawSources(
     std::span<const ParticleEffectDrawOwner> owners, bool batched,
     std::span<const std::string> textureOrder) {
   std::vector<ParticleDrawSource> result;
-  for (const auto& owner : owners) {
+  const auto collect=[&](auto&& self,const ParticleEffectDrawOwner& owner)->void {
     if (!owner.State) throw FormatError("missing particle draw owner");
-    if (!owner.Program || owner.Program->Batched != batched || !owner.State->Enabled) continue;
+    if (!owner.Program || owner.Program->Batched != batched || !owner.State->Running)return;
     if (!owner.Assets || owner.State->Rows.size() != owner.Program->Points.size())
       throw FormatError("particle draw owner resources mismatch");
     for (size_t row = 0; row < owner.State->Rows.size(); ++row) {
@@ -1191,13 +1259,16 @@ std::vector<ParticleDrawSource> CollectParticleDrawSources(
       const auto definition = owner.Assets->Definitions.find(point.ParticleName);
       const auto texture = std::find(textureOrder.begin(), textureOrder.end(), point.TextureName);
       for (const auto& particle : owner.State->Rows[row].Particles) {
-        if (batched && result.size() == 300) return result;
+        if (batched && result.size() == 300)return;
         result.push_back({&particle,
             definition == owner.Assets->Definitions.end() ? nullptr : &definition->second,
             texture == textureOrder.end() ? std::nullopt : std::optional<size_t>(size_t(texture - textureOrder.begin()))});
       }
     }
-  }
+    for(const auto& child:owner.State->Children)if(child.BoundProgram)
+      self(self,{&child,&owner.Assets->Catalog.Programs.at(*child.BoundProgram),owner.Assets});
+  };
+  for(const auto& owner:owners)collect(collect,owner);
   return result;
 }
 std::vector<ParticleDrawSource> ParticleManager::CollectDrawSources(size_t group, bool batched) const {

@@ -21,7 +21,7 @@ enum class SceneDrawKind : uint32_t {
   Event,
   FreeImage,
   Fill,
-  AnimationGroup,
+  AnimationGroup,  // Native1a981c: particle groups0..5; numeric identity retained.
   ApproachSelection,
   OrdinaryChoice
 };

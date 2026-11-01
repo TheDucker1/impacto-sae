@@ -2187,7 +2187,16 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       if(!profileActive){profilePresenter.Begin();profileActive=true;}
       profilePresenter.AfterStep(*mode,now);
     }
-    if(!vm->CurrentProfile())particles.Update();  // Native749fe: scene manager owns this update.
+    if(!vm->CurrentProfile()) {
+      // Native7492e..749fe advances every owned opacity channel, retires zero
+      // groups at their deadline, then updates the particle manager once.
+      for(size_t group=0;group<opacityGroups;++group) {
+        auto& groupOpacity=vm->State().ScriptParticleOpacity.at(group);
+        groupOpacity.Tick(now);
+        if(groupOpacity.Current==0 && groupOpacity.Finished())particles.ClearGroup(group);
+      }
+      particles.Update();
+    }
     for (const auto& request : vm->TakeEvents()) {
       if(request.Kind==GameEventKind::Trophy) {
         if(request.Id<0)throw FormatError("invalid trophy request");
@@ -2354,6 +2363,11 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       if (slot.GeometryAndTexture[6] >= 0)
         throw UnsupportedCommand("first-scene free-image drawing is not bound");
     const auto queue = BuildSceneDrawQueue(state.SceneImages.Slots, gates);
+    const auto camera=UpdateSceneCamera(particleCamera);
+    ParticleProjectionUniforms particleProjection;
+    particleProjection.View=camera.View;particleProjection.Projection=camera.Projection;
+    // Both ordinary callback1a981c and approach74daa use world802627c8.
+    particleProjection.World=ApproachParticleWorld();particleProjection.Aspect=particleCamera.Aspect;
     std::vector<UiSpriteBlit> spriteDraws;
     std::vector<std::array<int32_t, 6>> widgetInputs;
     std::vector<UiTextBlit> textDraws;
@@ -2369,6 +2383,14 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
         upload(sprite.Texture, *pixels);
         drawSprite(sprite);
         spriteDraws.push_back(sprite);
+      } else if (pass.Kind == SceneDrawKind::AnimationGroup) {
+        const auto groupOpacity=float(state.ScriptParticleOpacity.at(pass.Index).Current)/100.f;
+        const auto count=particleRenderer.DrawGroup(particles,pass.Index,groupOpacity,
+            particleProjection,particleFragment,ParticleRasterViewport{});
+        if(capture && captureActive && count)events << "{\"kind\":\"script_particle_group\",\"frame\":" << frame
+          << ",\"now\":" << now << ",\"group\":" << pass.Index << ",\"bucket\":" << pass.Bucket
+          << ",\"opacity\":" << groupOpacity << ",\"draws\":" << count
+          << ",\"rng_draws\":" << particles.Random().Draws() << "}\n";
       } else if (pass.Kind == SceneDrawKind::Characters) {
         for (auto id : SceneCharacterDrawOrder(state)) {
           const auto& actor = state.Characters.at(id);
@@ -2540,10 +2562,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       for(const auto& sprite:BuildApproachGaugeSprites(approachVisual,state.ApproachGauge,false)) {
         uploadMain(sprite.Texture.Entry);drawSprite(sprite);spriteDraws.push_back(sprite);
       }
-      const auto camera=UpdateSceneCamera(particleCamera);ParticleProjectionUniforms projection;
-      projection.View=camera.View;projection.Projection=camera.Projection;
-      projection.World=ApproachParticleWorld();projection.Aspect=particleCamera.Aspect;
-      const auto count=particleRenderer.DrawGroup(particles,6,1.0f,projection,particleFragment,ParticleRasterViewport{});
+      const auto count=particleRenderer.DrawGroup(particles,6,1.0f,particleProjection,particleFragment,ParticleRasterViewport{});
       if(capture && captureActive && count)events << "{\"kind\":\"particle_group\",\"frame\":" << frame
         << ",\"now\":" << now << ",\"draws\":" << count << ",\"rng_draws\":" << particles.Random().Draws()
         << ",\"blend\":" << particleFragment.BlendIndex << ",\"alpha\":" << particleFragment.AlphaFamily << "}\n";
