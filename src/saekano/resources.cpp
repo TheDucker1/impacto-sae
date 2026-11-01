@@ -98,7 +98,12 @@ GameResources::GameResources(const GpdaArchive& root)
     if(!extras.Entries().empty()){
       const GpdaArchive cg(RawEntry(extras,0));
       if(!cg.Entries().empty())frontend->CgCatalogue.emplace(RawEntry(cg,0));
-      if(cg.Entries().size()>1)frontend->CgThumbnails.emplace(RawEntry(cg,1));
+      if(cg.Entries().size()>1){
+        // Native3e082..3e0ac selects cg_thumb.dat child0 (thum_00.dat)
+        // before decoding its texture entries. Movie/battle thumbnails are flat.
+        const GpdaArchive thumbnails(RawEntry(cg,1));
+        if(!thumbnails.Entries().empty())frontend->CgThumbnails.emplace(RawEntry(thumbnails,0));
+      }
     }
     if(extras.Entries().size()>1){
       const GpdaArchive movies(RawEntry(extras,1));

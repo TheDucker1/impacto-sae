@@ -29,6 +29,7 @@ class PcExtrasOwner final:public ExtrasServices {
   });}
   const ExtrasRoot& State()const{return root_;}
   const PcExtrasMusic* MusicChild()const{return musicChild_.get();}
+  const PcExtrasCg* CgChild()const{return cg_.get();}
   const DialogState& Question()const{return presentation_.Question();}
   const SaveManagerDialogHost& Save()const{return presentation_.Save();}
   bool WindowClosed()const{return windowClosed_;}

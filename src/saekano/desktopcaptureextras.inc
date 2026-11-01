@@ -1,7 +1,8 @@
-// One bounded interaction witness through the normal title and SDL input.
+// Bounded interaction witnesses through the normal title and SDL input.
 // Observations drive button timing; no controller phase, readiness, history or
 // service result is assigned by this automation.
-struct ExtrasMusicCapture {
+struct ExtrasInteractionCapture {
+  uint8_t Mode=1;int32_t FirstBuffer=-1,SecondBuffer=-1;
   int Stage=0;int32_t Row=-1,History=-1;uint64_t PausedAt=0,PausePosition=0,ResumePosition=0;
   Bytes ExpectedSystem;bool Finished=false;
   template<class Key>void Tick(PcTitleOwner& title,SemanticState& owner,MusicPlayback& playback,
@@ -11,8 +12,10 @@ struct ExtrasMusicCapture {
     }
     const auto* extras=title.Extras();
     if(Stage==1 && extras && extras->State().Phase()==2 && extras->State().Fade()==0){
-      if(extras->State().Selected()<2)key(SDLK_DOWN);else {key(SDLK_RETURN);Stage=2;}return;
+      const auto target=Mode==1?2:0;
+      if(extras->State().Selected()<target)key(SDLK_DOWN);else {key(SDLK_RETURN);Stage=2;}return;
     }
+    if(Mode==2){TickCg(title,owner,playback,key);return;}
     const auto* music=extras?extras->MusicChild():nullptr;
     if(Stage==2 && music && music->State().Phase()==3){
       const auto& state=music->State();
@@ -42,9 +45,54 @@ struct ExtrasMusicCapture {
     if(Stage==9 && extras && extras->State().Phase()==2 && extras->State().Fade()==0){key(SDLK_ESCAPE);Stage=10;return;}
     if(Stage==10 && !extras && title.State.Phase==10){Finished=true;}
   }
+  template<class Key>void TickCg(PcTitleOwner& title,SemanticState& owner,MusicPlayback& playback,Key key){
+    const auto* extras=title.Extras();const auto* cg=extras?extras->CgChild():nullptr;
+    if(Stage==2 && cg && cg->State().Phase()==4){
+      const auto& state=cg->State();
+      for(size_t i=0;i<state.Catalogue().Cards.size();++i){const auto variants=state.Variants(i);
+        if(std::find(variants.begin(),variants.end(),true)!=variants.end()){Row=int32_t(i);break;}}
+      if(Row<0)throw FormatError("CG interaction requires an unlocked image in imported progress");
+      key(SDLK_RETURN);Stage=3;return;
+    }
+    if(Stage==3 && cg && cg->State().Phase()==5 && !cg->State().List().Scrolling){
+      const auto& state=cg->State();
+      if(state.List().Rows.Selected<Row/9)key(SDLK_E);
+      else if(state.Cell()<Row%9)key(SDLK_RIGHT);
+      else {key(SDLK_RETURN);Stage=4;}return;
+    }
+    const bool visible=cg && cg->State().Viewing() && cg->State().Phase()==9 && cg->State().ImageOpacity()==255 && cg->State().PreviousOpacity()==0;
+    if(Stage==4 && visible){const auto& state=cg->State();FirstBuffer=state.CurrentBuffer();
+      History=state.Catalogue().Card(size_t(Row))->Images.at(size_t(state.Variant()));key(SDLK_C);Stage=5;return;}
+    if(Stage==5 && visible && playback.OrdinaryVoicePlaying(7) && playback.OrdinaryVoicePosition(7)>0){
+      PausePosition=uint64_t(playback.OrdinaryVoicePosition(7));key(SDLK_ESCAPE);Stage=6;return;}
+    if(Stage==6 && visible && !cg->State().CommentActive() && !playback.OrdinaryVoicePlaying(7)){key(SDLK_ESCAPE);Stage=7;return;}
+    if(Stage==7 && cg && cg->State().Phase()==5){key(SDLK_RETURN);Stage=8;return;}
+    if(Stage==8 && visible){SecondBuffer=cg->State().CurrentBuffer();
+      if(FirstBuffer<0 || SecondBuffer<0 || FirstBuffer==SecondBuffer)throw FormatError("CG reopen did not alternate its prepared image buffer");
+      key(SDLK_ESCAPE);Stage=9;return;}
+    if(Stage==9 && cg && cg->State().Phase()==5){key(SDLK_ESCAPE);Stage=10;return;}
+    if(Stage==10 && cg && cg->State().Phase()==4){key(SDLK_ESCAPE);Stage=11;return;}
+    if(Stage==11 && extras && extras->State().Phase()==7 && extras->Question().Visible && extras->Question().Phase==3){
+      if(extras->Question().Selected!=0)throw FormatError("CG return question lost its native initial selection");
+      if(std::get<int32_t>(CgHistoryStatus(owner.CgHistory,History))!=3)throw FormatError("CG viewing did not consume new image history");
+      const auto& h=owner.SystemProgress->Histories[7];const auto status=size_t(Row)<h.Values.size()?h.Values[size_t(Row)]:h.Fallback;
+      if(status!=1 && status!=2 && status!=3)throw FormatError("CG commentary did not mark its catalogue card");
+      key(SDLK_RETURN);Stage=12;return;
+    }
+    if(Stage==12 && extras && extras->State().Phase()==2 && extras->State().Fade()==0){key(SDLK_ESCAPE);Stage=13;return;}
+    if(Stage==13 && !extras && title.State.Phase==10)Finished=true;
+  }
   void Verify(const std::filesystem::path& root,const std::filesystem::path& output,
       const ProgressPair& initial,const SemanticState& owner,size_t frames)const{
     const auto saved=ReadProgressStore(root);
+    if(Mode==2){
+      if(!Finished || !saved || saved->Generation!=initial.Generation || saved->System.Encode()!=initial.System.Encode() || saved->Slots.Encode()!=initial.Slots.Encode())
+        throw FormatError("CG no-save return changed its imported progress pair");
+      std::ofstream report(output/"extras.json");report<<"{\"passed\":true,\"interaction\":\"title-extras-cg-comment-interrupt-reopen-return-no-save\",\"frames\":"<<frames
+        <<",\"card\":"<<Row<<",\"image\":"<<History<<",\"comment_position_ms\":"<<PausePosition<<",\"image_buffers\":["<<FirstBuffer<<','<<SecondBuffer
+        <<"],\"comment_interruption_retains_viewer\":true,\"disk_pair_unchanged\":true,\"manual_acceptance\":false}\n";
+      if(!report)throw FormatError("cannot write CG interaction report");return;
+    }
     if(!Finished || ExpectedSystem.empty() || !saved || saved->Generation==initial.Generation ||
        saved->System.Encode()!=ExpectedSystem || saved->Slots.Encode()!=initial.Slots.Encode() ||
        SnapshotSystemOwner(owner,RestoreSystemReadHistory(*owner.SystemProgress)).Encode()!=ExpectedSystem)

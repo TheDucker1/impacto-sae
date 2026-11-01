@@ -5175,7 +5175,7 @@ int RunMovieInfoProbe(const std::filesystem::path& path,const std::filesystem::p
   }
 }
 int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::path& requestedProgressRoot,
-    const std::filesystem::path& requestedCaptureDirectory,bool capturePointer,bool captureOpening,uint8_t captureMovie,uint8_t captureOptions,uint8_t captureContinue,uint8_t captureScenarioMenu,std::optional<size_t> replayRow,bool captureExtras){
+    const std::filesystem::path& requestedCaptureDirectory,bool capturePointer,bool captureOpening,uint8_t captureMovie,uint8_t captureOptions,uint8_t captureContinue,uint8_t captureScenarioMenu,std::optional<size_t> replayRow,uint8_t captureExtras){
   auto captureDirectory=requestedCaptureDirectory;
   bool created=false;
   try{
@@ -5258,7 +5258,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     uint32_t optionsStage=0,optionsGesture=0;bool optionsOpenImage=false,optionsQuestionImage=false,optionsPreviewImage=false;
     uint32_t continueStage=0;bool continueOpenImage=false;
     bool sawMovie=false,movieReturned=false,movieSkipped=false,movieImage=false;
-    ExtrasMusicCapture extrasCapture;
+    ExtrasInteractionCapture extrasCapture;extrasCapture.Mode=captureExtras;
     std::array<float,2> pointer{};int pointerCapture=0;int32_t previousPhase=-1;size_t frames=0;uint64_t epoch=SDL_GetTicks();
     for(;!quit && !title.RequestedScene;++frames){
       if(capture && frames>=(captureMovie==2?10000u:captureMovie?4000u:1250u))throw FormatError("title capture exhausted its bounded frame budget");
