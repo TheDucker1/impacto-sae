@@ -40,6 +40,8 @@ class HeadlessBackend : public VmBackend {
   std::function<void(const GameEvent&)> ParticleRequest;
   ScriptParticleHost* ScriptParticleConsumer=nullptr;
   ScriptParticleHost* ScriptParticles() override { return ScriptParticleConsumer; }
+  std::optional<ScenarioDateEnvironment> DateSettings;
+  const ScenarioDateEnvironment* DateConfig() const override { return DateSettings?&*DateSettings:nullptr; }
   void ResetParticles(bool fresh) override { if (ParticleReset) ParticleReset(fresh); }
   bool StartParticleEffect(const GameEvent& event) override {
     if (!ParticleRequest) return false;

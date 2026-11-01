@@ -47,6 +47,7 @@ class VmBackend {
   }
   virtual bool StartParticleEffect(const GameEvent&) { return false; }
   virtual ScriptParticleHost* ScriptParticles() { return nullptr; }
+  virtual const ScenarioDateEnvironment* DateConfig() const { return nullptr; }
   virtual void SetSplitDialogue(bool) {}
   virtual void SetMessageDualCleanup(bool) {}
   virtual void ClearMessage(size_t) {}

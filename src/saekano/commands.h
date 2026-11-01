@@ -71,6 +71,7 @@ struct SemanticState {
   int32_t SkipPhase = 0;
   int32_t ExitRequested = 0;
   int32_t DayEnabled = 0;
+  std::optional<size_t> DatePalette; // S73798; first inclusive month-range match, retained on no match.
   int32_t ChapterId = 0;
   int32_t OtakuMode = 0;
   int32_t ApproachGauge = 0;

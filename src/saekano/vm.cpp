@@ -687,6 +687,10 @@ void VirtualMachine::Start(size_t index, uint64_t now, bool lane) {
       StartOrdinaryChoice(state_.OrdinaryChoice, command.OrdinaryMenu->Entries.size(), *environment, now);
   } else if ((opcode == 0x66 || opcode == 0x1fb || opcode == 0x3ea) && !lane) {
     CompleteCommand(state_, opcode, script_->Payload(index), {});
+    if(opcode==0x3ea) {
+      if(const auto* date=backend_.DateConfig())UpdateScenarioDatePalette(state_,*date);
+      else state_.DatePalette.reset();
+    }
     if (opcode == 0x66) {messageKeywords_[0].clear();backend_.ClearMessage(0);}
   } else if (opcode == 0x12e && !lane) {
     if (!messageContext_.Known)

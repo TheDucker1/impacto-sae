@@ -10,6 +10,47 @@
 #include <algorithm>
 
 namespace Impacto::Saekano {
+ScenarioDateEnvironment ScenarioDateEnvironment::Decode(std::span<const uint8_t> script) {
+  if(script.size()<19)throw FormatError("truncated scenario date environment");
+  PayloadReader r(script.subspan(19));ScenarioDateEnvironment e;
+  e.Base=UiSpriteDefinition::ReadLegacy(r);
+  auto count=r.U32();r.CheckCount(count,34);
+  for(uint32_t i=0;i<count;++i)e.Labels.push_back(UiSpriteDefinition::ReadLegacy(r));
+  count=r.U32();r.CheckCount(count,4);
+  for(uint32_t i=0;i<count;++i) {
+    const auto c=r.U32();e.Colors.push_back({uint8_t(c>>16),uint8_t(c>>8),uint8_t(c),uint8_t(c>>24)});
+  }
+  e.Month=UiSpriteDefinition::ReadLegacy(r);e.Day=UiSpriteDefinition::ReadLegacy(r);
+  count=r.U32();r.CheckCount(count,8);
+  for(uint32_t i=0;i<count;++i)e.MonthRanges.push_back({r.I32(),r.I32()});
+  return e;
+}
+void UpdateScenarioDatePalette(SemanticState& state,const ScenarioDateEnvironment& e) {
+  const auto normalize=[](int32_t month){return int64_t(month)+(month<9?12:0);};
+  const auto month=normalize(state.TimeComponents[0]);
+  for(size_t i=0;i<e.MonthRanges.size();++i)
+    if(normalize(e.MonthRanges[i][0])<=month && month<=normalize(e.MonthRanges[i][1])) {
+      state.DatePalette=i;break;
+    }
+}
+std::vector<UiSpriteBlit> BuildScenarioDate(const SemanticState& state,
+    const ScenarioDateEnvironment& e,bool movieActive) {
+  if(movieActive || !state.DayEnabled)return {};
+  if(!state.DatePalette)throw UnsupportedCommand("scenario date palette is unknown");
+  const auto palette=*state.DatePalette;
+  const auto month=state.TimeComponents[0],day=state.TimeComponents[1];
+  if(palette>=e.Labels.size() || palette>=e.Colors.size() || month<1 || month>12 || day<1 || day>31)
+    throw FormatError("scenario date outside authored calendar resources");
+  auto base=e.Base;base.Color=e.Colors[palette];
+  auto monthSprite=e.Month,daySprite=e.Day;
+  monthSprite.SourceX+=(month<9?month+3:month-9)*monthSprite.Width;
+  daySprite.SourceX+=((day-1)%10)*daySprite.Width;
+  daySprite.SourceY+=((day-1)/10)*(daySprite.Height+1);
+  return {ResolveUiSprite({ProfileTextureSection::MainUi,-1,4},base),
+    ResolveUiSprite({ProfileTextureSection::MainUi,-1,4},e.Labels[palette]),
+    ResolveUiSprite({ProfileTextureSection::MainUi,-1,5},monthSprite),
+    ResolveUiSprite({ProfileTextureSection::MainUi,-1,6},daySprite)};
+}
 ChapterTitleVisualEnvironment ChapterTitleVisualEnvironment::Decode(std::span<const uint8_t> script,
     std::span<const uint8_t> menu) {
   ChapterTitleVisualEnvironment e;

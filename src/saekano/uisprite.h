@@ -235,6 +235,17 @@ struct ChapterTitleVisualEnvironment {
   static ChapterTitleVisualEnvironment Decode(std::span<const uint8_t> script,
                                               std::span<const uint8_t> systemMenu);
 };
+struct ScenarioDateEnvironment {
+  UiSpriteDefinition Base,Month,Day;
+  std::vector<UiSpriteDefinition> Labels;
+  std::vector<std::array<uint8_t,4>> Colors;
+  std::vector<std::array<int32_t,2>> MonthRanges;
+  static ScenarioDateEnvironment Decode(std::span<const uint8_t> script);
+};
+struct SemanticState;
+void UpdateScenarioDatePalette(SemanticState& state,const ScenarioDateEnvironment& environment);
+std::vector<UiSpriteBlit> BuildScenarioDate(const SemanticState& state,
+    const ScenarioDateEnvironment& environment,bool movieActive);
 std::array<UiTextBlit,2> BuildChapterTitleText(const ChapterTitleVisualEnvironment& environment,
     std::span<const std::u16string> titles,uint32_t utilitySize);
 UiSpriteBlit BuildChapterTitleBanner(const ChapterTitleVisualEnvironment& environment,int32_t id);

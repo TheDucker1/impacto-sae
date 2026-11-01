@@ -1252,6 +1252,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
   backend.ApproachResultSettings=ApproachResultEnvironment::Decode(SceneRead(root/"env/env_approach.dat"));
   backend.ResultConsumer=&resultHost;
   backend.ChapterSettings=ChapterEnvironment::Decode(SceneRead(root/"env/env_script.dat"));
+  backend.DateSettings=ScenarioDateEnvironment::Decode(SceneRead(root/"env/env_script.dat"));
   backend.ParticleReset=[&](bool fresh) {
     if(!fresh)throw UnsupportedCommand("restored particle manager state is unavailable");
     particles.ResetForScript(capture?particleClock:SDL_GetTicks());
@@ -2313,6 +2314,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       if (actor.Pose.Ready && actor.Tweens[size_t(CharacterTween::Opacity)].Current != 0)
         mouths.at(id).Update(now);
     backend.UpdateMessage(now);
+    if(!vm->State().DatePalette)UpdateScenarioDatePalette(vm->State(),*backend.DateSettings);
     const auto& state = vm->State();
     if(captureDialogue && captureActive)if(const auto* text=backend.CurrentMessage()) {
       dialogueVoiceUpdates << "{\"now\":" << now << ",\"command\":" << text->Command
@@ -2612,6 +2614,9 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       }
     }
     renderer.SetFilter(0, 0.0f);  // Native resets after queued callbacks, before later HUD.
+    for(const auto& sprite:BuildScenarioDate(state,*backend.DateSettings,vm->MovieActive())) {
+      uploadMain(sprite.Texture.Entry);drawSprite(sprite);spriteDraws.push_back(sprite);
+    }
     if(state.TitleDisplay.value_or(false)) {
       for(const auto& text:BuildChapterTitleText(chapterVisual,state.Titles,uint32_t(utility.Size))) {
         fontTextures.DrawString(renderer,font,text.Text,text.Position[0],text.Position[1],text.Size,text.Color);
