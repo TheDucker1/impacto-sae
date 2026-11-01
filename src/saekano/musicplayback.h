@@ -10,6 +10,7 @@
 
 namespace Impacto::Saekano {
 class SystemSoundAssets;
+class PlaybackVoiceAttenuation;
 struct BgmPlaybackSnapshot {
   uint64_t Current=0,Outgoing=0;
   float CurrentGain=0,OutgoingGain=0;
@@ -49,6 +50,10 @@ class MusicPlayback {
   void SetChannelOutputGain(uint32_t channel,float gain); // Native2..12.
   float ChannelOutputGain(uint32_t channel) const;
   AudioDuckingInputs VoiceAttenuationInputs() const;
+  // One service clock/state across title, scenes, submenus and Load. Loopback
+  // time follows rendered frames; live time follows the monotonic device host.
+  uint64_t AudioServiceTime() const;
+  PlaybackVoiceAttenuation* VoiceAttenuation() const;
   // Native UI channel6 is independent of SE2..5 and profile voice7.
   // Caller supplies a known effective gain and preserves the asset lifetime.
   void BindUiSounds(SystemSoundAssets& resources, float gain);
@@ -80,16 +85,23 @@ class MusicPlayback {
   int32_t MissionVoicePosition() const;
 
  private:
+  friend class PlaybackVoiceAttenuation;
   struct Impl;
   std::unique_ptr<Impl> impl_;
 };
 
-// Explicit owner for the native target0 attenuation service. Use this object's
-// gain/start methods while bound; pass the actual audio-service clock once the
-// physical host has been pumped. UI and cinematic audio have separate owners.
+// Native target0 attenuation controller. Bind at audio-host scope so physical
+// voice starts, BGM publications and pumping share its state and device clock.
+// Unbound diagnostics may supply their own explicit audio-service clock.
 class PlaybackVoiceAttenuation {
  public:
   PlaybackVoiceAttenuation(MusicPlayback& output,int32_t gainPercent,int32_t attenuationPercent,bool enabled);
+  ~PlaybackVoiceAttenuation();
+  PlaybackVoiceAttenuation(const PlaybackVoiceAttenuation&) = delete;
+  PlaybackVoiceAttenuation& operator=(const PlaybackVoiceAttenuation&) = delete;
+  // Bind once at the playback owner's lifetime. Unbound instances retain the
+  // explicit-clock interface used by existing isolated native comparisons.
+  void Bind();
   const BgmVoiceAttenuation& State()const{return state_;}
   void SetGain(int32_t percent);
   void SetPercent(int32_t percent){state_.SetPercent(percent);}
@@ -98,6 +110,7 @@ class PlaybackVoiceAttenuation {
   void StartOrdinaryVoice(uint32_t channel,uint64_t audioNow);
   void Update(uint64_t audioNow);
  private:
+  friend class MusicPlayback;
   MusicPlayback& output_;BgmVoiceAttenuation state_;
 };
 
@@ -214,6 +227,8 @@ int RunTitleAudioSession(const std::filesystem::path& usrdir,
                          const std::filesystem::path& captureDirectory);
 int RunVoiceAttenuationSession(const std::filesystem::path& usrdir,
                                const std::filesystem::path& captureDirectory);
+int RunAudioOwnerSession(const std::filesystem::path& usrdir,
+                         const std::filesystem::path& captureDirectory);
 int RunOptionsMixerSession(const std::filesystem::path& usrdir,
                            const std::filesystem::path& captureDirectory);
 int RunSlotReplayAudioSession(const std::filesystem::path& usrdir,

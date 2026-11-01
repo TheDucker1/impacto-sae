@@ -11,6 +11,7 @@
 #include "../io/dummystream.h"
 
 #include <SDL3/SDL.h>
+#include <chrono>
 
 #include <algorithm>
 #include <bit>
@@ -173,6 +174,9 @@ struct MusicPlayback::Impl {
   ALCdevice* Device = nullptr;
   ALCcontext* Context = nullptr;
   LPALCRENDERSAMPLESSOFT RenderSamples = nullptr;
+  PlaybackVoiceAttenuation* Attenuation = nullptr;
+  uint64_t RenderedFrames = 0;
+  std::chrono::steady_clock::time_point AudioEpoch = std::chrono::steady_clock::now();
   std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> Channel;
   std::unique_ptr<Audio::OpenAL::OpenALAudioChannel> OutgoingBgm;
   uint64_t BgmSerial=0,CurrentBgmSerial=0,OutgoingBgmSerial=0;
@@ -317,20 +321,19 @@ MusicPlayback::MusicPlayback(ArchiveBgmResources& resources, bool loopback, Arch
     : impl_(std::make_unique<Impl>(resources, loopback, sounds)) {}
 MusicPlayback::~MusicPlayback() = default;
 void MusicPlayback::Submit(const GameEvent& event) {
-  if(event.Kind==GameEventKind::PlayBgmRetainingGain) {
-    if(event.Parameter || event.Bgm || event.Se)throw FormatError("invalid direct BGM play request");
-    GameEvent play{GameEventKind::PlayBgm,event.Id};
-    play.Bgm=BgmPlayRequest{event.Id,0,BgmVolume{0,0,impl_->BgmGain}};
-    Submit(play);return;
-  }
   if(event.Kind==GameEventKind::StopBgmWithCurrentFade) {
     if(event.Id || event.Parameter || event.Bgm || event.Se)throw FormatError("invalid direct BGM stop request");
     Submit({GameEventKind::StopBgm,0,{},int32_t(impl_->BgmFadeOutDuration)});return;
   }
-  if (event.Kind == GameEventKind::PlayBgm) {
-    if (!event.Bgm || event.Bgm->Track != event.Id)
+  if (event.Kind == GameEventKind::PlayBgm || event.Kind == GameEventKind::PlayBgmRetainingGain) {
+    const bool retaining = event.Kind == GameEventKind::PlayBgmRetainingGain;
+    if (retaining && (event.Parameter || event.Bgm || event.Se))
+      throw FormatError("invalid direct BGM play request");
+    if (!retaining && (!event.Bgm || event.Bgm->Track != event.Id))
       throw FormatError("invalid typed BGM request");
-    const auto& request = *event.Bgm;
+    const auto request = retaining
+        ? BgmPlayRequest{event.Id,0,BgmVolume{0,0,impl_->BgmGain}}
+        : *event.Bgm;
     if (!request.Volume)
       throw UnsupportedCommand("native BGM volume state is unknown");
     if (!std::isfinite(request.Volume->Gain) || request.Volume->Gain < 0 ||
@@ -340,6 +343,10 @@ void MusicPlayback::Submit(const GameEvent& event) {
     auto stream =
         std::make_unique<HcaPlaybackStream>(impl_->Resources, request.Track);
     const bool loop = impl_->Resources.Info(request.Track).Loop;
+    // A script/slot volume publication changes the native service's saved
+    // target. Direct gallery/title replay without a volume write retains it.
+    if (impl_->Attenuation && !retaining)
+      impl_->Attenuation->state_.SetGain(int32_t(request.Volume->ConvertedVolume));
     // Native cf002 resets an active fader and retires its outgoing voice,
     // then rotates the current voice into that slot. Fade-in is authored0.
     impl_->RetiredBgm.clear();impl_->RetireOutgoingBgm();
@@ -446,6 +453,10 @@ void MusicPlayback::Update(float seconds) {
   impl_->MissionVoice->Update(seconds);
   impl_->PreviewVoice->Update(seconds);
   impl_->UiSound->Update(seconds);
+  if (impl_->Attenuation) {
+    if (const auto gain = impl_->Attenuation->state_.Tick(AudioServiceTime(), VoiceAttenuationInputs()))
+      SetBgmOutputGain(float(*gain) / 100);
+  }
   AlCheck("BGM frame");
 }
 void MusicPlayback::StopBgmImmediately(){
@@ -525,14 +536,30 @@ AudioDuckingInputs MusicPlayback::VoiceAttenuationInputs()const{
 PlaybackVoiceAttenuation::PlaybackVoiceAttenuation(MusicPlayback& output,int32_t gain,int32_t percent,bool enabled):output_(output){
   state_.SetGain(gain);state_.SetPercent(percent);state_.SetEnabled(enabled);output_.SetBgmOutputGain(float(gain)/100);
 }
+PlaybackVoiceAttenuation::~PlaybackVoiceAttenuation(){
+  if(output_.impl_->Attenuation==this)output_.impl_->Attenuation=nullptr;
+}
+void PlaybackVoiceAttenuation::Bind(){
+  if(output_.impl_->Attenuation && output_.impl_->Attenuation!=this)
+    throw FormatError("playback already has an attenuation owner");
+  output_.impl_->Attenuation=this;
+}
+PlaybackVoiceAttenuation* MusicPlayback::VoiceAttenuation()const{return impl_->Attenuation;}
+uint64_t MusicPlayback::AudioServiceTime()const{
+  if(impl_->RenderSamples)return impl_->RenderedFrames/48;
+  return uint64_t(std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now()-impl_->AudioEpoch).count());
+}
 void PlaybackVoiceAttenuation::SetGain(int32_t percent){state_.SetGain(percent);output_.SetBgmOutputGain(float(percent)/100);}
 void PlaybackVoiceAttenuation::StartProfileVoice(uint64_t now){
-  output_.StartProfileVoice();state_.StartVoice(7,true,now);
+  output_.StartProfileVoice();if(output_.VoiceAttenuation()!=this)state_.StartVoice(7,true,now);
 }
 void PlaybackVoiceAttenuation::StartOrdinaryVoice(uint32_t channel,uint64_t now){
-  const bool ready=output_.OrdinaryVoiceReady(channel);output_.StartOrdinaryVoice(channel);state_.StartVoice(channel,ready,now);
+  const bool ready=output_.OrdinaryVoiceReady(channel);output_.StartOrdinaryVoice(channel);
+  if(output_.VoiceAttenuation()!=this)state_.StartVoice(channel,ready,now);
 }
 void PlaybackVoiceAttenuation::Update(uint64_t now){
+  if(output_.VoiceAttenuation()==this)return; // The physical host pumps it once.
   if(const auto gain=state_.Tick(now,output_.VoiceAttenuationInputs()))output_.SetBgmOutputGain(float(*gain)/100);
 }
 bool MusicPlayback::Playing() const {
@@ -614,6 +641,7 @@ void MusicPlayback::StartProfileVoice() {
         "profile voice must be prepared before each start");
   impl_->ProfileVoice->Play(std::move(impl_->PreparedProfileVoice), false, 0);
   AlCheck("profile voice start");
+  if(impl_->Attenuation)impl_->Attenuation->state_.StartVoice(7,true,AudioServiceTime());
 }
 void MusicPlayback::StopProfileVoice() {
   impl_->ProfileVoice->Stop(0);
@@ -662,11 +690,13 @@ void MusicPlayback::PrepareOrdinaryVoice(
 void MusicPlayback::StartOrdinaryVoice(uint32_t channel) {
   const auto slot = OrdinaryVoiceSlot(channel);
   if(channel==11){StartMissionVoice();return;}
+  const bool ready = bool(impl_->PreparedOrdinaryVoices[slot]);
   auto& output = impl_->OrdinaryOutput(slot);
   if (impl_->PreparedOrdinaryVoices[slot])
     output->Play(std::move(impl_->PreparedOrdinaryVoices[slot]), false, 0);
   else if (impl_->HasOrdinaryVoice[slot]) output->Resume();
   AlCheck("ordinary voice start");
+  if(impl_->Attenuation)impl_->Attenuation->state_.StartVoice(channel,ready,AudioServiceTime());
 }
 void MusicPlayback::PrepareMemoryVoice(uint32_t channel, Bytes encoded, float gain) {
   const auto slot = OrdinaryVoiceSlot(channel);
@@ -761,10 +791,12 @@ void MusicPlayback::PrepareMissionVoice(uint32_t id,std::unique_ptr<HcaWaveReade
   AlCheck("mission voice prepare");
 }
 void MusicPlayback::StartMissionVoice() {
+  const bool ready = bool(impl_->PreparedMissionVoice);
   if(impl_->PreparedMissionVoice) {
     impl_->MissionVoice->Play(std::move(impl_->PreparedMissionVoice),false,0);impl_->HasMissionVoice=true;
   } else if(impl_->HasMissionVoice)impl_->MissionVoice->Resume();
   AlCheck("mission voice play");
+  if(impl_->Attenuation)impl_->Attenuation->state_.StartVoice(11,ready,AudioServiceTime());
 }
 bool MusicPlayback::MissionVoiceReady() const { return bool(impl_->PreparedMissionVoice); }
 void MusicPlayback::ResetMissionVoice() {
@@ -845,6 +877,7 @@ void MusicPlayback::Render(std::span<int16_t> output) {
                          ALCsizei(count));
     if (alcGetError(impl_->Device) != ALC_NO_ERROR)
       throw FormatError("OpenAL capture failed");
+    impl_->RenderedFrames += count;
     frame += count;
   }
 }
@@ -1136,6 +1169,74 @@ int RunVoiceAttenuationSession(const std::filesystem::path& usrdir,const std::fi
     report.close();if(!report)throw FormatError("cannot save attenuation report");return 0;
   }catch(const std::exception& e){if(created){std::ofstream error(captureDirectory/"error.txt");error<<std::string(e.what()).substr(0,2048);}
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Voice attenuation: %s",e.what());return 1;}
+}
+int RunAudioOwnerSession(const std::filesystem::path& usrdir,const std::filesystem::path& captureDirectory){
+  bool created=false;
+  try{
+    CreateCaptureDirectory(usrdir,captureDirectory);created=true;
+    if(!SDL_Init(SDL_INIT_EVENTS))throw FormatError(SDL_GetError());
+    struct Cleanup{~Cleanup(){SDL_Quit();}} cleanup;
+    const auto read=[](const std::filesystem::path& p){std::ifstream f(p,std::ios::binary);
+      if(!f)throw FormatError("missing audio-owner resource");return Bytes{std::istreambuf_iterator<char>(f),{}};};
+    GameResources resources(read(usrdir/"resource.dat"));
+    const auto clip=resources.LoadSystemVoice(4,0).Data;
+    ArchiveBgmResources music(usrdir);MusicPlayback playback(music,true);
+    SystemSoundAssets ui(read(usrdir/"first.dat"));playback.BindUiSounds(ui,0.5f);
+    int32_t peak=0;uint64_t frames=0;std::vector<int32_t> gains;
+    const auto advance=[&](uint32_t ms){
+      if(ms%10)throw FormatError("audio-owner interval requires exact10ms blocks");
+      for(uint32_t i=0;i<ms;i+=10){std::array<int16_t,960> block{};playback.Render(block);
+        frames+=480;for(auto sample:block)peak=std::max(peak,std::abs(int32_t(sample)));}
+      playback.Update(0); // Observe the completed device interval, without UI time.
+    };
+    const auto play=[&](int32_t track,int32_t gain){
+      music.Prepare(track);
+      GameEvent event{GameEventKind::PlayBgm,track};event.Bgm=BgmPlayRequest{track,100,
+          BgmVolume{100,uint32_t(gain),float(gain)/100}};playback.Submit(event);
+    };
+    play(0,60);
+    {
+      PlaybackVoiceAttenuation owner(playback,60,50,true);owner.Bind();
+      const auto expect=[&](int32_t gain){gains.push_back(owner.State().CurrentGain);
+        if(owner.State().CurrentGain!=gain || playback.BgmOutputGain()!=float(gain)/100)
+          throw FormatError("shared audio owner gain differs from native interpolation");};
+      playback.Submit({GameEventKind::Sound,2});advance(100);
+      if(owner.State().Started)throw FormatError("UI channel triggered shared attenuation");
+      PlaybackOrdinaryVoice dialogue(playback,usrdir,0,1);
+      dialogue.PrepareMemory(7,clip);dialogue.Start(7);advance(150);expect(45);
+      // A different frontend's UI clock starts at zero. The device clock does not.
+      PlaybackProfileVoice profile(playback,0,1);profile.Prepare(clip);profile.Start(0);
+      if(owner.State().Epoch!=250)throw FormatError("mode change reset the audio service clock");
+      advance(150);expect(38);
+      playback.PrepareMissionVoice(0,std::make_unique<HcaWaveReader>(clip),0);
+      playback.StartMissionVoice();advance(300);expect(30);
+      play(8,40);expect(40);
+      dialogue.PrepareMemory(8,clip);dialogue.Start(8);advance(300);expect(20);
+      if(owner.State().SavedGain!=40)throw FormatError("script BGM bypassed shared saved gain");
+      music.Prepare(7);playback.Submit({GameEventKind::PlayBgmRetainingGain,7});
+      const auto serial=playback.BgmVoices().Current;
+      if(owner.State().SavedGain!=40 || playback.BgmOutputGain()!=0.2f)
+        throw FormatError("direct BGM replacement overwrote the attenuation target");
+      dialogue.PrepareMemory(9,clip); // Unstarted preparation cannot hold ducking.
+      for(uint32_t channel:{7u,8u,11u})playback.StopOrdinaryVoice(channel);
+      playback.Update(0);advance(150);expect(30);advance(150);expect(40);
+      if(owner.State().SavedGain!=40 || playback.BgmVoices().Current!=serial ||
+          !(playback.VoiceAttenuationInputs().Prepared&(1u<<9)) || peak<=8)
+        throw FormatError("shared owner restoration lost BGM/prepared state or PCM");
+      playback.StopAllChannels();
+      if(playback.VoiceAttenuation()!=&owner || playback.AudioServiceTime()!=1300)
+        throw FormatError("scene retirement replaced the session audio owner/clock");
+    }
+    if(playback.VoiceAttenuation())throw FormatError("retired attenuation owner remains bound");
+    playback.Update(0);
+    std::ofstream report(captureDirectory/"summary.json");
+    report<<"{\"passed\":true,\"scope\":\"Shared playback ownership and real HCA/OpenAL composition; native integer expectations reused, no native mixed-waveform claim\",\"audio_ms\":"
+      <<playback.AudioServiceTime()<<",\"frames\":"<<frames<<",\"pcm_peak\":"<<peak<<",\"gains\":[";
+    for(size_t i=0;i<gains.size();++i){if(i)report<<',';report<<gains[i];}
+    report<<"],\"direct_dialogue_profile_mission_starts\":true,\"ui_clock_reset_ignored\":true,\"typed_bgm_updates_saved_gain\":true,\"direct_bgm_retains_gain\":true,\"prepared_voice_excluded\":true,\"retirement_preserves_owner_clock\":true,\"owner_detaches\":true}\n";
+    report.close();if(!report)throw FormatError("cannot save shared audio-owner report");return 0;
+  }catch(const std::exception& e){if(created){std::ofstream error(captureDirectory/"error.txt");error<<std::string(e.what()).substr(0,2048);}
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Audio owner: %s",e.what());return 1;}
 }
 int RunSlotReplayAudioSession(const std::filesystem::path& usrdir,const std::filesystem::path& captureDirectory){
   bool created=false;

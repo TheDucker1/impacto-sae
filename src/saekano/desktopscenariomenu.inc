@@ -39,11 +39,8 @@ const auto optionByte=[&](size_t index) {
 };
 PlaybackTitleAudio scenarioUiAudio(playback,ProfileVoiceGain(optionByte(10),1));
 TitleAudioOwner scenarioMenuVoices(resources,scenarioUiAudio);
-const auto initialMenuBgm=BgmRequest(0,*vm->State().BgmMasterVolume,
-                                    *vm->State().BgmCommandVolume,music.Coefficient());
-PlaybackVoiceAttenuation scenarioAttenuation(playback,
-    int32_t(initialMenuBgm.Volume->ConvertedVolume),int32_t(optionByte(11))*10,true);
-const auto scenarioAudioClock=[&]()->uint64_t{return capture?previous:SDL_GetTicks()-epoch;};
+auto& scenarioAttenuation=*playback.VoiceAttenuation();
+const auto scenarioAudioClock=[&]()->uint64_t{return playback.AudioServiceTime();};
 scenarioUiAudio.BindVoiceAttenuation(scenarioAttenuation,scenarioAudioClock);
 const SavePreviewFormatter scenarioSaveFormatter{format,font.Cached(),metrics,
     uint32_t(utility.Size),font.NominalSize(),SavePreviewSettings::FromSlotEnvironment(

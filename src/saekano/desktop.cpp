@@ -3149,6 +3149,18 @@ int RunScenarioScene(ViewerWindow& window,UiBlitRenderer& renderer,
     const std::filesystem::path& progressRoot={},NativeSlotData* slotProgress=nullptr,
     const NativePendingSlotLoad* load=nullptr,uint8_t captureOrdinaryChoice=0,
     std::unique_ptr<SemanticState>* returnedTitle=nullptr,std::optional<int32_t> replayScript={}) {
+  // Normal play borrows the audio-host owner created before title. Standalone
+  // viewers install the same service for the entire replacement/load loop.
+  std::unique_ptr<PlaybackVoiceAttenuation> standaloneAttenuation;
+  if(!playback.VoiceAttenuation()) {
+    if(!owner.BgmMasterVolume || !owner.BgmCommandVolume)
+      throw UnsupportedCommand("scenario audio owner requires saved volume settings");
+    const auto initial=BgmRequest(0,*owner.BgmMasterVolume,*owner.BgmCommandVolume,music.Coefficient());
+    const auto percent=owner.SystemProgress?int32_t(owner.SystemProgress->Bytes6022c[11])*10:80;
+    standaloneAttenuation=std::make_unique<PlaybackVoiceAttenuation>(playback,
+        int32_t(initial.Volume->ConvertedVolume),percent,true);
+    standaloneAttenuation->Bind();
+  }
   auto live=std::make_unique<SemanticState>(std::move(owner));
   std::unique_ptr<NativePendingSlotLoad> pending;
   auto output=captureDirectory;
@@ -5268,9 +5280,10 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     PcFontFace font(SceneRead(usrdir/"DFHSR4.TTC"),GsfFont::Decode(SceneRead(usrdir/"Font.gsf")));
     ArchiveBgmResources music(usrdir);ArchiveSeResources sounds(usrdir);SystemSoundAssets systemSounds(first);
     MusicPlayback playback(music,capture,&sounds);uint64_t audioFrames=0;
-    const auto audioClock=[&]()->uint64_t{return capture?audioFrames/48:SDL_GetTicks();};
+    const auto audioClock=[&]()->uint64_t{return playback.AudioServiceTime();};
     const auto initialBgm=BgmRequest(0,*owner->BgmMasterVolume,*owner->BgmCommandVolume,music.Coefficient());
     PlaybackVoiceAttenuation attenuation(playback,int32_t(initialBgm.Volume->ConvertedVolume),int32_t(progress.Bytes6022c[11])*10,true);
+    attenuation.Bind();
     PlaybackTitleAudio audio(playback,systemSounds,ProfileVoiceGain(progress.Bytes6022c[10],1.0f),ProfileVoiceGain(progress.Bytes6022c[9],1.0f));
     audio.BindVoiceAttenuation(attenuation,audioClock);
     PcMovieFrameLayer movieFrame;MoviePlayback movie;movie.Present=[&](const AVFrame* frame,int64_t pts){movieFrame.Present(frame,pts);};
