@@ -2,6 +2,7 @@
 #include "messagekeywords.h"
 #include "skipauto.h"
 #include "resources.h"
+#include "savepreview.h"
 
 #include <algorithm>
 #include <bit>
@@ -408,6 +409,12 @@ NativeSlotRecord VirtualMachine::CaptureWorkingRecord() const {
   if (!state_.WorkingSave || !state_.WorkingSave->Context.Used)
     throw UnsupportedCommand("working record requires an initialized owner and context snapshot");
   return ComposeNativeWorkingRecord(state_.WorkingSave->Retained, state_, state_.WorkingSave->Context);
+}
+void VirtualMachine::RefreshSavePreview(const SavePreviewFormatter& formatter) {
+  if (!state_.WorkingSave || !state_.WorkingSave->Context.Used)
+    throw UnsupportedCommand("save preview requires a working context snapshot");
+  const auto& primary = state_.Messages[0];
+  formatter.Publish(state_.WorkingSave->Retained, primary.empty() ? std::u16string_view{} : primary.front());
 }
 void VirtualMachine::RefreshWorkingContext() {
   if (!state_.WorkingSave) return;

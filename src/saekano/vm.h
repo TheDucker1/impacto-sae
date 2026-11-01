@@ -15,6 +15,7 @@ struct SkipAutoState;
 struct SkipAutoInput;
 struct HistoryEnvironment;
 struct ScriptReadHistory;
+struct SavePreviewFormatter;
 
 struct MessageRuntimeContext {
   // These are native context fields that the original portable schema omitted.
@@ -142,6 +143,9 @@ class VirtualMachine {
     return state_.WorkingSave ? &state_.WorkingSave->Context : nullptr;
   }
   NativeSlotRecord CaptureWorkingRecord() const;
+  // Save/menu entry producer only. Uses the first retained primary message,
+  // independent of current reveal/voice or a later appended message.
+  void RefreshSavePreview(const SavePreviewFormatter& formatter);
   const DispatchState& Dispatcher() const { return dispatcher_; }
   VmBoundary Boundary() const { return boundary_; }
   uint16_t Opcode() const;

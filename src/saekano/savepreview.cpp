@@ -32,4 +32,20 @@ void PublishSavePreview(NativeSlotRecord& working, std::u16string_view prefix,
   std::vector<uint16_t> owned(text.begin(), text.end());
   working.Strings[2] = std::move(owned);
 }
+std::u16string SavePreviewFormatter::Prepare(std::u16string_view source) const {
+  Validate(Settings);
+  // The VM retains authored sources. Native menu entry instead obtains the
+  // first record's +b8 normalized string, then constructs a fresh font owner.
+  // Reconstruct that projection without consuming reveal/voice/queue state.
+  const auto retained = ParseOrdinaryMessageControls(source, Format);
+  const auto parsed = ParseOrdinaryMessageControls(retained.Name + retained.Body, Format);
+  const auto layout = LayoutPlainText(parsed.Body, Format, Font, Metrics, 1000,
+      Settings.FontScale, UtilitySize, NominalSize, parsed.Ruby);
+  return BuildSavePreview(parsed.Name, layout.Glyphs, Settings);
+}
+void SavePreviewFormatter::Publish(NativeSlotRecord& working, std::u16string_view source) const {
+  const auto text = Prepare(source);
+  std::vector<uint16_t> owned(text.begin(), text.end());
+  working.Strings[2] = std::move(owned);
+}
 }
