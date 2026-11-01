@@ -32,24 +32,29 @@ class PcExtrasBattle final:public ExtrasBattleServices {
     input_=input;modalInput_=modal;screen_.BeginFrame(contacts);contacts_.BeginFrame(contacts);
   }
   void CancelPointer(){screen_.CancelPointer();contacts_.CancelPointer();}
+  void CaptureReplay(std::filesystem::path directory){replayCapture_=std::move(directory);}
   int32_t Update(uint64_t now){
     if(windowClosed_)return 0;
     now_=now;const auto result=screen_.Update(input_,now);
     if(screen_.ReplayRequested()){
       const auto started=SDL_GetTicks();std::unique_ptr<SemanticState> returned;
       const auto code=RunScenarioScene(window_,shared_.Renderer,shared_.Textures,shared_.Font,shared_.Resources,
-          playback_,music_,sounds_,std::move(owner_),nullptr,root_,{},false,false,false,{},{},{},false,false,0,{},
+          playback_,music_,sounds_,std::move(owner_),nullptr,root_,replayCapture_,false,false,false,{},{},{},false,false,0,{},
           saveRoot_,&slots_,nullptr,0,&returned,scripts_.at(size_t(screen_.Selected())));
       if(code!=0)throw FormatError("battle replay session failed");
       if(!returned){windowClosed_=true;return 0;}
       owner_=std::move(*returned);restoreMusic_();++sessionSerial_;
-      now_+=SDL_GetTicks()-started;CancelPointer();input_={};modalInput_={};screen_.ResumeReplay(now_);
+      // Live gallery time advances with SDL. A bounded capture uses its outer
+      // frame clock, which remains suspended while the nested session runs.
+      if(replayCapture_.empty())now_+=SDL_GetTicks()-started;
+      CancelPointer();input_={};modalInput_={};screen_.ResumeReplay(now_);
     }
     if(!result)UpdateNewMarker(marker_,markerEnv_,now_);return result;
   }
   bool Dirty()const{return screen_.Dirty();}
   bool WindowClosed()const{return windowClosed_;}
   uint64_t SessionSerial()const{return sessionSerial_;}
+  const DialogState& Question()const{return question_;}
   const ExtrasBattleBrowser& State()const{return screen_;}
   bool ResourcesReady()const override{
     if(scripts_.size()!=env_.BattleReplays.size())return false;
@@ -164,7 +169,7 @@ class PcExtrasBattle final:public ExtrasBattleServices {
     if(it!=textures.end()){glDeleteTextures(1,&it->second.Handle);textures.erase(it);}}owned_.clear();}
   SceneDialogLayer& shared_;SemanticState& owner_;PlaybackTitleAudio& audio_;MusicPlayback& playback_;ViewerWindow& window_;
   ArchiveBgmResources& music_;ArchiveSeResources& sounds_;std::filesystem::path root_,saveRoot_;NativeSlotData& slots_;
-  std::function<void()> restoreMusic_;uint32_t hold_;uint64_t now_=0;
+  std::function<void()> restoreMusic_;uint32_t hold_;uint64_t now_=0;std::filesystem::path replayCapture_;
   ExtrasScreenEnvironment env_;ExtrasChildButtonHelpEnvironment help_;ButtonHelpStyle style_;
   NewMarkerEnvironment markerEnv_;NewMarkerState marker_;ExtrasBattleBrowser screen_;ExtrasBattleInput input_;DialogInput modalInput_;
   DialogState question_;DialogContentLayout layout_;PcDialogContacts contacts_;std::vector<int32_t> scripts_;

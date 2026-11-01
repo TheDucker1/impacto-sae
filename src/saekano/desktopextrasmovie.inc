@@ -37,6 +37,7 @@ class PcExtrasMovie final:public ExtrasMovieServices {
   }
   bool Dirty()const{return screen_.Dirty();}
   const ExtrasMovieBrowser& State()const{return screen_;}
+  const MoviePlaybackState& PlaybackState()const{return movie_.State();}
   bool ResourcesReady()const override{
     for(size_t i=0;i<env_.Movies.size();++i)
       if(!shared_.Renderer.Textures.contains({ProfileTextureSection::ExtrasMovieThumbnail,-1,uint32_t(i)}))return false;

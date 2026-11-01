@@ -1149,7 +1149,8 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
                       const NativePendingSlotLoad* load=nullptr,uint8_t captureOrdinaryChoice=0,
                       ScenarioSceneTransfer* transfer=nullptr,std::optional<int32_t> replayScript={}) {
   const bool capture = !captureDirectory.empty();
-  if(replayScript && (!transfer || completed || load || capture))throw FormatError("replay requires its own live manager/return owner");
+  if(replayScript && (!transfer || completed || load))throw FormatError("replay requires its own live manager/return owner");
+  const bool captureReplay=capture && replayScript.has_value();
   PcSceneThumbnail sceneThumbnail;
   const bool captureEnding=captureMenuInput==16;
   const bool captureScenarioMenu=captureMenuInput>=19 && captureMenuInput<=21;
@@ -1309,11 +1310,13 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
                       : completed ? VirtualMachine::FromCompletedProfile(resources,backend,std::move(owner),*completed)
                       : VirtualMachine::FromTitleNewGame(resources,backend,std::move(owner));
   if(capture && !completed && !load){
-    if(completed || vm->State().ScriptFileId!=0 || vm->State().CurrentCommandIndex!=0 ||
-        vm->Opcode()!=0 || vm->Boundary()!=VmBoundary::BeforeStart)
-      throw FormatError("PC title New Game did not enter the original script0");
+    const auto entryScript=replayScript.value_or(0);
+    if(vm->State().ScriptFileId!=entryScript || vm->State().CurrentCommandIndex!=0 ||
+        (!replayScript && vm->Opcode()!=0) || vm->Boundary()!=VmBoundary::BeforeStart)
+      throw FormatError("PC scenario did not enter its selected original script");
     std::ofstream entry(captureDirectory/"entry.json");
-    entry << "{\"passed\":true,\"script\":0,\"command\":0,\"opcode\":0,\"before_start\":true,\"profile_shortcut\":false}\n";
+    entry << "{\"passed\":true,\"script\":"<<entryScript<<",\"command\":0,\"opcode\":"<<vm->Opcode()
+      <<",\"before_start\":true,\"profile_shortcut\":false,\"extras_replay\":"<<(replayScript?"true":"false")<<"}\n";
     entry.close();if(!entry)throw FormatError("cannot save PC New Game entry report");
     if(captureMenuInput==17)return 0;
   }
@@ -1520,6 +1523,8 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
   uint64_t previous = 0, firstMessage = UINT64_MAX, lastSaved = 0;
   const auto epoch = SDL_GetTicks();
   #include "desktopscenariomenu.inc"
+  uint32_t replayCaptureStage=0;int32_t replayCaptureScript=-1,replayCaptureCommand=-1;
+  const VirtualMachine* replayCaptureManager=nullptr;
   std::string previousSignature;
   size_t saved = 0;
   bool versusConfirmSent=false;
@@ -1576,6 +1581,23 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
     SDL_Event event;
     DialogInput modalInput;
     if(captureScenarioMenu)captureScenarioMenuInput(now);
+    if(captureReplay){
+      SDL_Keycode key=0;
+      if(replayCaptureStage==0 && backend.CurrentMessage() && backend.CurrentMessage()->Reveal.Revealed && !vm->State().ScenarioMenuBlocked){
+        replayCaptureManager=vm.get();replayCaptureScript=vm->State().ScriptFileId;replayCaptureCommand=vm->State().CurrentCommandIndex;key=SDLK_ESCAPE;replayCaptureStage=1;
+      }else if(replayCaptureStage==1 && replayQuestion.Visible && replayQuestion.Phase==3){key=SDLK_RETURN;replayCaptureStage=2;}
+      else if(replayCaptureStage==2 && !replayQuestion.Visible){
+        if(vm.get()!=replayCaptureManager || vm->State().ScriptFileId!=replayCaptureScript || vm->State().CurrentCommandIndex<replayCaptureCommand)
+          throw FormatError("declining replay abort replaced or restarted its manager");
+        key=SDLK_ESCAPE;replayCaptureStage=3;
+      }else if(replayCaptureStage==3 && replayQuestion.Visible && replayQuestion.Phase==3){
+        if(replayQuestion.Selected!=1)key=SDLK_RIGHT;else {key=SDLK_RETURN;replayCaptureStage=4;}
+      }
+      if(key)for(const auto type:{SDL_EVENT_KEY_DOWN,SDL_EVENT_KEY_UP}){
+        SDL_Event e{};e.type=type;e.key.windowID=SDL_GetWindowID(window.Window);e.key.key=key;e.key.down=type==SDL_EVENT_KEY_DOWN;
+        SdlCheck(SDL_PushEvent(&e),"replay capture SDL input");
+      }
+    }
     if(captureEnding && endingState.Started) {
       SDL_Keycode key=0;
       if(endingHost.Modal.Visible && endingHost.Modal.Phase==3 && !endingConfirmInjected) {
@@ -1591,7 +1613,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       }
     }
     if(!endingState.Started) {
-    if((captureVersus || captureDialogue || captureSelection) && vm->State().BattleVersus.Phase==12 && !vm->State().BattleVersus.PendingPhase && !versusConfirmSent) {
+    if((captureVersus || captureDialogue || captureSelection || captureReplay) && vm->State().BattleVersus.Phase==12 && !vm->State().BattleVersus.PendingPhase && !versusConfirmSent) {
       for(const auto type:{SDL_EVENT_KEY_DOWN,SDL_EVENT_KEY_UP}) {
         SDL_Event e{};e.type=type;e.key.windowID=SDL_GetWindowID(window.Window);e.key.key=SDLK_RETURN;
         e.key.down=type==SDL_EVENT_KEY_DOWN;SdlCheck(SDL_PushEvent(&e),"versus capture explicit confirm");
@@ -1721,7 +1743,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       events << "{\"kind\":\"explicit_confirmation\",\"source\":\"SDL_Enter\",\"now\":"
              << now << ",\"script\":" << captureScript << ",\"command\":" << *captureUntilMessage << "}\n";
     }
-    if (capture && !captureAuto && !captureScenarioMenu && firstMessage != UINT64_MAX &&
+    if (capture && !captureReplay && !captureAuto && !captureScenarioMenu && firstMessage != UINT64_MAX &&
         capturePointerStage < (captureButtonAuto ? 2u : 4u)) {
       constexpr std::array<uint64_t, 4> Delays{96, 112, 512, 528};
       if (now - firstMessage >= Delays[capturePointerStage]) {
@@ -1744,7 +1766,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
         ++capturePointerStage;
       }
     }
-    if (capture && captureAuto && !captureScenarioMenu && !load && firstMessage != UINT64_MAX && captureAutoStage < 2) {
+    if (capture && !captureReplay && captureAuto && !captureScenarioMenu && !load && firstMessage != UINT64_MAX && captureAutoStage < 2) {
       const uint64_t delay = captureAutoStage == 0 ? 96 : 1296;
       if (now - firstMessage >= delay) {
         SDL_Event synthetic{};
@@ -2003,7 +2025,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
     if (capture && now > previous) {
       std::vector<int16_t> samples(size_t(now - previous) * 96);
       playback.Render(samples);
-      if (captureActive) {
+      if (captureActive && !captureReplay) {
         if (!pcmEpoch) pcmEpoch = previous;
         pcm.write(reinterpret_cast<const char*>(samples.data()),
                   samples.size() * sizeof(int16_t));
@@ -2207,7 +2229,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
         chapterCompleted=true;
       if(captureLip && captureActive && step.Opcode==0x64 && step.Boundary==VmBoundary::CommandCompletedBeforeDispatch &&
           backend.CurrentMessage() && backend.CurrentMessage()->VoiceId>=0){targetCompleted=true;quit=true;}
-      if (step.Boundary == VmBoundary::CommandCompletedBeforeDispatch && capture && !captureScenarioMenu && !captureParticles && !captureResult &&
+      if (step.Boundary == VmBoundary::CommandCompletedBeforeDispatch && capture && !captureReplay && !captureScenarioMenu && !captureParticles && !captureResult &&
           (captureUntilMessage
                ? step.Script == captureScript && size_t(step.Command) == *captureUntilMessage
                : step.Opcode == 0x64 && (!captureVoiced || step.Command >= 67))) {
@@ -2807,8 +2829,8 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
         std::to_string((now-message->Epoch)/500)+':'+std::to_string(quit);
     if (capture && captureActive && captureMenuInput!=21 && (saved == 0 || signature != previousSignature ||
                     now - lastSaved >= 1500 || quit)) {
-      const auto file = "scene-" + std::to_string(saved++) + ".bmp";
-      Capture(captureDirectory / file, width, height);
+      const auto file = captureReplay ? std::string{} : "scene-" + std::to_string(saved) + ".bmp";++saved;
+      if(!captureReplay)Capture(captureDirectory / file, width, height);
       report << "{\"file\":\"" << file << "\",\"now\":" << now
              << ",\"battle_result\":{\"phase\":" << state.BattleResult.Phase << ",\"item\":" << state.BattleResult.Item
              << ",\"outcome\":" << state.BattleResult.Outcome << ",\"visible\":" << state.BattleResult.Visible << ",\"channels\":[";
@@ -3058,6 +3080,13 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
     else if(endingState.Started)SDL_Delay(1);
   }
   if(replayScript && transfer->Replay){
+    if(captureReplay){
+      if(replayCaptureStage!=4 || !returningReplay)throw FormatError("replay witness missed decline/resume and confirmed abort");
+      std::ofstream result(captureDirectory/"replay.json");
+      result<<"{\"passed\":true,\"script\":"<<replayCaptureScript<<",\"command\":"<<replayCaptureCommand
+        <<",\"declined_abort_preserves_manager\":true,\"confirmed_abort_fade_finished\":true,\"manager_returned\":true}\n";
+      if(!result)throw FormatError("cannot save replay interaction report");
+    }
     vm->State().SystemProgress=SnapshotSystemOwner(vm->State(),registeredHistory);
     transfer->Owner=std::make_unique<SemanticState>(std::move(vm->State()));
     return 0;
@@ -5259,6 +5288,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     uint32_t continueStage=0;bool continueOpenImage=false;
     bool sawMovie=false,movieReturned=false,movieSkipped=false,movieImage=false;
     ExtrasInteractionCapture extrasCapture;extrasCapture.Mode=captureExtras;
+    if(captureExtras==4)extrasCapture.ReplayOutput=captureDirectory/"replay";
     std::array<float,2> pointer{};int pointerCapture=0;int32_t previousPhase=-1;size_t frames=0;uint64_t epoch=SDL_GetTicks();
     for(;!quit && !title.RequestedScene;++frames){
       if(capture && frames>=(captureMovie==2?10000u:captureMovie?4000u:1250u))throw FormatError("title capture exhausted its bounded frame budget");

@@ -344,6 +344,8 @@ int main(int argc, char* argv[]) {
     if(argc==7 && std::string_view(argv[3])=="--capture-continue-choice-pointer" && std::string_view(argv[5])=="--save-dir")
       return Saekano::RunTitleScene(argv[2],argv[6],argv[4],false,false,0,0,5);
     if(argc==7 && std::string_view(argv[3])=="--capture-extras-cg" && std::string_view(argv[5])=="--save-dir")return Saekano::RunTitleScene(argv[2],argv[6],argv[4],false,false,0,0,0,0,{},2);
+    if(argc==7 && std::string_view(argv[3])=="--capture-extras-movie" && std::string_view(argv[5])=="--save-dir")return Saekano::RunTitleScene(argv[2],argv[6],argv[4],false,false,0,0,0,0,{},3);
+    if(argc==7 && std::string_view(argv[3])=="--capture-extras-battle" && std::string_view(argv[5])=="--save-dir")return Saekano::RunTitleScene(argv[2],argv[6],argv[4],false,false,0,0,0,0,{},4);
     if(argc==5 && std::string_view(argv[3])=="--capture-extras-music")return Saekano::RunTitleScene(argv[2],{},argv[4],false,false,0,0,0,0,{},1);
     if(argc==3)return Saekano::RunTitleScene(argv[2]);
     if(argc==5 && std::string_view(argv[3])=="--save-dir")return Saekano::RunTitleScene(argv[2],argv[4]);
