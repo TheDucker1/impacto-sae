@@ -66,7 +66,7 @@ struct ExtrasInteractionCapture {
     }
     const bool visible=cg && cg->State().Viewing() && cg->State().Phase()==9 && cg->State().ImageOpacity()==255 && cg->State().PreviousOpacity()==0;
     if(Stage==4 && visible){const auto& state=cg->State();FirstBuffer=state.CurrentBuffer();
-      History=state.Catalogue().Card(size_t(Row))->Images.at(size_t(state.Variant()));key(SDLK_C);Stage=5;return;}
+      History=state.Catalogue().Card(size_t(Row))->Images.at(size_t(state.Variant()));key(SDLK_SPACE);Stage=5;return;}
     if(Stage==5 && visible && playback.OrdinaryVoicePlaying(7) && playback.OrdinaryVoicePosition(7)>0){
       PausePosition=uint64_t(playback.OrdinaryVoicePosition(7));key(SDLK_ESCAPE);Stage=6;return;}
     if(Stage==6 && visible && !cg->State().CommentActive() && !playback.OrdinaryVoicePlaying(7)){key(SDLK_ESCAPE);Stage=7;return;}

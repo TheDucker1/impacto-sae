@@ -14,7 +14,8 @@ int RunMovieVmSession(const std::filesystem::path& root, int32_t script, uint32_
 int RunTitleScene(const std::filesystem::path& usrdir,
                   const std::filesystem::path& progressRoot={},
                   const std::filesystem::path& captureDirectory={},bool capturePointer=false,bool captureOpening=false,uint8_t captureMovie=0,uint8_t captureOptions=0,uint8_t captureContinue=0,uint8_t captureScenarioMenu=0,
-                  std::optional<size_t> replayRow={},uint8_t captureExtras=0);
+                    std::optional<size_t> replayRow={},uint8_t captureExtras=0,
+                    std::optional<size_t> captureOpeningEnd={});
 int RunOptionsDrawProbe(const std::filesystem::path& usrdir,const std::filesystem::path& output);
 int RunSlotThumbnailProbe(const std::filesystem::path& slots,const std::filesystem::path& output);
 int RunSceneThumbnailProbe(const std::filesystem::path& output);

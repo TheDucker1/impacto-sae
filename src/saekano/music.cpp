@@ -32,12 +32,20 @@ void BgmStopFade::Tick(uint32_t elapsedMilliseconds) {
 void InitializeFreshAudioOwner(SemanticState& state) {
   if (state.MusicHistory.ExtentKnown || !state.MusicHistory.Entries.empty() ||
       state.MusicHistory.Default != 0 || state.BgmMasterVolume ||
-      state.SeMasterVolume)
+      state.SeMasterVolume || state.BgmCommandVolume || state.SeCommandVolume)
     throw FormatError(
         "fresh audio initialization would overwrite existing audio state");
   state.MusicHistory = {true, {}, 0};
   state.BgmMasterVolume = 80;
   state.SeMasterVolume = 80;
+  // CMain's scenario context already exists before title/Config. Reset801a0154
+  // through801a016c initializes these remembered audio fields, not just the
+  // later scenario VM constructor. Title Config must never see empty gains.
+  state.BgmTrack = -1;
+  state.BgmCommandVolume = 100;
+  state.SeTrack = -1;
+  state.SeCommandVolume = 100;
+  state.SeChannel = 0;
 }
 bool MusicHistoryState::AllKnown() const {
   return ExtentKnown &&

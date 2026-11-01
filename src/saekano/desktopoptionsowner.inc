@@ -5,7 +5,7 @@ struct PcActionInput {
     if(event.type==SDL_EVENT_KEY_DOWN && !event.key.repeat) {
       const auto key=event.key.key;
       Left=key==SDLK_LEFT;Right=key==SDLK_RIGHT;Up=key==SDLK_UP;Down=key==SDLK_DOWN;
-      Accept=key==SDLK_RETURN || key==SDLK_SPACE;
+      Accept=key==SDLK_RETURN;
       Cancel=key==SDLK_ESCAPE || key==SDLK_BACKSPACE;
     } else if(event.type==SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
       const auto button=event.gbutton.button;

@@ -44,6 +44,7 @@
 #include "optionspagedraw.h"
 #include "optionswidgets.h"
 #include "optionsrepeat.h"
+#include "pccontrols.h"
 #include "optionsdialog.h"
 #include "systemmenu.h"
 #include "backlogscreen.h"
@@ -83,6 +84,8 @@ extern "C" {
 #include <iterator>
 #include <string>
 #include <map>
+#include <deque>
+#include <set>
 #include <cmath>
 #include <ctime>
 
@@ -129,17 +132,34 @@ struct ViewerWindow {
   SDL_Window* Window = nullptr;
   SDL_GLContext Context = nullptr;
   inline static std::map<SDL_JoystickID,SDL_Gamepad*> Gamepads;
+  inline static std::map<SDL_JoystickID,std::set<SDL_Keycode>> PadKeys;
+  inline static std::deque<SDL_Event> ReleasedPadKeys;
   static void OpenGamepad(SDL_JoystickID id) {
     if(Gamepads.contains(id))return;
     if(auto* pad=SDL_OpenGamepad(id))Gamepads.emplace(id,pad);
     else SDL_LogWarn(SDL_LOG_CATEGORY_INPUT,"Cannot open gamepad: %s",SDL_GetError());
   }
   static bool PollEvent(SDL_Event* event) {
+    if(!ReleasedPadKeys.empty()) {
+      *event=ReleasedPadKeys.front();ReleasedPadKeys.pop_front();return true;
+    }
     if(!SDL_PollEvent(event))return false;
     if(event->type==SDL_EVENT_GAMEPAD_ADDED)OpenGamepad(event->gdevice.which);
     if(event->type==SDL_EVENT_GAMEPAD_REMOVED) {
+      for(auto key:PadKeys[event->gdevice.which]) {
+        SDL_Event release{};release.type=SDL_EVENT_KEY_UP;release.key.key=key;
+        ReleasedPadKeys.push_back(release);
+      }
+      PadKeys.erase(event->gdevice.which);
       const auto found=Gamepads.find(event->gdevice.which);
       if(found!=Gamepads.end()){SDL_CloseGamepad(found->second);Gamepads.erase(found);}
+    }
+    const bool padButton=event->type==SDL_EVENT_GAMEPAD_BUTTON_DOWN || event->type==SDL_EVENT_GAMEPAD_BUTTON_UP;
+    const auto padId=padButton?event->gbutton.which:0;
+    TranslatePcControls(*event);
+    if(padButton && event->key.key!=SDLK_UNKNOWN) {
+      if(event->type==SDL_EVENT_KEY_DOWN)PadKeys[padId].insert(event->key.key);
+      else PadKeys[padId].erase(event->key.key);
     }
     return true;
   }
@@ -184,6 +204,7 @@ struct ViewerWindow {
   }
   void Cleanup() {
     for(const auto& [id,pad]:Gamepads){(void)id;SDL_CloseGamepad(pad);}Gamepads.clear();
+    PadKeys.clear();ReleasedPadKeys.clear();
     if (Context) SDL_GL_DestroyContext(Context);
     if (Window) SDL_DestroyWindow(Window);
     SDL_Quit();
@@ -455,7 +476,7 @@ void WriteDescription(std::ostream& out, int32_t row, const UiTextBlit& line) {
 struct UiBlitRenderer {
   GLuint Program = 0, Vertex = 0, Fragment = 0, Vao = 0, Buffer = 0;
   GLint Tint = -1, Solid = -1, AlphaMode = -1;
-  GLint FilterMode = -1, FilterValue = -1, Glyph = -1;
+  GLint FilterMode = -1, FilterValue = -1, Glyph = -1, AlphaGlyph = -1;
   GLint ColoredRule = -1, ImageRule = -1, RuleValue = -1;
   struct BoundTexture {
     GLuint Handle;
@@ -496,6 +517,7 @@ uniform int alphaMode;
 uniform int filterMode;
 uniform float filterValue;
 uniform bool glyph;
+uniform bool alphaGlyph;
 uniform bool coloredRule;
 uniform bool imageRule;
 uniform float ruleValue;
@@ -543,7 +565,12 @@ void frag_output_finalize()
 void main(){
   outputColor=solid?tint:texture(image,texturePosition)*tint;
   // Native rectangles and glyphs use independent fragment programs.
-  if(imageRule){
+  if(alphaGlyph){
+    // Original GXP8025729c: the generated A8 atlas supplies coverage only.
+    // Multiplying interpolated RGB introduces dark edges on colored text.
+    vec4 result=tint*vec4(1.0,1.0,1.0,texture(image,texturePosition).a);
+    outputColor=vec4(unpackHalf2x16(packHalf2x16(result.xy)),unpackHalf2x16(packHalf2x16(result.zw)));
+  }else if(imageRule){
     sa[0]=vec4(ruleValue,0.0,1.0,0.0);
     pa[0]=tint;pa[1]=texture(image,texturePosition);pa[2]=texture(ruleMask,texturePosition);
     primary_program();frag_output_finalize();
@@ -594,6 +621,7 @@ void main(){
       FilterMode = glGetUniformLocation(Program, "filterMode");
       FilterValue = glGetUniformLocation(Program, "filterValue");
       Glyph = glGetUniformLocation(Program, "glyph");
+      AlphaGlyph = glGetUniformLocation(Program, "alphaGlyph");
       ColoredRule = glGetUniformLocation(Program, "coloredRule");
       ImageRule = glGetUniformLocation(Program, "imageRule");
       RuleValue = glGetUniformLocation(Program, "ruleValue");
@@ -747,15 +775,22 @@ void main(){
   }
   void DrawQuad(const UiSpriteBlit& blit, const BoundTexture& texture,
                 bool solid, bool glyph = false,
-                std::optional<float> coloredRule = {},const BoundTexture* ruleMask=nullptr) {
+                std::optional<float> coloredRule = {},const BoundTexture* ruleMask=nullptr,bool alphaGlyph=false) {
     if (coloredRule && !std::isfinite(*coloredRule))
       throw FormatError("nonfinite rule shader value");
     glUniform1i(Solid, solid ? 1 : 0);
     glUniform1i(Glyph, glyph ? 1 : 0);
+    glUniform1i(AlphaGlyph, alphaGlyph ? 1 : 0);
     glUniform1i(ColoredRule, coloredRule.has_value() && !ruleMask ? 1 : 0);
     glUniform1i(ImageRule, ruleMask ? 1 : 0);
     glUniform1f(RuleValue, coloredRule.value_or(0.0f));
-    const auto quad = ResolveUiQuad(blit, texture.Width, texture.Height);
+    auto quad = ResolveUiQuad(blit, texture.Width, texture.Height);
+    if(alphaGlyph) {
+      // Gxm_DrawGlyphQuad starts at texel centers; the far source boundary
+      // remains (source+extent)/textureSize, as in800c2756..800c27c6.
+      for(auto corner:{0u,2u})quad[corner][2]+=0.5f/float(texture.Width);
+      for(auto corner:{0u,1u})quad[corner][3]+=0.5f/float(texture.Height);
+    }
     std::array<float, 24> vertices;
     constexpr std::array<size_t, 6> corners{0, 1, 2, 2, 1, 3};
     for (size_t i = 0; i < corners.size(); ++i)
@@ -980,7 +1015,7 @@ struct FontTextures {
         blit.Source = {0, 0, int32_t(pixels->Width), int32_t(pixels->Height)};
       }
       if (pixels) {
-        renderer.DrawQuad(blit, Get(bitmap, id, *pixels), false, true);
+        renderer.DrawQuad(blit, Get(bitmap, id, *pixels), false, true,{},nullptr,!bitmap);
         if (report) {
           *report << "{\"character\":" << uint16_t(character)
                   << ",\"bitmap\":" << (bitmap ? "true" : "false")
@@ -1573,7 +1608,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
   bool loadedMessageAdvanced=false;
   uint8_t ordinaryCaptureStage=0;
   std::optional<std::pair<int32_t,int32_t>> previousOrdinaryState;
-  const uint32_t frameBudget = (captureChapter || captureProfile)?220000:(captureParticles || captureResult)?100000:captureMenuInput==21?6000:(captureFromCommand ? (captureBranch?40000:20000) : 2000);
+  const uint32_t frameBudget = (captureChapter || captureProfile)?220000:(captureParticles || captureResult)?100000:captureMenuInput==21?6000:((captureFromCommand || captureUntilMessage) ? (captureBranch?40000:20000) : 2000);
   for (uint32_t frame = 0; !quit && (!capture || frame < frameBudget); ++frame) {
     const uint64_t now =
         capture ? uint64_t(frame) * 16 : SDL_GetTicks() - epoch;
@@ -1824,13 +1859,13 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       if(event.type==SDL_EVENT_QUIT){quit=true;continue;}
       if(vm->CurrentProfile()){profilePresenter.Handle(event,input.Profile);continue;}
       if(replayScript &&
-          ((event.type==SDL_EVENT_KEY_DOWN && event.key.key==SDLK_ESCAPE && !event.key.repeat) ||
+          ((event.type==SDL_EVENT_KEY_DOWN && event.key.key==SDLK_F13 && !event.key.repeat) ||
            event.type==SDL_EVENT_GAMEPAD_BUTTON_DOWN && event.gbutton.button==SDL_GAMEPAD_BUTTON_START)){
         replayInterrupt=true;wakeTextPressed=true;continue;
       }
       if(!endingState.Started && !vm->CurrentProfile() &&
           !vm->State().ApproachSelection.Visible && !vm->State().OrdinaryChoice.Visible &&
-          ((event.type==SDL_EVENT_KEY_DOWN && event.key.key==SDLK_ESCAPE && !event.key.repeat) ||
+          ((event.type==SDL_EVENT_KEY_DOWN && event.key.key==SDLK_F13 && !event.key.repeat) ||
            (event.type==SDL_EVENT_GAMEPAD_BUTTON_DOWN && event.gbutton.button==SDL_GAMEPAD_BUTTON_START))) {
         requestSystemMenu=true;wakeTextPressed=true;continue;
       }
@@ -1845,8 +1880,10 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       if(battleHost->State().Enabled && battleHost->Phase()==4) {
         if(event.type==SDL_EVENT_KEY_DOWN && !event.key.repeat) {
           if(event.key.key==SDLK_1)battleFaces|=1;
-          if(event.key.key==SDLK_2)battleFaces|=2;
-          if(event.key.key==SDLK_3)battleFaces|=4;
+          if(event.key.key==SDLK_SPACE || event.key.key==SDLK_2)battleFaces|=2;
+          if(event.key.key==SDLK_RETURN || event.key.key==SDLK_3)battleFaces|=4;
+          if(event.key.key==SDLK_1 || event.key.key==SDLK_SPACE || event.key.key==SDLK_RETURN ||
+              event.key.key==SDLK_2 || event.key.key==SDLK_3)continue;
         }
         if(event.type==SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
           if(event.gbutton.button==SDL_GAMEPAD_BUTTON_NORTH)battleFaces|=1;
@@ -2468,17 +2505,8 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
     renderer.SetFilter(*state.ScreenFilter.Mode, *state.ScreenFilter.Intensity);
     const auto* activeMessage = backend.CurrentMessage();
     const bool approach=state.ApproachMode.Enabled.value_or(false);
-    if (!endingState.Started && !vm->MovieActive() && !activeMessage && !approach && !state.OrdinaryChoice.Visible && !state.BattleVersus.Visible && !state.BattleResult.Visible && !state.TitleDisplay.value_or(false)) {
-      UiSpriteBlit white;
-      white.Destination = {0, 0, 960, 544};
-      white.Color = {255, 255, 255, 255};
-      renderer.DrawQuad(white, {0, 1, 1}, true);
-      SdlCheck(SDL_GL_SwapWindow(window.Window), "scene prelude swap");
-      if (!capture) SDL_Delay(16);
-      continue;
-    }
-    // Empty text contributes no glyphs. A message-free approach frame still
-    // draws its scene queue and HUD; report its absent message explicitly.
+    // The native scene queue is independent of dialogue ownership. ClearMessage
+    // commonly precedes a slide, fade or pose change; draw those frames too.
     const SceneMessageTextState emptyMessage;
     const auto* message=activeMessage?activeMessage:&emptyMessage;
     if (!state.ScreenFade)
@@ -2903,6 +2931,8 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       if (!captureVoiced) signature += ':' + std::to_string(vm->SpriteBlink(id)->Phase);
       if (captureUntilMessage) signature += ':' + std::to_string(actor.Pose.Current) + ':' +
           std::to_string(actor.Tweens[size_t(CharacterTween::PreviousPose)].Current / 64);
+      if(captureUntilMessage)for(auto channel:{CharacterTween::X,CharacterTween::Y,CharacterTween::Opacity})
+        signature+=':'+std::to_string(actor.Tweens[size_t(channel)].Current/16);
     }
     if(captureRuby)signature=std::to_string(message->Command)+':'+std::to_string(message->Reveal.Revealed)+':'+
         std::to_string((now-message->Epoch)/500)+':'+std::to_string(quit);
@@ -3260,6 +3290,7 @@ int RunScenarioScene(ViewerWindow& window,UiBlitRenderer& renderer,
 #include "desktopextrasowner.inc"
 #include "desktoptitle.inc"
 #include "desktopcaptureextras.inc"
+#include "desktopstartup.inc"
 }  // namespace
 
 int RunSceneSdkUiProbe(const std::filesystem::path& usrdir,
@@ -5297,7 +5328,7 @@ int RunMovieInfoProbe(const std::filesystem::path& path,const std::filesystem::p
   }
 }
 int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::path& requestedProgressRoot,
-    const std::filesystem::path& requestedCaptureDirectory,bool capturePointer,bool captureOpening,uint8_t captureMovie,uint8_t captureOptions,uint8_t captureContinue,uint8_t captureScenarioMenu,std::optional<size_t> replayRow,uint8_t captureExtras){
+    const std::filesystem::path& requestedCaptureDirectory,bool capturePointer,bool captureOpening,uint8_t captureMovie,uint8_t captureOptions,uint8_t captureContinue,uint8_t captureScenarioMenu,std::optional<size_t> replayRow,uint8_t captureExtras,std::optional<size_t> captureOpeningEnd){
   auto captureDirectory=requestedCaptureDirectory;
   bool created=false;
   try{
@@ -5346,6 +5377,14 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     PlaybackTitleAudio audio(playback,systemSounds,ProfileVoiceGain(progress.Bytes6022c[10],1.0f),ProfileVoiceGain(progress.Bytes6022c[9],1.0f));
     audio.BindVoiceAttenuation(attenuation,audioClock);
     PcMovieFrameLayer movieFrame;MoviePlayback movie;movie.Present=[&](const AVFrame* frame,int64_t pts){movieFrame.Present(frame,pts);};
+    // SceneInit runs once at process startup, never on a scenario's return to
+    // title. Module captures explicitly start at title; startup has its own
+    // bounded capture of the actual logo/movie owner.
+    if(!replayRow && (!capture || captureMovie==3)) {
+      if(!RunStartupPresentation(window,playback,movie,movieFrame,*owner,usrdir,first,
+          capture?captureDirectory:std::filesystem::path{}))return 0;
+      if(captureMovie==3)return 0;
+    }
     if(replayRow){
       if(capture)throw FormatError("live battle replay cannot use title capture controls");
       const auto gallery=ExtrasScreenEnvironment::DecodeThroughBattle(SceneRead(usrdir/"env/env_omake.dat"));
@@ -5397,6 +5436,17 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
       const uint64_t now=capture?frames*16:SDL_GetTicks()-epoch;
       const auto key=[&](SDL_Keycode code){for(auto type:{SDL_EVENT_KEY_DOWN,SDL_EVENT_KEY_UP}){
         SDL_Event event{};event.type=type;event.key.windowID=SDL_GetWindowID(window.Window);event.key.key=code;
+        // Exercise the public keyboard layout through the actual SDL ingress.
+        switch(code) {
+          case SDLK_RETURN:event.key.key=SDLK_Z;break;
+          case SDLK_ESCAPE:case SDLK_BACKSPACE:event.key.key=SDLK_X;break;
+          case SDLK_SPACE:event.key.key=SDLK_A;break;
+          case SDLK_1:event.key.key=SDLK_S;break;
+          case SDLK_F13:event.key.key=SDLK_RETURN;break;
+          case SDLK_A:event.key.key=SDLK_TAB;break;
+          default:break;
+        }
+        event.key.scancode=SDL_GetScancodeFromKey(event.key.key,nullptr);
         event.key.down=type==SDL_EVENT_KEY_DOWN;SdlCheck(SDL_PushEvent(&event),"title capture explicit keyboard input");}};
       const auto mouse=[&](uint32_t step,int32_t x,int32_t y){
         SDL_Event event{};
@@ -5455,8 +5505,8 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
                 if(++optionsGesture==2){optionsGesture=0;optionsStage=2;}}
             }
             else if(optionsStage==2 && cs.Pages.Controls.SelectedTab==1){
-              if(cs.Pages.Rows[1].Selected<3)key(SDLK_DOWN);else{key(SDLK_P);optionsStage=3;}
-            }else if(optionsStage==3 && config.PreviewStarts && playback.ProfileVoicePosition().value_or(0)>0){key(SDLK_SPACE);optionsStage=4;}
+              if(cs.Pages.Rows[1].Selected<3)key(SDLK_DOWN);else{key(SDLK_SPACE);optionsStage=3;}
+            }else if(optionsStage==3 && config.PreviewStarts && playback.ProfileVoicePosition().value_or(0)>0){key(SDLK_F13);optionsStage=4;}
             else if(optionsStage==7){key(SDLK_BACKSPACE);optionsStage=8;}
           }
           const auto& question=config.Dialogs().Question;
@@ -5493,11 +5543,11 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
             const size_t i=event.key.key==SDLK_E || event.key.key==SDLK_PAGEDOWN;galleryPageHeld[i]=down;
             title.ExtrasInput.Pages.Held[i]=down;title.ExtrasInput.Pages.Pressed[i]|=down&&!event.key.repeat;
           }
-          if(down&&!event.key.repeat){title.Input.Accept|=event.key.key==SDLK_RETURN;title.Input.Cancel|=event.key.key==SDLK_BACKSPACE;title.Input.Start|=event.key.key==SDLK_SPACE;
-            title.OptionsInput.Accept|=event.key.key==SDLK_RETURN;title.OptionsInput.Preview|=event.key.key==SDLK_P;
-            title.SlotInput.Accept|=event.key.key==SDLK_RETURN;title.SlotInput.Protect|=event.key.key==SDLK_P;
+          if(down&&!event.key.repeat){title.Input.Accept|=event.key.key==SDLK_RETURN;title.Input.Cancel|=event.key.key==SDLK_BACKSPACE;title.Input.Start|=event.key.key==SDLK_F13;
+            title.OptionsInput.Accept|=event.key.key==SDLK_RETURN;title.OptionsInput.Preview|=event.key.key==SDLK_SPACE;
+            title.SlotInput.Accept|=event.key.key==SDLK_RETURN;title.SlotInput.Protect|=event.key.key==SDLK_SPACE;
             title.SlotInput.Cancel|=event.key.key==SDLK_BACKSPACE || event.key.key==SDLK_ESCAPE;
-            title.OptionsInput.Common.Close|=event.key.key==SDLK_SPACE;
+            title.OptionsInput.Common.Close|=event.key.key==SDLK_F13;
             title.OptionsInput.Common.Revert|=event.key.key==SDLK_BACKSPACE || event.key.key==SDLK_ESCAPE;
             title.OptionsInput.Common.PreviousTab|=event.key.key==SDLK_Q || event.key.key==SDLK_PAGEUP;
             title.OptionsInput.Common.NextTab|=event.key.key==SDLK_E || event.key.key==SDLK_PAGEDOWN;
@@ -5505,8 +5555,8 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
             title.OptionsModalInput.Accept|=event.key.key==SDLK_RETURN;title.OptionsModalInput.Cancel|=event.key.key==SDLK_BACKSPACE || event.key.key==SDLK_ESCAPE;
             title.ExtrasInput.Accept|=event.key.key==SDLK_RETURN;
             title.ExtrasInput.Cancel|=event.key.key==SDLK_BACKSPACE || event.key.key==SDLK_ESCAPE;
-            title.ExtrasInput.Comment|=event.key.key==SDLK_C;title.ExtrasInput.ToggleHelp|=event.key.key==SDLK_H;
-            title.ExtrasInput.Stop|=event.key.key==SDLK_SPACE;title.ExtrasInput.Mode|=event.key.key==SDLK_M;
+            title.ExtrasInput.Comment|=event.key.key==SDLK_SPACE;title.ExtrasInput.ToggleHelp|=event.key.key==SDLK_1;
+            title.ExtrasInput.Stop|=event.key.key==SDLK_F13;title.ExtrasInput.Mode|=event.key.key==SDLK_1;
           }
         }
         if((event.type==SDL_EVENT_MOUSE_BUTTON_DOWN || event.type==SDL_EVENT_MOUSE_BUTTON_UP) && event.button.button==SDL_BUTTON_LEFT){
@@ -5661,7 +5711,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     std::unique_ptr<SemanticState> returnedTitle;
     const auto result=RunScenarioScene(window,renderer,textures,font,resources,playback,music,sounds,std::move(*owner),nullptr,
       usrdir,capture?captureDirectory/"entry":std::filesystem::path{},captureOpening || captureContinue>=3,false,captureContinue>=3,
-      captureContinue>=3?std::optional<size_t>(captureContinue==4?149:captureContinue==5?297:size_t(title.PendingLoad->Context.ResumeCommand)):std::nullopt,{},{},captureContinue>=3,false,
+      captureContinue>=3?std::optional<size_t>(captureContinue==4?149:captureContinue==5?297:size_t(title.PendingLoad->Context.ResumeCommand)):captureOpeningEnd,{},{},captureContinue>=3,false,
       capture?(captureScenarioMenu==4?22:captureScenarioMenu==3?21:captureScenarioMenu==2?20:captureScenarioMenu?19:captureContinue>=3?0:captureOpening?18:17):0,{},progressRoot,&session.Slots,title.PendingLoad.get(),captureContinue>=4?captureContinue-3:0,&returnedTitle);
     if(!returnedTitle)return result;
     if(captureScenarioMenu==2)returnedSystemExpected=SnapshotSystemOwner(*returnedTitle,

@@ -90,14 +90,14 @@ const auto handleModalEvent=[&](const SDL_Event& e) {
       const bool accept=key==SDLK_RETURN,cancel=key==SDLK_ESCAPE||key==SDLK_BACKSPACE;
       systemMenuInput.Accept|=accept;systemMenuInput.Cancel|=cancel;
       scenarioSlotInput.Accept|=accept;scenarioSlotInput.Cancel|=cancel;
-      scenarioSlotInput.Protect|=key==SDLK_P;
-      scenarioOptionsInput.Accept|=accept;scenarioOptionsInput.Preview|=key==SDLK_P;
-      scenarioOptionsInput.Common.Close|=key==SDLK_SPACE;
+      scenarioSlotInput.Protect|=key==SDLK_SPACE;
+      scenarioOptionsInput.Accept|=accept;scenarioOptionsInput.Preview|=key==SDLK_SPACE;
+      scenarioOptionsInput.Common.Close|=key==SDLK_F13;
       scenarioOptionsInput.Common.Revert|=cancel;
       scenarioOptionsInput.Common.PreviousTab|=key==SDLK_Q||key==SDLK_PAGEUP;
       scenarioOptionsInput.Common.NextTab|=key==SDLK_E||key==SDLK_PAGEDOWN;
       scenarioModalInput.Accept|=accept;scenarioModalInput.Cancel|=cancel;
-      scenarioBacklogInput.Rewind|=accept;scenarioBacklogInput.Replay|=key==SDLK_P;scenarioBacklogInput.Cancel|=cancel;
+      scenarioBacklogInput.Rewind|=accept;scenarioBacklogInput.Replay|=key==SDLK_SPACE;scenarioBacklogInput.Cancel|=cancel;
     }
   }
   if(e.type==SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
@@ -269,7 +269,7 @@ const auto captureScenarioMenuInput=[&](uint64_t now) {
     case 0:
       if(backend.CursorVisible() && sceneThumbnail.Ready() && vm->Opcode()==0x64){
         if(captureMenuInput==21 && vm->State().Backlog.Count()<5)key(SDLK_RETURN,0);
-        else key(SDLK_ESCAPE,1);
+        else key(SDLK_F13,1);
       }
       break;
     case 1:
@@ -341,7 +341,7 @@ const auto captureScenarioMenuInput=[&](uint64_t now) {
     case 30:
       if(scenarioBacklog && scenarioBacklog->Phase()==2 && !scenarioBacklog->Scrolling()){
         if(initialBacklogScroll<0)initialBacklogScroll=scenarioBacklog->FirstVisible();
-        if(scenarioBacklog->Selected()>1)key(SDLK_UP,30);else key(SDLK_P,31);
+        if(scenarioBacklog->Selected()>1)key(SDLK_UP,30);else key(SDLK_SPACE,31);
       }
       break;
     case 31:
@@ -358,7 +358,7 @@ const auto captureScenarioMenuInput=[&](uint64_t now) {
           <<",\"rewind_command\":"<<context.ResumeCommand<<",\"before_script\":"<<vm->State().ScriptFileId
           <<",\"before_command\":"<<vm->State().CurrentCommandIndex<<"}\n";
         report.close();if(!report)throw FormatError("cannot save backlog interaction report");
-        key(SDLK_P,32);
+        key(SDLK_SPACE,32);
       }
       break;
     case 32:
@@ -412,7 +412,7 @@ const auto captureMessageVisibility=[&](uint64_t now) {
       key(SDLK_SPACE,3);break;
     case 3:
       if(!vm->State().MessageHidden)throw FormatError("second hide did not take effect");
-      key(SDLK_ESCAPE,4);break;
+      key(SDLK_F13,4);break;
     case 4:
       if(systemMenu && systemMenu->Phase()==5) {
         if(vm->State().MessageHidden)throw FormatError("menu wake did not restore text visibility");
