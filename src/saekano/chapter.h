@@ -4,6 +4,10 @@
 
 namespace Impacto::Saekano {
 struct SemanticState;
+struct SavedDayTime {
+  uint8_t Enabled = 0;
+  std::array<int32_t, 2> Components{};
+};
 struct ChapterEnvironment {
   int32_t Duration = 0;
   size_t PrefixBytes = 0;

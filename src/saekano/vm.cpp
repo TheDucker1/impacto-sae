@@ -105,6 +105,7 @@ std::unique_ptr<VirtualMachine> VirtualMachine::FromNativeSlot(
       scripts, backend, std::move(owner), messageContext, true));
   ApplyNativeSlotWorkingOwner(vm->state_, pending);
   vm->workingContext_ = MakeNativeWorkingContext(pending.Record);
+  vm->workingRecordMetadata_ = std::make_unique<NativeSlotRecord>(pending.Record);
   QueueNativeSlotLoadStops(vm->state_);
   auto restore = std::make_unique<SlotRestore>();
   restore->Saved = pending.Context;
@@ -391,6 +392,11 @@ void VirtualMachine::ActivateLane(size_t lane) {
     state_.LaneCommandIndex[lane] = 0;
 }
 
+NativeSlotRecord VirtualMachine::CaptureWorkingRecord() const {
+  if (!workingRecordMetadata_ || !workingContext_)
+    throw UnsupportedCommand("working record requires a native owner source");
+  return ComposeNativeWorkingRecord(*workingRecordMetadata_, state_, *workingContext_);
+}
 void VirtualMachine::RefreshWorkingContext() {
   if (!workingContext_) return;
   if (!state_.SnapshotMetadata.WorkingMode)

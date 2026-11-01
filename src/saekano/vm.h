@@ -133,6 +133,7 @@ class VirtualMachine {
   const NativeWorkingContext* WorkingContext() const {
     return workingContext_ ? &*workingContext_ : nullptr;
   }
+  NativeSlotRecord CaptureWorkingRecord() const;
   const DispatchState& Dispatcher() const { return dispatcher_; }
   VmBoundary Boundary() const { return boundary_; }
   uint16_t Opcode() const;
@@ -226,6 +227,7 @@ class VirtualMachine {
   SemanticState state_;
   MessageRuntimeContext messageContext_;
   std::optional<NativeWorkingContext> workingContext_;
+  std::unique_ptr<NativeSlotRecord> workingRecordMetadata_;
   DispatchState dispatcher_;
   std::unique_ptr<ScriptObject> script_;
   std::vector<RuntimeCommand> commands_;

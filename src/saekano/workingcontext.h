@@ -5,6 +5,7 @@
 namespace Impacto::Saekano {
 struct NativeSlotRecord;
 struct NativeContextSave;
+struct SemanticState;
 // Only the verified context portion of S5e814's working record. This is not a
 // complete current save slot: shared bank/chapter/profile ownership is separate.
 struct NativeWorkingContext {
@@ -18,4 +19,8 @@ struct NativeWorkingContext {
 NativeWorkingContext MakeNativeWorkingContext(const NativeSlotRecord& slot);
 void RefreshNativeWorkingContext(NativeWorkingContext& working,
                                   const NativeContextSave& current, uint8_t mode);
+// Compose S5e814's record, without refreshing the context stream. Preview and
+// thumbnail metadata retain their owned values until their producers are bound.
+NativeSlotRecord ComposeNativeWorkingRecord(const NativeSlotRecord& retained,
+    const SemanticState& current, const NativeWorkingContext& context);
 }  // namespace Impacto::Saekano

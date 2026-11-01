@@ -245,6 +245,9 @@ void CompleteCommand(SemanticState& state, uint16_t opcode,
       const std::array<int32_t, 2> components{reader.I32(), reader.I32()};
       state.DayEnabled = enabled != 0;
       state.TimeComponents = components;
+      // Native8007da18..24 also writes the working record. Menu/choice hides
+      // only change S7378c and must not overwrite this retained enabled byte.
+      state.WorkingDayTime = SavedDayTime{uint8_t(enabled != 0), components};
       return;
     }
     case 0x0202: {

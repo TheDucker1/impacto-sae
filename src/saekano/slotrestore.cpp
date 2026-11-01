@@ -53,6 +53,7 @@ void ApplyNativeSlotWorkingOwner(SemanticState& owner,
   next->DayEnabled = saved.Byte1b90;
   next->TimeComponents = {std::bit_cast<int32_t>(saved.Words1b94[0]),
                            std::bit_cast<int32_t>(saved.Words1b94[1])};
+  next->WorkingDayTime = SavedDayTime{saved.Byte1b90, next->TimeComponents};
   owner = std::move(*next);
 }
 void ApplyNativeSlotContextValues(SemanticState& state,

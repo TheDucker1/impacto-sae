@@ -1,7 +1,9 @@
 #include "workingcontext.h"
 #include "nativesave.h"
 #include "slotdata.h"
+#include "commands.h"
 #include <algorithm>
+#include <bit>
 
 namespace Impacto::Saekano {
 NativeWorkingContext MakeNativeWorkingContext(const NativeSlotRecord& slot) {
@@ -25,5 +27,34 @@ void RefreshNativeWorkingContext(NativeWorkingContext& working,
   working.Mode = mode;
   working.Used = bytes.size();
   ++working.Refreshes;
+}
+NativeSlotRecord ComposeNativeWorkingRecord(const NativeSlotRecord& retained,
+    const SemanticState& current, const NativeWorkingContext& context) {
+  if (!current.TitleSession || !current.LastBackgroundId ||
+      !current.ProfileOwner.Known || !current.SavedChapter || !current.WorkingDayTime)
+    throw UnsupportedCommand("working record needs known session/profile/chapter/day owners");
+  NativeSlotRecord result = retained;
+  const auto& flags = current.TitleSession->Flags;
+  result.Bytes2b6 = {flags[2], flags[1], flags[0]};
+  for (size_t i = 0; i < current.TitleSession->Words.size(); ++i)
+    result.Words2b8[i] = std::bit_cast<uint32_t>(current.TitleSession->Words[i]);
+  result.Words2b8[6] = std::bit_cast<uint32_t>(*current.LastBackgroundId);
+  for (size_t i = 0; i < current.Bank0.size(); ++i)
+    result.Shorts2d4[i] = std::bit_cast<uint16_t>(current.Bank0[i]);
+  result.Word1ba8 = std::bit_cast<uint32_t>(current.ProfileOwner.CachedOrdinal);
+  for (size_t i = 0; i < current.ProfileOwner.Stats.size(); ++i)
+    result.Words1bac[i] = std::bit_cast<uint32_t>(current.ProfileOwner.Stats[i]);
+  const auto& chapter = *current.SavedChapter;
+  result.Word1b54 = std::bit_cast<uint32_t>(chapter.Id);
+  result.Strings[0].assign(chapter.Titles[1].begin(), chapter.Titles[1].end());
+  result.Strings[1].assign(chapter.Titles[0].begin(), chapter.Titles[0].end());
+  result.Byte1b90 = current.WorkingDayTime->Enabled;
+  for (size_t i = 0; i < 2; ++i)
+    result.Words1b94[i] = std::bit_cast<uint32_t>(current.WorkingDayTime->Components[i]);
+  result.Bytesad8 = context.Buffer;
+  result.Words1ad8 = context.Header;
+  std::copy(context.ResumeWords.begin(), context.ResumeWords.end(), result.Words1b94.begin() + 2);
+  result.Byte1ba4 = context.Mode;
+  return result;
 }
 }  // namespace Impacto::Saekano

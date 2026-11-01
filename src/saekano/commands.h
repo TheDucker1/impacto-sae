@@ -78,6 +78,7 @@ struct SemanticState {
   std::vector<std::u16string> Titles;
   std::optional<bool> TitleDisplay;  // C14515; omitted from portable restores.
   std::optional<ChapterTitleCommand> SavedChapter;  // S600b4/6007c/60044.
+  std::optional<SavedDayTime> WorkingDayTime;  // S600f0/f4/f8, separate from visible day.
   ProfileOwnerState ProfileOwner;
   std::optional<uint8_t> TextSpeed;  // Owner S6022c, omitted from SAS1.
   std::optional<uint8_t> AutoSpeed;  // Owner S6022d, omitted from SAS1.
