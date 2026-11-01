@@ -23,6 +23,10 @@ struct BattleCardMotion {
   void Tick(uint64_t now);
 };
 struct BattleSelectionEnvironment {
+  std::array<UiSpriteDefinition,3> HudFrames;
+  std::array<int32_t,2> TimerPosition{};
+  std::array<int32_t,4> TimerSource{};
+  int32_t TimerStride=0,TimerAdvance=0;
   int32_t RevealDuration=0;
   std::vector<std::array<int32_t,2>> Positions,LabelPositions;
   std::vector<UiSpriteDefinition> CardSprites;

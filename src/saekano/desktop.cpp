@@ -2400,6 +2400,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       layout=splitLayouts[message->Side];layoutCommand=message->Command;laidOut=true;
     }
     SceneQueueInputs gates;
+    gates.ModeVisible=state.BattleEntry.Enabled;
     gates.MessageHidden = vm->MovieActive();
     gates.ForegroundLetterbox=state.Letterbox.Foreground;
     gates.SplitMessage=state.BattleEntry.Enabled;
@@ -2426,7 +2427,24 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
     std::vector<std::array<int32_t, 6>> widgetInputs;
     std::vector<UiTextBlit> textDraws;
     for (const auto& pass : queue) {
-      if (pass.Kind == SceneDrawKind::Background ||
+      if(pass.Kind==SceneDrawKind::ModeUnderlay) {
+        for(const auto& sprite:BuildBattleUnderlay(versusVisual,state)) {
+          renderer.DrawQuad(sprite,{0,1,1},true);spriteDraws.push_back(sprite);
+        }
+      } else if(pass.Kind==SceneDrawKind::ModeMiddle) {
+        for(const auto& sprite:BuildBattleGaugeDraw(versusVisual,state)) {
+          uploadBattleUi(sprite.Texture.Entry);drawSprite(sprite);spriteDraws.push_back(sprite);
+        }
+      } else if(pass.Kind==SceneDrawKind::ModeOverlay) {
+        for(const auto& d:BuildBattleVersusDraws(versusVisual,state.BattleVersus,state.Battle.SideCharacters,
+            uint32_t(utility.Size),[&](auto text,int32_t size){return int32_t(MeasurePvfText(font.Cached(),text,uint32_t(size),font.NominalSize()));})) {
+          if(d.IsText){fontTextures.DrawString(renderer,font,d.Text.Text,d.Text.Position[0],d.Text.Position[1],d.Text.Size,d.Text.Color);textDraws.push_back(d.Text);}
+          else {uploadBattleUi(d.Sprite.Texture.Entry);drawSprite(d.Sprite);spriteDraws.push_back(d.Sprite);}
+        }
+        for(const auto& sprite:BuildBattleResultDraws(battleResultVisual,state.BattleResult,state.BattleVersus.Visible)) {
+          uploadBattleUi(sprite.Texture.Entry);drawSprite(sprite);spriteDraws.push_back(sprite);
+        }
+      } else if (pass.Kind == SceneDrawKind::Background ||
           pass.Kind == SceneDrawKind::Event) {
         const uint32_t c = pass.Kind == SceneDrawKind::Background ? 0 : 1;
         const auto& slot = state.SceneImages.Slots.FloatSlots[c][pass.Index];
@@ -2666,17 +2684,12 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
         }
       }
     }
-    for(const auto& d:BuildBattleVersusDraws(versusVisual,state.BattleVersus,state.Battle.SideCharacters,
-        uint32_t(utility.Size),[&](auto text,int32_t size){return int32_t(MeasurePvfText(font.Cached(),text,uint32_t(size),font.NominalSize()));})) {
-      if(d.IsText){fontTextures.DrawString(renderer,font,d.Text.Text,d.Text.Position[0],d.Text.Position[1],d.Text.Size,d.Text.Color);textDraws.push_back(d.Text);}
-      else {uploadBattleUi(d.Sprite.Texture.Entry);drawSprite(d.Sprite);spriteDraws.push_back(d.Sprite);}
-    }
-    for(const auto& sprite:BuildBattleResultDraws(battleResultVisual,state.BattleResult,state.BattleVersus.Visible)) {
-      uploadBattleUi(sprite.Texture.Entry);drawSprite(sprite);spriteDraws.push_back(sprite);
-    }
     for(const auto& d:battleHost->Draw()) {
       if(d.IsText){fontTextures.DrawString(renderer,font,d.Text.Text,d.Text.Position[0],d.Text.Position[1],d.Text.Size,d.Text.Color);textDraws.push_back(d.Text);}
       else {uploadBattleUi(d.Sprite.Texture.Entry);drawSprite(d.Sprite);spriteDraws.push_back(d.Sprite);}
+    }
+    for(const auto& sprite:BuildBattleSelectionFrame(*backend.BattleSelectionSettings,battleHost->State().Enabled,state.BattleSelection.Seconds)) {
+      uploadBattleUi(sprite.Texture.Entry);drawSprite(sprite);spriteDraws.push_back(sprite);
     }
     // Native HUD tail80077076: movie surface after ordinary HUD, before white.
     if (vm->MovieActive() && scenarioMovie->Busy() && scenarioMovieFrame.Available)

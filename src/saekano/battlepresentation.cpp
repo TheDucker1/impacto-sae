@@ -2,6 +2,33 @@
 #include "commands.h"
 
 namespace Impacto::Saekano {
+std::vector<UiSpriteBlit> BuildBattleUnderlay(const BattleVersusVisualEnvironment& e,const SemanticState& state) {
+  if(!state.BattleVersus.Visible && !state.BattleResult.Visible)return {};
+  const auto height=e.BlackBars[0][3]*state.BattleVersus.Tweens[3].Current/100;
+  return {{{},{e.BlackBars[0][0],e.BlackBars[0][1],e.BlackBars[0][2],height},{},{0,0,0,255}},
+          {{},{e.BlackBars[1][0],544-height,e.BlackBars[1][2],height},{},{0,0,0,255}}};
+}
+std::vector<UiSpriteBlit> BuildBattleGaugeDraw(const BattleVersusVisualEnvironment& e,const SemanticState& state) {
+  if(state.BattleResult.Visible && state.BattleResult.Outcome!=2)return {};
+  if(!state.Battle.Known)throw UnsupportedCommand("battle gauge drawing owner is unknown");
+  auto sprite=e.Gauge;
+  sprite.X=state.Battle.Display;
+  sprite.Height=sprite.Height*state.BattleVersus.Tweens[4].Current/100;
+  return {ResolveUiSprite({ProfileTextureSection::BattleUi,-1,0},sprite)};
+}
+std::vector<UiSpriteBlit> BuildBattleSelectionFrame(const BattleSelectionEnvironment& e,bool enabled,int32_t seconds) {
+  if(!enabled)return {};
+  if(seconds<0 || seconds>99)throw FormatError("battle countdown exceeds two-digit atlas");
+  std::vector<UiSpriteBlit> out;
+  constexpr std::array<uint32_t,3> textures{32,11,10};
+  for(size_t i=0;i<3;++i)out.push_back(ResolveUiSprite({ProfileTextureSection::BattleUi,-1,textures[i]},e.HudFrames[i]));
+  for(size_t i=0;i<2;++i) {
+    auto source=e.TimerSource;source[0]+=(i?seconds%10:seconds/10)*e.TimerStride;
+    out.push_back({{ProfileTextureSection::BattleUi,-1,25},
+      {e.TimerPosition[0]+int32_t(i)*e.TimerAdvance,e.TimerPosition[1],source[2],source[3]},source,{0,0,0,255}});
+  }
+  return out;
+}
 BattleSelectionPresentation::BattleSelectionPresentation(const BattleSelectionEnvironment& environment,
     UiSpriteDefinition sharedBubble,uint32_t holdFrames,const SharedSelectionEnvironment& selection,
     const OrdinaryTextEnvironment& text,const TextFormatEnvironment& format,const GsfFont& font,

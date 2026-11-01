@@ -8,6 +8,10 @@ struct BattleSelectionDraw {
   UiSpriteBlit Sprite;
   UiTextBlit Text;
 };
+struct BattleVersusVisualEnvironment;
+std::vector<UiSpriteBlit> BuildBattleUnderlay(const BattleVersusVisualEnvironment& environment,const SemanticState& state);
+std::vector<UiSpriteBlit> BuildBattleGaugeDraw(const BattleVersusVisualEnvironment& environment,const SemanticState& state);
+std::vector<UiSpriteBlit> BuildBattleSelectionFrame(const BattleSelectionEnvironment& environment,bool enabled,int32_t seconds);
 // Real text/widget/input implementation of the UI service contract. The owning
 // backend must supply descriptor/audio, settings and UI-sound services; these
 // remain abstract so missing physical playback cannot silently complete a choice.

@@ -172,8 +172,11 @@ static BattleGaugeEnvironment ReadBattleEnvironment(std::span<const uint8_t> byt
   if (thresholds == 0) throw FormatError("battle threshold table is empty");
   result.NeutralThreshold = reader.Word();
   reader.Skip((thresholds - 1) * 4);
-  const auto gauge=reader.Sprite();if(versus)versus->Display=gauge.Words[1];
-  reader.Skip(2*16);
+  const auto gauge=reader.VisualSprite();if(versus)versus->Display=gauge.X;
+  if(visual)visual->Gauge=gauge;
+  for(size_t i=0;i<2;++i)for(size_t c=0;c<4;++c) {
+    const auto word=reader.Word();if(visual)visual->BlackBars[i][c]=word;
+  }
   for(size_t i=0;i<4;++i){const auto sprite=reader.VisualSprite();if(visual)visual->Sprites[i]=sprite;}
   const auto nameScale=std::bit_cast<float>(reader.Word()),textScale=std::bit_cast<float>(reader.Word());
   if(visual){visual->NameScale=nameScale;visual->TextScale=textScale;}
@@ -253,9 +256,10 @@ static BattleGaugeEnvironment ReadBattleEnvironment(std::span<const uint8_t> byt
         out.push_back({uint8_t(c>>16),uint8_t(c>>8),uint8_t(c),uint8_t(c>>24)});}
     };
     colors(selection->FillColors);colors(selection->FrameColors);
-    // Following three sprites, point, clip rectangle and two words belong to
-    // the separate HUD. Consume structurally to reach the selection timings.
-    reader.Skip(3*34+8+16+2*4);
+    for(auto& sprite:selection->HudFrames)sprite=reader.VisualSprite();
+    for(auto& word:selection->TimerPosition)word=reader.Word();
+    for(auto& word:selection->TimerSource)word=reader.Word();
+    selection->TimerStride=reader.Word();selection->TimerAdvance=reader.Word();
     selection->MotionDuration=reader.Word();selection->Travel=reader.Word();selection->FadeDuration=reader.Word();
   }
   if (result.Minimum < 0 || result.Minimum > 50 || result.Duration < 0 ||

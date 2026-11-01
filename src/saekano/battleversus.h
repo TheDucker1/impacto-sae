@@ -28,6 +28,8 @@ void StartBattleVersus(SemanticState& state,const BattleVersusEnvironment& envir
                        Live2dDriver* models,uint64_t now);
 bool UpdateBattleVersus(SemanticState& state,Live2dDriver* models,bool accept,uint64_t now);
 struct BattleVersusVisualEnvironment {
+  UiSpriteDefinition Gauge;
+  std::array<std::array<int32_t,4>,2> BlackBars{};
   std::array<UiSpriteDefinition,4> Sprites;
   float NameScale=0,TextScale=0;
   std::vector<std::array<int32_t,2>> NamePositions,NameSizes,TextPositions;
