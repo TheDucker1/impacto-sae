@@ -7,6 +7,7 @@ struct SceneIntegrationCapture {
   std::array<uint8_t,18> ApproachFlags{};
   int32_t Otaku=0,ApproachGauge=0,BattleGauge=0;
   bool ApproachEnabled=false;int32_t ApproachId=0;
+  bool RequireTitle=false;
   int32_t SkipMode=0,SkipUnread=0;
   size_t Limit=0,Completions=0;std::vector<Action> Actions;bool Ready=false,Done=false;
   std::ofstream Trace;
@@ -14,8 +15,9 @@ struct SceneIntegrationCapture {
   uint64_t LastProgress=SDL_GetTicks();
   SceneIntegrationCapture(const std::filesystem::path& directory,const std::filesystem::path& output) {
     const auto bytes=SceneRead(directory/"input.bin");PayloadReader r(bytes);
-    if(r.U32()!=0x32494753)throw FormatError("invalid scene integration packet");
+    const auto magic=r.U32();if(magic!=0x32494753 && magic!=0x33494753)throw FormatError("invalid scene integration packet");
     Limit=r.U32();if(!Limit || Limit>100000)throw FormatError("invalid integration command bound");
+    if(magic==0x33494753)RequireTitle=r.U32()!=0;
     const auto size=r.U32();r.CheckCount(size,1);Bytes record;record.reserve(size);
     for(uint32_t i=0;i<size;++i)record.push_back(r.U8());
     Initial.Record=NativeSlotRecord::Decode(record);Initial.Context=DecodeNativeContextSave(Initial.Record.Bytesad8);
@@ -60,7 +62,7 @@ struct SceneIntegrationCapture {
     if(Ready && event.Boundary==VmBoundary::CommandCompletedBeforeDispatch) {
       Observe(vm,"command_completed",event.Opcode);++Completions;LastProgress=SDL_GetTicks();
       for(auto& action:Actions)if(!action.Applied && action.Script==event.Script && action.Command==int32_t(event.Command) && action.Opcode==event.Opcode){action.Applied=true;break;}
-      if(Completions>=Limit){Done=true;Trace<<"{\"event\":\"bounded_complete\",\"commands\":"<<Completions<<"}\n";Trace.flush();}
+      if(Completions>=Limit && !RequireTitle){Done=true;Trace<<"{\"event\":\"bounded_complete\",\"commands\":"<<Completions<<"}\n";Trace.flush();}
     }
   }
   uint32_t Input(VirtualMachine& vm,CommandInput& input) {

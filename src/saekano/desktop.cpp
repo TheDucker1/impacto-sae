@@ -1551,8 +1551,18 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
     endingTrace.open(captureDirectory/"ending-states.jsonl");if(!endingTrace)throw FormatError("cannot create ending UI trace");
   }
   std::optional<std::tuple<int32_t,int32_t,int32_t,bool,int32_t,int32_t,bool,bool>> previousEndingState;
+  std::optional<std::tuple<int32_t,int32_t,bool,int32_t>> integrationEndingState;
   const auto updateEnding=[&](uint64_t now) {
     UpdateScenarioEnding(endingState,endingHost,now);
+    if(integration && integration->RequireTitle) {
+      const auto sample=std::tuple(endingState.Phase,endingHost.Modal.Phase,endingHost.Modal.Visible,endingHost.Modal.Selected);
+      if(sample!=integrationEndingState) {
+        integration->Trace<<"{\"event\":\"ending_state\",\"phase\":"<<endingState.Phase
+          <<",\"modal_phase\":"<<endingHost.Modal.Phase<<",\"modal_visible\":"<<endingHost.Modal.Visible
+          <<",\"selected\":"<<endingHost.Modal.Selected<<",\"result\":"<<endingHost.Modal.Result<<",\"manager_ended\":"<<(vm->Boundary()==VmBoundary::Ended)
+          <<",\"title_requested\":"<<endingState.TitleRequested<<"}\n";integration->Trace.flush();integrationEndingState=sample;
+      }
+    }
     auto* modal=saveHost && saveHost->State().Started?&saveHost->Modal:&endingHost.Modal;
     for(auto sound:modal->UiSounds)playback.Submit({GameEventKind::Sound,sound});
     modal->UiSounds.clear();
@@ -1662,6 +1672,13 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
         SDL_Event e{};e.type=type;e.key.windowID=SDL_GetWindowID(window.Window);e.key.key=key;e.key.down=type==SDL_EVENT_KEY_DOWN;
         e.key.scancode=SDL_GetScancodeFromKey(key,nullptr);
         SdlCheck(SDL_PushEvent(&e),"replay capture SDL input");
+      }
+    }
+    if(integration && integration->RequireTitle && endingState.Started && endingHost.Modal.Visible && endingHost.Modal.Phase==3) {
+      for(const auto type:{SDL_EVENT_KEY_DOWN,SDL_EVENT_KEY_UP}) {
+        SDL_Event e{};e.type=type;e.key.windowID=SDL_GetWindowID(window.Window);e.key.key=SDLK_Z;
+        e.key.scancode=SDL_GetScancodeFromKey(e.key.key,nullptr);e.key.down=type==SDL_EVENT_KEY_DOWN;
+        SdlCheck(SDL_PushEvent(&e),"integration ending physical confirm");
       }
     }
     if(captureEnding && endingState.Started) {
@@ -5383,11 +5400,17 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     PlaybackTitleAudio audio(playback,systemSounds,ProfileVoiceGain(progress.Bytes6022c[10],1.0f),ProfileVoiceGain(progress.Bytes6022c[9],1.0f));
     audio.BindVoiceAttenuation(attenuation,audioClock);
     PcMovieFrameLayer movieFrame;MoviePlayback movie;movie.Present=[&](const AVFrame* frame,int64_t pts){movieFrame.Present(frame,pts);};
+    bool integrationEndingReturned=false;
     if(!integrationDirectory.empty()) {
       if(!capture)throw FormatError("integration input requires a bounded output directory");
       SceneIntegrationCapture integration(integrationDirectory,captureDirectory);integration.SeedOwner(*owner);
-      return RunScenarioScene(window,renderer,textures,font,resources,playback,music,sounds,std::move(*owner),nullptr,
-          usrdir,captureDirectory,false,false,false,{},{},{},false,false,0,{},progressRoot,&session.Slots,&integration.Initial,0,nullptr,{},&integration);
+      std::unique_ptr<SemanticState> returned;
+      const auto code=RunScenarioScene(window,renderer,textures,font,resources,playback,music,sounds,std::move(*owner),nullptr,
+          usrdir,captureDirectory,false,false,false,{},{},{},false,false,0,{},progressRoot,&session.Slots,&integration.Initial,0,&returned,{},&integration);
+      if(!integration.RequireTitle)return code;
+      if(code || !returned || integration.Completions!=integration.Limit)throw FormatError("ending integration did not return its actual manager owner");
+      integration.Done=true;integration.Trace<<"{\"event\":\"bounded_complete\",\"commands\":"<<integration.Completions<<",\"ending_owner_returned\":true}\n";integration.Trace.flush();
+      *owner=std::move(*returned);integrationEndingReturned=true;captureScenarioMenu=2;
     }
     // SceneInit runs once at process startup, never on a scenario's return to
     // title. Module captures explicitly start at title; startup has its own
@@ -5417,8 +5440,9 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
           std::move(*owner),nullptr,usrdir,{},false,false,false,{},{},{},false,false,0,{},
           progressRoot,&session.Slots,nullptr,0,&returned,script);
     }
-    uint32_t titleVisits=0;
+    uint32_t titleVisits=integrationEndingReturned?1:0;
     std::optional<Bytes> returnedSystemExpected;
+    if(integrationEndingReturned)returnedSystemExpected=SnapshotSystemOwner(*owner,RestoreSystemReadHistory(*owner->SystemProgress)).Encode();
     for(;;) {
     const bool returnedTitleCapture=captureScenarioMenu==2 && titleVisits>0;
     // CMain constructs a fresh title after retiring the previous scene. The
@@ -5701,6 +5725,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
         const auto stored=ReadProgressStore(progressRoot);
         if(!stored || stored->Generation!=session.Generation)
           throw FormatError("return without saving unexpectedly wrote progress");
+        if(integrationEndingReturned){std::ofstream out(captureDirectory/"integration-ending-title.json");out<<"{\"passed\":true,\"actual_ending\":true,\"title_constructed\":true,\"title_phase\":10,\"progress_preserved\":true}\n";}
       }else if(quit || title.RequestedScene!=2 || title.Resets!=2 || title.HistoryClears!=1)throw FormatError("title capture missed native New Game handoff");
       if(captureMovie && (!sawMovie || !movieReturned || (captureMovie==1 && !movieSkipped) || !movieImage))throw FormatError("title idle movie did not play/return");
       std::ofstream report(captureDirectory/"title.json");report << "{\"passed\":true,\"frames\":"<<frames<<",\"audio_frames\":"<<audioFrames
@@ -5711,7 +5736,9 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     }
     title.Retire();GlCheck("title texture retirement");
     if(!renderer.Textures.empty() || audio.Playing(6) || audio.Playing(7) || movie.State().Prepared || movieFrame.Available)
-      throw FormatError("title retirement left resources or voices owned");
+      throw FormatError("title retirement left resources or voices owned: textures="+std::to_string(renderer.Textures.size())+
+          " ui="+std::to_string(audio.Playing(6))+" voice="+std::to_string(audio.Playing(7))+
+          " movie="+std::to_string(movie.State().Prepared)+" frame="+std::to_string(movieFrame.Available));
     if(capture){
       std::ofstream report(captureDirectory/"retirement.json");
       report<<"{\"passed\":true,\"textures\":0,\"ui_playing\":false,\"voice_playing\":false}\n";

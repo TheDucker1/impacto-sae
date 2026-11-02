@@ -9,6 +9,8 @@ struct TitleAudioOutput {
   virtual void PlayVoice(Bytes encoded)=0;
   virtual void PlayUi(int32_t id)=0;
   virtual void Stop(uint32_t channel)=0;
+  // Teardown releases both decoder owners immediately, bypassing stop fades.
+  virtual void Retire()=0;
   virtual bool Playing(uint32_t channel)const=0;
 };
 class TitleAudioOwner {

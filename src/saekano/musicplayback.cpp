@@ -705,6 +705,7 @@ void PlaybackTitleAudio::PlayVoice(Bytes encoded){
 }
 void PlaybackTitleAudio::PlayUi(int32_t id){playback_.Submit({GameEventKind::Sound,id});}
 void PlaybackTitleAudio::Stop(uint32_t channel){if(channel==6)playback_.StopUiSound();else if(channel==7)playback_.StopOrdinaryVoice(7);else throw FormatError("title audio channel outside6/7");}
+void PlaybackTitleAudio::Retire(){playback_.StopOrdinaryVoice(7,true);playback_.StopUiSound();}
 bool PlaybackTitleAudio::Playing(uint32_t channel)const{if(channel==6)return playback_.UiSoundPlaying();if(channel==7)return playback_.OrdinaryVoicePlaying(7);throw FormatError("title audio channel outside6/7");}
 void MusicPlayback::PrepareProfileVoice(Bytes encoded, float gain) {
   if (!std::isfinite(gain) || gain < 0 || gain > 1)
@@ -801,7 +802,7 @@ void MusicPlayback::PrepareMemoryVoice(uint32_t channel, Bytes encoded, float ga
   impl_->HasOrdinaryVoice[slot] = true;
   AlCheck("memory voice preparation");
 }
-void MusicPlayback::StopOrdinaryVoice(uint32_t channel) {
+void MusicPlayback::StopOrdinaryVoice(uint32_t channel, bool immediate) {
   const auto slot = OrdinaryVoiceSlot(channel);
   impl_->StopVoice(slot, channel==11 ? bool(impl_->PreparedMissionVoice) :
       bool(impl_->PreparedOrdinaryVoices[slot] || (!slot && impl_->PreparedProfileVoice)));
@@ -810,6 +811,11 @@ void MusicPlayback::StopOrdinaryVoice(uint32_t channel) {
   if (!slot) {
     impl_->PreparedProfileVoice.reset();
     impl_->HasProfileVoice = false;
+  }
+  if(immediate) {
+    impl_->OrdinaryOutput(slot)->Stop(0);
+    impl_->VoiceFades[slot]={};
+    impl_->HasOrdinaryVoice[slot]=false;
   }
   AlCheck("ordinary voice stop");
 }

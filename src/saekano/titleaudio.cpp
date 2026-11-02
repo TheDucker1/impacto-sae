@@ -25,5 +25,5 @@ void TitleAudioOwner::PlayMenu(int32_t ordinal){
 void TitleAudioOwner::PlayUi(int32_t id){RequireReady();if(id<0)throw FormatError("negative title UI sound");output_.PlayUi(id);}
 void TitleAudioOwner::Stop(uint32_t channel){RequireReady();if(channel!=6 && channel!=7)throw FormatError("title audio channel outside6/7");output_.Stop(channel);}
 bool TitleAudioOwner::Playing(uint32_t channel)const{RequireReady();if(channel!=6 && channel!=7)throw FormatError("title audio channel outside6/7");return output_.Playing(channel);}
-void TitleAudioOwner::Retire(){if(!ready_)return;output_.Stop(7);output_.Stop(6);entry_.clear();menu_.clear();ready_=false;}
+void TitleAudioOwner::Retire(){if(!ready_)return;output_.Retire();entry_.clear();menu_.clear();ready_=false;}
 }

@@ -74,7 +74,7 @@ class MusicPlayback {
   void StartOrdinaryVoice(uint32_t channel);
   // Attached500ms linear stop plus500ms silent retirement; repeated Stop or
   // cancellation of a prepared token retires immediately. StopAll is immediate.
-  void StopOrdinaryVoice(uint32_t channel);
+  void StopOrdinaryVoice(uint32_t channel, bool immediate=false);
   bool OrdinaryVoiceReady(uint32_t channel) const;
   bool OrdinaryVoicePlaying(uint32_t channel) const;
   int32_t OrdinaryVoicePosition(uint32_t channel) const;  // Milliseconds, or-1.
@@ -148,6 +148,7 @@ class PlaybackTitleAudio final : public TitleAudioOutput {
   void PlayVoice(Bytes encoded)override;
   void PlayUi(int32_t id)override;
   void Stop(uint32_t channel)override;
+  void Retire()override;
   bool Playing(uint32_t channel)const override;
  private:
   MusicPlayback& playback_;float gain_;
