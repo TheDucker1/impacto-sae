@@ -44,7 +44,7 @@
 #include "optionspagedraw.h"
 #include "optionswidgets.h"
 #include "optionsrepeat.h"
-#include "pccontrols.h"
+#include "pcinput.h"
 #include "optionsdialog.h"
 #include "systemmenu.h"
 #include "backlogscreen.h"
@@ -131,45 +131,13 @@ void ApplyParticleFragmentState(const ParticleFragmentState& state, GLuint progr
 struct ViewerWindow {
   SDL_Window* Window = nullptr;
   SDL_GLContext Context = nullptr;
-  inline static std::map<SDL_JoystickID,SDL_Gamepad*> Gamepads;
-  inline static std::map<SDL_JoystickID,std::set<SDL_Keycode>> PadKeys;
-  inline static std::deque<SDL_Event> ReleasedPadKeys;
-  static void OpenGamepad(SDL_JoystickID id) {
-    if(Gamepads.contains(id))return;
-    if(auto* pad=SDL_OpenGamepad(id))Gamepads.emplace(id,pad);
-    else SDL_LogWarn(SDL_LOG_CATEGORY_INPUT,"Cannot open gamepad: %s",SDL_GetError());
-  }
+  inline static std::unique_ptr<PcInputRouter> Input;
   static bool PollEvent(SDL_Event* event) {
-    if(!ReleasedPadKeys.empty()) {
-      *event=ReleasedPadKeys.front();ReleasedPadKeys.pop_front();return true;
-    }
-    if(!SDL_PollEvent(event))return false;
-    if(event->type==SDL_EVENT_GAMEPAD_ADDED)OpenGamepad(event->gdevice.which);
-    if(event->type==SDL_EVENT_GAMEPAD_REMOVED) {
-      for(auto key:PadKeys[event->gdevice.which]) {
-        SDL_Event release{};release.type=SDL_EVENT_KEY_UP;release.key.key=key;
-        ReleasedPadKeys.push_back(release);
-      }
-      PadKeys.erase(event->gdevice.which);
-      const auto found=Gamepads.find(event->gdevice.which);
-      if(found!=Gamepads.end()){SDL_CloseGamepad(found->second);Gamepads.erase(found);}
-    }
-    const bool padButton=event->type==SDL_EVENT_GAMEPAD_BUTTON_DOWN || event->type==SDL_EVENT_GAMEPAD_BUTTON_UP;
-    const auto padId=padButton?event->gbutton.which:0;
-    TranslatePcControls(*event);
-    if(padButton && event->key.key!=SDLK_UNKNOWN) {
-      if(event->type==SDL_EVENT_KEY_DOWN)PadKeys[padId].insert(event->key.key);
-      else PadKeys[padId].erase(event->key.key);
-    }
-    return true;
+    return Input?Input->Poll(*event):SDL_PollEvent(event);
   }
   explicit ViewerWindow(bool hidden, bool stencil = false) {
-    SdlCheck(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD), "SDL initialization");
+    SdlCheck(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_JOYSTICK), "SDL initialization");
     try {
-      int count=0;
-      auto* ids=SDL_GetGamepads(&count);
-      for(int i=0;i<count;++i)OpenGamepad(ids[i]);
-      SDL_free(ids);
       SdlCheck(SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3),
                "GL major version");
       SdlCheck(SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3),
@@ -194,6 +162,7 @@ struct ViewerWindow {
               reinterpret_cast<GLADloadproc>(SDL_GL_GetProcAddress)))
         throw std::runtime_error("cannot load OpenGL functions");
       SDL_GL_SetSwapInterval(hidden ? 0 : 1);
+      Input=std::make_unique<PcInputRouter>(Window,RuntimePcSettings().InputProfile());
       glDisable(GL_DEPTH_TEST);
       glDisable(GL_CULL_FACE);
       GlCheck("viewer initialization");
@@ -203,8 +172,7 @@ struct ViewerWindow {
     }
   }
   void Cleanup() {
-    for(const auto& [id,pad]:Gamepads){(void)id;SDL_CloseGamepad(pad);}Gamepads.clear();
-    PadKeys.clear();ReleasedPadKeys.clear();
+    Input.reset();
     if (Context) SDL_GL_DestroyContext(Context);
     if (Window) SDL_DestroyWindow(Window);
     SDL_Quit();
@@ -5356,6 +5324,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
   bool created=false;
   try{
     const bool capture=!captureDirectory.empty();
+    if(!capture)InitializePcSettings();
     if(captureExtras && (!capture || replayRow || captureOptions || captureContinue || captureMovie || captureScenarioMenu))throw FormatError("Extras witness requires its own bounded capture");
     if(capture){
       const auto out=std::filesystem::weakly_canonical(captureDirectory),input=std::filesystem::weakly_canonical(usrdir);
@@ -5387,7 +5356,8 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     auto session=OpenProgressStore(progressRoot,progress,{});progress=session.System;
     const auto initialSlotBytes=captureContinue?session.Slots.Encode():Bytes{};
     LoadSystemOwner(*owner,progress,owner->CgHistory.Required);
-    ViewerWindow window(capture,true);SdlCheck(SDL_SetWindowSize(window.Window,960,544),"title viewport size");
+    ViewerWindow window(capture,true);
+    SdlCheck(SDL_SetWindowSize(window.Window,capture?960:RuntimePcSettings().Width,capture?544:RuntimePcSettings().Height),"title viewport size");
     SdlCheck(SDL_SetWindowTitle(window.Window,"Saekano"),"title window name");
     UiBlitRenderer renderer;FontTextures textures;
     PcFontFace font(SceneRead(usrdir/"DFHSR4.TTC"),GsfFont::Decode(SceneRead(usrdir/"Font.gsf")));

@@ -1314,7 +1314,7 @@ if(IMPACTO_ENABLE_SAEKANO)
         message(FATAL_ERROR "Saekano PC build requires SAEKANO_CUBISM2_SDK_ROOT")
     endif()
     target_link_libraries(impacto PRIVATE saekano_live2d_driver)
-    target_sources(impacto PRIVATE src/saekano/desktop.cpp src/saekano/musicplayback.cpp src/saekano/movieplayback.cpp src/saekano/scriptmovieplayback.cpp src/saekano/fontface.cpp)
+    target_sources(impacto PRIVATE src/saekano/desktop.cpp src/saekano/musicplayback.cpp src/saekano/movieplayback.cpp src/saekano/scriptmovieplayback.cpp src/saekano/fontface.cpp src/saekano/pcconfig.cpp src/saekano/pcinput.cpp)
     target_compile_definitions(impacto PRIVATE IMPACTO_HAS_SAEKANO)
     add_custom_command(TARGET impacto POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different

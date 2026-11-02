@@ -52,7 +52,7 @@ bool RunStartupPresentation(ViewerWindow& window,
     // The visible window already uses swap interval1. A second16ms wait here
     // would halve the frame-counter logo animation's speed.
   };
-  if(!debug[33])for(size_t i=0;i<logos.size() && !quit;++i) {
+  if(!debug[33] && !RuntimePcSettings().SkipLogos)for(size_t i=0;i<logos.size() && !quit;++i) {
     const auto& logo=logos[i];const ProfileTextureKey key{ProfileTextureSection::SharedUi,-2,uint32_t(i)};
     const auto& entry=archive.Entries().at(i);
     if(entry.Type!=1)throw FormatError("startup logo requires gzip GXT");
