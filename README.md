@@ -1,3 +1,10 @@
+impacto, vibe-slopped Saekano with Codex
+
+The vita version had a bug (opcode 0x202), or was it emulator bug? Also, why the so-called engine is shared for many games, yet everything that is important to gameplay is hard-coded for each game?
+
+Anyway thanks to the Committee of Zero team for the initial implementation. Everything else was autonomous by LLM crunching through the code.
+
+
 # impacto [![impacto](https://github.com/CommitteeOfZero/impacto/actions/workflows/impacto.yml/badge.svg)](https://github.com/CommitteeOfZero/impacto/actions/workflows/impacto.yml)
 
 **impacto** is an open-source **reimplementation** of the **"MAGES." visual novel engine** in C++ and OpenGL. Using the original data files, impacto can run any supported game on any supported platform.
