@@ -45,6 +45,7 @@
 #include "optionswidgets.h"
 #include "optionsrepeat.h"
 #include "pcinput.h"
+#include "pcvalidation.h"
 #include "optionsdialog.h"
 #include "systemmenu.h"
 #include "backlogscreen.h"
@@ -5324,7 +5325,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
   bool created=false;
   try{
     const bool capture=!captureDirectory.empty();
-    if(!capture)InitializePcSettings();
+    if(!capture){InitializePcSettings();PcEnsureGameData(usrdir,RuntimePcSettings().StrictData);}
     if(captureExtras && (!capture || replayRow || captureOptions || captureContinue || captureMovie || captureScenarioMenu))throw FormatError("Extras witness requires its own bounded capture");
     if(capture){
       const auto out=std::filesystem::weakly_canonical(captureDirectory),input=std::filesystem::weakly_canonical(usrdir);
@@ -5353,6 +5354,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     auto progress=MakeFreshSystemProgress(first,history.InitiallyRead!=0);
     const auto progressRoot=!requestedProgressRoot.empty()?requestedProgressRoot:
       (capture?captureDirectory/"saves":std::filesystem::current_path()/"saves/saekano");
+    PcRequireOutsideData(progressRoot,usrdir);
     auto session=OpenProgressStore(progressRoot,progress,{});progress=session.System;
     const auto initialSlotBytes=captureContinue?session.Slots.Encode():Bytes{};
     LoadSystemOwner(*owner,progress,owner->CgHistory.Required);
@@ -5730,7 +5732,9 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     }
   }catch(const std::exception& error){
     if(created){std::ofstream out(captureDirectory/"error.txt");out<<std::string(error.what()).substr(0,2048)<<'\n';}
-    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano title: %s",error.what());return 1;
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Saekano title: %s",error.what());
+    if(requestedCaptureDirectory.empty())SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Saekano",error.what(),nullptr);
+    return 1;
   }
 }
 }  // namespace Impacto::Saekano

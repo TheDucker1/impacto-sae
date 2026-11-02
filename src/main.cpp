@@ -21,6 +21,7 @@
 #ifdef IMPACTO_HAS_SAEKANO
 #include "saekano/desktop.h"
 #include "saekano/musicplayback.h"
+#include "saekano/pcvalidation.h"
 #include <charconv>
 #endif
 
@@ -172,6 +173,16 @@ static void HandleArguments(std::vector<std::string_view> args) {
 };
 
 int main(int argc, char* argv[]) {
+#ifdef IMPACTO_HAS_SAEKANO
+  if(argc==1)return Saekano::RunPcLauncher();
+  if(std::string_view(argv[1])=="--saekano-launcher" || std::string_view(argv[1])=="--saekano-run"){
+    const bool launcher=std::string_view(argv[1])=="--saekano-launcher";
+    std::filesystem::path config;
+    if(argc==4 && std::string_view(argv[2])=="--config")config=Saekano::PcPathFromUtf8(argv[3]);
+    else if(argc!=2){SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Saekano","Use --saekano-launcher or --saekano-run, optionally followed by --config PATH.",nullptr);return 1;}
+    return launcher?Saekano::RunPcLauncher(config):Saekano::RunPcConfiguredGame(config);
+  }
+#endif
   if (argc == 5 && std::string_view(argv[1]) == "--saekano-ui-sounds" &&
       std::string_view(argv[3]) == "--capture")
     return Saekano::RunUiSoundSession(argv[2], argv[4]);

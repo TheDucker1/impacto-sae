@@ -1,4 +1,5 @@
 #include "pcconfig.h"
+#include "pcvalidation.h"
 #include <toml.hpp>
 #include <algorithm>
 #include <cmath>
@@ -100,7 +101,7 @@ PcSettings LoadPcSettings(const std::filesystem::path& path){
   s.Validate();return s;
 }
 void SavePcSettings(const std::filesystem::path& path,const PcSettings& s){
-  s.Validate();toml::value root(toml::table{});
+  s.Validate();PcRequireOutsideData(path,s.Usrdir);toml::value root(toml::table{});
   root["version"]=1;root["width"]=s.Width;root["height"]=s.Height;root["skip_logos"]=s.SkipLogos;root["strict_data"]=s.StrictData;
   root["usrdir"]=PcPathUtf8(s.Usrdir);root["active_profile"]=s.ActiveProfile;toml::array profiles;
   for(const auto& p:s.Profiles){
