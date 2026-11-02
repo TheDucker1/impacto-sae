@@ -28,6 +28,9 @@ struct MessageRuntimeContext {
   std::optional<bool> KeywordSuppressed = false;  // S+7a4d4; SAS1 omitted it.
   MessageSnapshotCursors SnapshotCursors;
   std::optional<uint8_t> BacklogSuppressed; // C1bb8; reset0, other producers unresolved.
+  // Chosen at message Start, before completion marks its history read. Retained
+  // independently for split contexts; reconstructed when a message restarts.
+  std::array<std::optional<bool>,2> ReadForDisplay;
 };
 
 class ScriptSource {

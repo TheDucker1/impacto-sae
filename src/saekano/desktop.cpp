@@ -2743,19 +2743,23 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
         }
       } else if (pass.Kind == SceneDrawKind::MessageText) {
         particleFragment.SetBlendMode(1);  // Native GpFont draw.
+        if(state.BattleEntry.Enabled?!backend.MessageSide(pass.Index):!activeMessage)continue;
+        const auto side=state.BattleEntry.Enabled?pass.Index:message->Side;
+        const auto read=vm->MessageContext().ReadForDisplay.at(side);
+        if(!read)throw UnsupportedCommand("message display read-color history is unknown");
+        const auto primary=*read?visual.ReadColor:visual.UnreadColor;
         if(state.BattleEntry.Enabled) {
           const auto* retained=backend.MessageSide(pass.Index);if(!retained)continue;
           const auto draws=BuildBattleDialogueTextDraws(dialogueVisual,visual,retained->Parsed,retained->Reveal,
-              splitLayouts[pass.Index],format,font.Cached(),uint32_t(utility.Size),font.NominalSize(),pass.Index,visual.UnreadColor);
+              splitLayouts[pass.Index],format,font.Cached(),uint32_t(utility.Size),font.NominalSize(),pass.Index,primary);
           for(const auto& text:draws)fontTextures.DrawString(renderer,font,text.Text,text.Position[0],text.Position[1],text.Size,text.Color);
           textDraws.insert(textDraws.end(),draws.begin(),draws.end());continue;
         }
         if(!activeMessage)continue;
-        // This entry is an explicitly fresh owner with no loaded read history.
         textDraws = BuildOrdinaryMessageTextDraws(
             visual, message->Parsed, message->Reveal, layout, format,
             font.Cached(), uint32_t(utility.Size), font.NominalSize(),
-            state.WindowOpenness[0], *state.Quake[2], visual.UnreadColor);
+            state.WindowOpenness[0], *state.Quake[2], primary);
         for (const auto& text : textDraws)
           fontTextures.DrawString(renderer, font, text.Text, text.Position[0],
                                   text.Position[1], text.Size, text.Color);

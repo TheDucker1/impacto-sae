@@ -509,6 +509,8 @@ void VirtualMachine::SetupMessage(size_t index, uint64_t now) {
   }
   backend_.SetSplitDialogue(messageContext_.SplitDialogue);
   backend_.SetMessageDualCleanup(state_.MouthControl && state_.MouthControl->DualCleanup);
+  messageContext_.ReadForDisplay[context]=state_.ReadColorEnabled.value_or(false)
+      ?backend_.MessageWasRead(state_.ScriptFileId,uint32_t(index),script_->Records()):std::optional<bool>(false);
   backend_.BeginMessage(index, message, context, now);
   if(state_.WorkingSave) {
     if(!state_.BattleEntry.Known || !state_.ApproachMode.Enabled || !messageContext_.BacklogSuppressed)
@@ -520,7 +522,7 @@ void VirtualMachine::SetupMessage(size_t index, uint64_t now) {
       if(!environment || !state_.ReadColorEnabled)throw UnsupportedCommand("message backlog style/read setting is unknown");
       bool read=false;
       if(*state_.ReadColorEnabled) {
-        const auto known=backend_.MessageWasRead(state_.ScriptFileId,uint32_t(state_.CurrentCommandIndex),script_->Records());
+        const auto known=messageContext_.ReadForDisplay[context];
         if(!known)throw UnsupportedCommand("message backlog read history is unknown");
         read=*known;
       }

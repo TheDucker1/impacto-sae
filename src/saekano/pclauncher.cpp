@@ -335,9 +335,12 @@ int RunPcLauncher(const std::filesystem::path& requested){
     if(!play)return 0;SetRuntimePcSettings(settings);return RunTitleScene(settings.Usrdir,path.parent_path()/"saves");
   }catch(const std::exception& e){SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Saekano launcher",e.what(),nullptr);return 1;}
 }
-int RunPcConfiguredGame(const std::filesystem::path& requested){
-  try{const auto path=requested.empty()?DefaultPcConfigPath():std::filesystem::absolute(requested);auto settings=LoadPcSettings(path);if(settings.Usrdir.empty())throw std::runtime_error("Choose USRDIR in the launcher before starting directly.");
-    PcRequireOutsideData(path,settings.Usrdir);SetRuntimePcSettings(settings);return RunTitleScene(settings.Usrdir,path.parent_path()/"saves");
+int RunPcConfiguredGame(const std::filesystem::path& requested,const std::filesystem::path& usrdirOverride,const std::filesystem::path& saveOverride){
+  try{const auto path=requested.empty()?DefaultPcConfigPath():std::filesystem::absolute(requested);auto settings=LoadPcSettings(path);
+    if(!usrdirOverride.empty())settings.Usrdir=std::filesystem::absolute(usrdirOverride);
+    if(settings.Usrdir.empty())throw std::runtime_error("Choose USRDIR in the launcher or supply --usrdir before starting directly.");
+    const auto saves=saveOverride.empty()?path.parent_path()/"saves":std::filesystem::absolute(saveOverride);
+    PcRequireOutsideData(path,settings.Usrdir);PcRequireOutsideData(saves,settings.Usrdir);SetRuntimePcSettings(settings);return RunTitleScene(settings.Usrdir,saves);
   }catch(const std::exception& e){SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Saekano",e.what(),nullptr);return 1;}
 }
 } // namespace Impacto::Saekano
