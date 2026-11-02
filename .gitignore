@@ -293,3 +293,19 @@ saves
 patches
 
 /basepaths.lua
+
+# Saekano research/test material is local-only and lives outside this repository.
+/doc/saekano/
+/tests/saekano/
+/tools/saekano/*
+!/tools/saekano/build_pc.ps1
+!/tools/saekano/package_pc.ps1
+!/tools/saekano/Launch-PC.ps1
+!/tools/saekano/Play-Saekano.cmd
+/saekano_adapter.py
+/saekano_vm_adapter.py
+/saekano-model-scenes.cmd
+/saekano-model-viewer.cmd
+/src/saekano/headless.cpp
+/src/saekano/inspect.cpp
+/saekano-local/

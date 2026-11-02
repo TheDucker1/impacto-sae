@@ -1,15 +1,13 @@
 cmake_minimum_required(VERSION 3.28)
 
-# The Vita command engine can be developed and verified before installing the
-# graphical application's dependencies. Both frontends will link this core.
-option(IMPACTO_SAEKANO_CORE_ONLY "Build only the Saekano core and its tests" OFF)
+# The command engine can be built as a library without graphical dependencies.
+option(IMPACTO_SAEKANO_CORE_ONLY "Build only the Saekano core library" OFF)
 option(IMPACTO_ENABLE_SAEKANO "Include the Saekano VM and legacy Live2D backend" OFF)
 if(IMPACTO_SAEKANO_CORE_ONLY)
     # Keep debug records in object files: this also avoids requiring a matching
     # running mspdbsrv when using a standalone Build Tools installation.
     set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT Embedded)
     project(impacto_saekano_core LANGUAGES C CXX)
-    enable_testing()
     add_subdirectory(src/saekano)
     return()
 endif()
@@ -1308,7 +1306,6 @@ else()
 endif()
 
 if(IMPACTO_ENABLE_SAEKANO)
-    enable_testing()
     add_subdirectory(src/saekano)
     if(NOT TARGET saekano_cubism2)
         message(FATAL_ERROR "Saekano PC build requires SAEKANO_CUBISM2_SDK_ROOT")
