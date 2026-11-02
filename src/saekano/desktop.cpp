@@ -1648,17 +1648,18 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
     if(captureReplay){
       SDL_Keycode key=0;
       if(replayCaptureStage==0 && backend.CurrentMessage() && backend.CurrentMessage()->Reveal.Revealed && !vm->State().ScenarioMenuBlocked){
-        replayCaptureManager=vm.get();replayCaptureScript=vm->State().ScriptFileId;replayCaptureCommand=vm->State().CurrentCommandIndex;key=SDLK_ESCAPE;replayCaptureStage=1;
-      }else if(replayCaptureStage==1 && replayQuestion.Visible && replayQuestion.Phase==3){key=SDLK_RETURN;replayCaptureStage=2;}
+        replayCaptureManager=vm.get();replayCaptureScript=vm->State().ScriptFileId;replayCaptureCommand=vm->State().CurrentCommandIndex;key=SDLK_RETURN;replayCaptureStage=1;
+      }else if(replayCaptureStage==1 && replayQuestion.Visible && replayQuestion.Phase==3){key=SDLK_Z;replayCaptureStage=2;}
       else if(replayCaptureStage==2 && !replayQuestion.Visible){
         if(vm.get()!=replayCaptureManager || vm->State().ScriptFileId!=replayCaptureScript || vm->State().CurrentCommandIndex<replayCaptureCommand)
           throw FormatError("declining replay abort replaced or restarted its manager");
-        key=SDLK_ESCAPE;replayCaptureStage=3;
+        key=SDLK_RETURN;replayCaptureStage=3;
       }else if(replayCaptureStage==3 && replayQuestion.Visible && replayQuestion.Phase==3){
-        if(replayQuestion.Selected!=1)key=SDLK_RIGHT;else {key=SDLK_RETURN;replayCaptureStage=4;}
+        if(replayQuestion.Selected!=1)key=SDLK_RIGHT;else {key=SDLK_Z;replayCaptureStage=4;}
       }
       if(key)for(const auto type:{SDL_EVENT_KEY_DOWN,SDL_EVENT_KEY_UP}){
         SDL_Event e{};e.type=type;e.key.windowID=SDL_GetWindowID(window.Window);e.key.key=key;e.key.down=type==SDL_EVENT_KEY_DOWN;
+        e.key.scancode=SDL_GetScancodeFromKey(key,nullptr);
         SdlCheck(SDL_PushEvent(&e),"replay capture SDL input");
       }
     }
@@ -1679,7 +1680,8 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
     if(!endingState.Started) {
     if((captureVersus || captureDialogue || captureSelection || captureReplay) && vm->State().BattleVersus.Phase==12 && !vm->State().BattleVersus.PendingPhase && !versusConfirmSent) {
       for(const auto type:{SDL_EVENT_KEY_DOWN,SDL_EVENT_KEY_UP}) {
-        SDL_Event e{};e.type=type;e.key.windowID=SDL_GetWindowID(window.Window);e.key.key=SDLK_RETURN;
+        SDL_Event e{};e.type=type;e.key.windowID=SDL_GetWindowID(window.Window);e.key.key=captureReplay?SDLK_Z:SDLK_RETURN;
+        if(captureReplay)e.key.scancode=SDL_GetScancodeFromKey(e.key.key,nullptr);
         e.key.down=type==SDL_EVENT_KEY_DOWN;SdlCheck(SDL_PushEvent(&e),"versus capture explicit confirm");
       }
       versusConfirmSent=true;events << "{\"kind\":\"battle_versus_confirmation\",\"now\":" << now << ",\"source\":\"explicit_capture_SDL_key\"}\n";
