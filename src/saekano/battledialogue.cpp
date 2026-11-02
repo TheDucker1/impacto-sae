@@ -23,12 +23,12 @@ std::vector<UiTextBlit> BuildBattleDialogueTextDraws(const BattleDialogueEnviron
     const OrdinaryTextEnvironment& shared,const OrdinaryMessageText& text,
     const VoiceTextReveal& reveal,const PlainTextLayout& layout,
     const TextFormatEnvironment& format,const GsfFont& font,uint32_t utilitySize,
-    uint32_t nominalSize,size_t side,std::array<uint8_t,4> primaryColor) {
+    uint32_t nominalSize,size_t side,std::array<uint8_t,4> primaryColor,bool shadow) {
   auto positioned=shared;
   positioned.Window.TextPosition=BattleDialogueTextOrigin(e,side,layout.LineCount,layout.Width);
   positioned.Window.WindowTravel=0;positioned.NamePosition={0,0};
   auto draws=BuildOrdinaryMessageTextDraws(positioned,text,reveal,layout,format,font,
-      utilitySize,nominalSize,100,{0,0},primaryColor);
+      utilitySize,nominalSize,100,{0,0},primaryColor,shadow);
   if(!reveal.Started)draws.resize(!text.InheritedName && text.NameEnabled && !text.Name.empty()?1:0);
   return draws;
 }

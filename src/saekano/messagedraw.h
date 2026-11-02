@@ -25,5 +25,6 @@ std::vector<UiTextBlit> BuildOrdinaryMessageTextDraws(
     const VoiceTextReveal& reveal, const PlainTextLayout& body,
     const TextFormatEnvironment& format, const GsfFont& font,
     uint32_t utilitySize, uint32_t nominalSize, uint32_t openness,
-    std::array<int32_t, 2> quake, std::array<uint8_t, 4> primaryColor);
+    std::array<int32_t, 2> quake, std::array<uint8_t, 4> primaryColor,
+    bool shadow = true);
 }  // namespace Impacto::Saekano

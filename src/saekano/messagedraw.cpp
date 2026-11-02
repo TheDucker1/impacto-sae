@@ -53,7 +53,8 @@ std::vector<UiTextBlit> BuildOrdinaryMessageTextDraws(
     const VoiceTextReveal& reveal, const PlainTextLayout& body,
     const TextFormatEnvironment& format, const GsfFont& font,
     uint32_t utilitySize, uint32_t nominalSize, uint32_t openness,
-    std::array<int32_t, 2> quake, std::array<uint8_t, 4> primaryColor) {
+    std::array<int32_t, 2> quake, std::array<uint8_t, 4> primaryColor,
+    bool shadowEnabled) {
   if (body.Scale != environment.BodyScale || reveal.Text != text.Body)
     throw FormatError("ordinary text draw inputs belong to different layouts");
   const auto add = [](int32_t a, int32_t b) {
@@ -84,7 +85,7 @@ std::vector<UiTextBlit> BuildOrdinaryMessageTextDraws(
          color});
   }
   auto glyphs = BuildRevealingTextDraws(body, reveal, format, bodyOrigin,
-                                        utilitySize, primaryColor, 255, true);
+                                        utilitySize, primaryColor, 255, shadowEnabled);
   if(!text.Keywords.empty() && !environment.KeywordColors)
     throw UnsupportedCommand("ordinary keyword drawing colors are not bound");
   for(const auto& range:text.Keywords)
@@ -117,7 +118,7 @@ std::vector<UiTextBlit> BuildOrdinaryMessageTextDraws(
     const auto measured=MeasurePvfText(font,range.Reading,rubySize,nominalSize);
     const auto x=add(add(add(bodyOrigin[0],first->Position[0]),extent/2),-int32_t(measured/2));
     const auto y=add(add(bodyOrigin[1],first->Position[1]),environment.RubyYOffset);
-    if(alpha){auto color=environment.RubyShadowColor;color[3]=alpha;
+    if(alpha && shadowEnabled){auto color=environment.RubyShadowColor;color[3]=alpha;
       draws.push_back({range.Reading,{add(x,1),add(y,1)},rubySize,color});}
     auto color=primaryColor;color[3]=alpha;draws.push_back({range.Reading,{x,y},rubySize,color});
   }

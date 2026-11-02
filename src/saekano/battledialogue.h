@@ -19,5 +19,6 @@ std::vector<UiTextBlit> BuildBattleDialogueTextDraws(const BattleDialogueEnviron
     const OrdinaryTextEnvironment& shared,const OrdinaryMessageText& text,
     const VoiceTextReveal& reveal,const PlainTextLayout& layout,
     const TextFormatEnvironment& format,const GsfFont& font,uint32_t utilitySize,
-    uint32_t nominalSize,size_t side,std::array<uint8_t,4> primaryColor);
+    uint32_t nominalSize,size_t side,std::array<uint8_t,4> primaryColor,
+    bool shadow = true);
 }
