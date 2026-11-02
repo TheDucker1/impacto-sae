@@ -110,7 +110,7 @@ bool Conflict(const PcBinding& a,const PcBinding& b){return a.Kind==b.Kind && a.
 std::string ActionTitle(PcAction action){static const char* labels[]={"D-pad Up","D-pad Down","D-pad Left","D-pad Right","Circle / Confirm","Cross / Back","Square","Triangle","L","R","Start","Select","PC Skip"};return labels[size_t(action)];}
 class Launcher {
  public:
-  PcSettings Settings=PcSettings::Defaults();std::filesystem::path ConfigPath;std::string Error,LoadError,PathText;
+  PcSettings Settings=PcSettings::Defaults();std::filesystem::path ConfigPath,SavePath;std::string Error,LoadError,PathText;
   bool Dirty=false,ReplaceInvalid=false,Play=false,Quit=false;
   LauncherWindow Host;PcInputRouter Input;PcDataValidator& Validator;
   std::map<std::string,Svg> Icons;
@@ -120,8 +120,9 @@ class Launcher {
   std::string Device,ProfileName="My controls";bool ExactDevice=false;
   std::shared_ptr<FolderResult> Folder=std::make_shared<FolderResult>();
   ImVec2 CancelMin{},CancelMax{};bool CancelRect=false;
-  explicit Launcher(std::filesystem::path path):ConfigPath(std::move(path)),Input(Host.Window,Settings.InputProfile()),Validator(RuntimePcDataValidator()){
+  Launcher(std::filesystem::path path,std::filesystem::path saves,const std::filesystem::path& usrdirOverride):ConfigPath(std::move(path)),SavePath(std::move(saves)),Input(Host.Window,Settings.InputProfile()),Validator(RuntimePcDataValidator()){
     try{Settings=LoadPcSettings(ConfigPath);}catch(const std::exception& e){LoadError=e.what();Error="Configuration could not be loaded. Defaults are shown; the existing file has not been changed.";}
+    if(!usrdirOverride.empty()){Settings.Usrdir=std::filesystem::absolute(usrdirOverride);Dirty=true;}
     PathText=PcPathUtf8(Settings.Usrdir);Input.SetProfile(Settings.InputProfile());
     const auto assetRoot=PcPathFromUtf8(SDL_GetBasePath())/"saekano-launcher";
     for(size_t i=0;i<PcActionCount;++i)Icons.emplace(PcActionName(PcAction(i)),Svg(assetRoot/(std::string(PcActionName(PcAction(i)))+".svg")));
@@ -132,7 +133,7 @@ class Launcher {
   void Changed(){Dirty=true;}
   void RefreshInput(){Input.SetProfile(Settings.InputProfile());Changed();}
   void Save(){
-    Settings.Validate();PcRequireOutsideData(ConfigPath,Settings.Usrdir);
+    Settings.Validate();PcRequireOutsideData(ConfigPath,Settings.Usrdir);PcRequireOutsideData(SavePath,Settings.Usrdir);
     if(!LoadError.empty()){
       if(!ReplaceInvalid)throw std::runtime_error("Choose replacement of the invalid configuration explicitly before saving.");
       if(std::filesystem::exists(ConfigPath)){auto backup=ConfigPath;backup+=".invalid-"+std::to_string(SDL_GetTicksNS())+".bak";std::filesystem::copy_file(ConfigPath,backup);}
@@ -321,26 +322,20 @@ class Launcher {
       ImGui::BeginDisabled(!ready);
       if(ImGui::Button("Save and Play",{Units(175),0}))Attempt([&]{Save();if(!Validator.Fresh(Settings.Usrdir,Settings.StrictData)){Validator.Start(Settings.Usrdir,Settings.StrictData);throw std::runtime_error("Data changed. Validation is running again before Play.");}Play=true;});
       ImGui::EndDisabled();ImGui::SameLine();ImGui::TextUnformatted(Dirty?"Unsaved changes":ready?"Ready":"Validate data in Game Data before Play");
-      ImGui::TextDisabled("Config: %s",PcPathUtf8(ConfigPath).c_str());ImGui::EndDisabled();CapturePopup();ImGui::End();Host.Present();
+      ImGui::TextDisabled("Config: %s",PcPathUtf8(ConfigPath).c_str());ImGui::TextDisabled("Saves: %s",PcPathUtf8(SavePath).c_str());ImGui::EndDisabled();CapturePopup();ImGui::End();Host.Present();
       if(Play)break;
     }
     if(Validator.Status().Running)Validator.Cancel();return Play;
   }
 };
 }
-int RunPcLauncher(const std::filesystem::path& requested){
+int RunPcLauncher(const std::filesystem::path& requested,const std::filesystem::path& usrdirOverride,const std::filesystem::path& saveOverride){
   try{
-    const auto path=requested.empty()?DefaultPcConfigPath():std::filesystem::absolute(requested);PcSettings settings;bool play=false;
-    {Launcher launcher(path);play=launcher.Run();if(play)settings=launcher.Settings;}
-    if(!play)return 0;SetRuntimePcSettings(settings);return RunTitleScene(settings.Usrdir,path.parent_path()/"saves");
-  }catch(const std::exception& e){SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Saekano launcher",e.what(),nullptr);return 1;}
-}
-int RunPcConfiguredGame(const std::filesystem::path& requested,const std::filesystem::path& usrdirOverride,const std::filesystem::path& saveOverride){
-  try{const auto path=requested.empty()?DefaultPcConfigPath():std::filesystem::absolute(requested);auto settings=LoadPcSettings(path);
-    if(!usrdirOverride.empty())settings.Usrdir=std::filesystem::absolute(usrdirOverride);
-    if(settings.Usrdir.empty())throw std::runtime_error("Choose USRDIR in the launcher or supply --usrdir before starting directly.");
+    const auto path=requested.empty()?DefaultPcConfigPath():std::filesystem::absolute(requested);
     const auto saves=saveOverride.empty()?path.parent_path()/"saves":std::filesystem::absolute(saveOverride);
-    PcRequireOutsideData(path,settings.Usrdir);PcRequireOutsideData(saves,settings.Usrdir);SetRuntimePcSettings(settings);return RunTitleScene(settings.Usrdir,saves);
-  }catch(const std::exception& e){SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Saekano",e.what(),nullptr);return 1;}
+    PcSettings settings;bool play=false;
+    {Launcher launcher(path,saves,usrdirOverride);play=launcher.Run();if(play)settings=launcher.Settings;}
+    if(!play)return 0;SetRuntimePcSettings(settings);return RunTitleScene(settings.Usrdir,saves);
+  }catch(const std::exception& e){SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Saekano launcher",e.what(),nullptr);return 1;}
 }
 } // namespace Impacto::Saekano

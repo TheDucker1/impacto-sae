@@ -30,7 +30,6 @@ class PcDataValidator {
 };
 PcDataValidator& RuntimePcDataValidator();
 void PcEnsureGameData(const std::filesystem::path& usrdir,bool strict);
-int RunPcLauncher(const std::filesystem::path& configPath={});
-int RunPcConfiguredGame(const std::filesystem::path& configPath={},
+int RunPcLauncher(const std::filesystem::path& configPath={},
     const std::filesystem::path& usrdirOverride={},const std::filesystem::path& saveOverride={});
 } // namespace Impacto::Saekano

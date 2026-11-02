@@ -103,7 +103,7 @@ static void HandleArguments(std::vector<std::string_view> args) {
     const auto argHandlers = std::tuple{
         make_handler([] {
           std::fputs("Usage: impacto [options]\n"
-              "  -g,  --game GAME                  Select a game (saekano starts directly)\n"
+              "  -g,  --game GAME                  Select a game (saekano opens its launcher)\n"
               "  -uc, --userconfigpath FILE        User configuration file\n"
               "  -lf, --logfile FILE               Log file\n"
               "  -ll, --loglevel LEVEL             Logging level\n"
@@ -208,7 +208,7 @@ int main(int argc, char* argv[]) {
   if(argc>=2 && std::string_view(argv[1])=="--saekano-launcher"){
     std::filesystem::path config;
     if(argc==4 && std::string_view(argv[2])=="--config")config=Saekano::PcPathFromUtf8(argv[3]);
-    else if(argc!=2){SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Saekano","Use --saekano-launcher, optionally followed by --config PATH. Direct play: -g saekano [-uc FILE].",nullptr);return 1;}
+    else if(argc!=2){SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Saekano","Use --saekano-launcher, optionally followed by --config PATH. Launcher: -g saekano [-uc FILE].",nullptr);return 1;}
     return Saekano::RunPcLauncher(config);
   }
   std::vector<std::string_view> legacyArguments;
@@ -280,9 +280,9 @@ int main(int argc, char* argv[]) {
   }
 
 #ifdef IMPACTO_HAS_SAEKANO
-  if(!legacyArguments.empty())ImpLog(LogLevel::Warning,LogChannel::General,"Deprecated Saekano play alias; use -g saekano and the shared options shown by --help.\n");
+  if(!legacyArguments.empty())ImpLog(LogLevel::Warning,LogChannel::General,"Deprecated Saekano alias; use -g saekano to open the launcher.\n");
   const auto config=Saekano::PcPathFromUtf8(UserConfig::UserConfigPath);
-  if(UserConfig::GetActiveGame()=="saekano")return Saekano::RunPcConfiguredGame(config,UsrdirOverride,SaveDataOverride);
+  if(UserConfig::GetActiveGame()=="saekano")return Saekano::RunPcLauncher(config,UsrdirOverride,SaveDataOverride);
   if(UserConfig::GetActiveGame().empty()){
     if(!UsrdirOverride.empty() || !SaveDataOverride.empty()){ImpLog(LogLevel::Fatal,LogChannel::General,"Data overrides require -g saekano.\n");return 1;}
     return Saekano::RunPcLauncher(config);
