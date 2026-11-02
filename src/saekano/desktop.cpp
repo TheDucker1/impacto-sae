@@ -1187,6 +1187,7 @@ struct ScenarioSceneTransfer {
   bool Title=false;
   bool Replay=false;
 };
+#include "desktopintegration.inc"
 int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
                       FontTextures& fontTextures, PcFontFace& font,
                       GameResources& resources, MusicPlayback& playback,
@@ -1203,7 +1204,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
                       const std::filesystem::path& capturePlan = {},
                       const std::filesystem::path& progressRoot = {},NativeSlotData* slotProgress=nullptr,
                       const NativePendingSlotLoad* load=nullptr,uint8_t captureOrdinaryChoice=0,
-                      ScenarioSceneTransfer* transfer=nullptr,std::optional<int32_t> replayScript={}) {
+                      ScenarioSceneTransfer* transfer=nullptr,std::optional<int32_t> replayScript={},SceneIntegrationCapture* integration=nullptr) {
   const bool capture = !captureDirectory.empty();
   if(replayScript && (!transfer || completed || load))throw FormatError("replay requires its own live manager/return owner");
   const bool captureReplay=capture && replayScript.has_value();
@@ -1608,7 +1609,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
   bool loadedMessageAdvanced=false;
   uint8_t ordinaryCaptureStage=0;
   std::optional<std::pair<int32_t,int32_t>> previousOrdinaryState;
-  const uint32_t frameBudget = (captureChapter || captureProfile)?220000:(captureParticles || captureResult)?100000:captureMenuInput==21?6000:((captureFromCommand || captureUntilMessage) ? (captureBranch?40000:20000) : 2000);
+  const uint32_t frameBudget = integration?120000:(captureChapter || captureProfile)?220000:(captureParticles || captureResult)?100000:captureMenuInput==21?6000:((captureFromCommand || captureUntilMessage) ? (captureBranch?40000:20000) : 2000);
   for (uint32_t frame = 0; !quit && (!capture || frame < frameBudget); ++frame) {
     const uint64_t now =
         capture ? uint64_t(frame) * 16 : SDL_GetTicks() - epoch;
@@ -1809,7 +1810,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       events << "{\"kind\":\"explicit_confirmation\",\"source\":\"SDL_Enter\",\"now\":"
              << now << ",\"script\":" << captureScript << ",\"command\":" << *captureUntilMessage << "}\n";
     }
-    if (capture && !captureReplay && !captureAuto && !captureScenarioMenu && firstMessage != UINT64_MAX &&
+    if (capture && !integration && !captureReplay && !captureAuto && !captureScenarioMenu && firstMessage != UINT64_MAX &&
         capturePointerStage < (captureButtonAuto ? 2u : 4u)) {
       constexpr std::array<uint64_t, 4> Delays{96, 112, 512, 528};
       if (now - firstMessage >= Delays[capturePointerStage]) {
@@ -1832,7 +1833,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
         ++capturePointerStage;
       }
     }
-    if (capture && !captureReplay && captureAuto && !captureScenarioMenu && !load && firstMessage != UINT64_MAX && captureAutoStage < 2) {
+    if (capture && !integration && !captureReplay && captureAuto && !captureScenarioMenu && !load && firstMessage != UINT64_MAX && captureAutoStage < 2) {
       const uint64_t delay = captureAutoStage == 0 ? 96 : 1296;
       if (now - firstMessage >= delay) {
         SDL_Event synthetic{};
@@ -2102,7 +2103,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
     if (capture && now > previous) {
       std::vector<int16_t> samples(size_t(now - previous) * 96);
       playback.Render(samples);
-      if (captureActive && !captureReplay && !captureVisibility) {
+      if (captureActive && !integration && !captureReplay && !captureVisibility) {
         if (!pcmEpoch) pcmEpoch = previous;
         pcm.write(reinterpret_cast<const char*>(samples.data()),
                   samples.size() * sizeof(int16_t));
@@ -2114,9 +2115,11 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       bindScriptVoices();
       scenarioMovie->Pump(now);
       syncMouths();
-      if(!battleFrame || *battleFrame!=now){battleHost->BeginFrame(now,pointerSnapshot,battleFaces);battleFrame=now;}
+      const auto integrationFaces=integration?integration->Input(*vm,input):0;
+      if(!battleFrame || *battleFrame!=now){battleHost->BeginFrame(now,pointerSnapshot,battleFaces|integrationFaces);battleFrame=now;}
       const bool acceptedInput=input.Advance;
       const auto step = vm->Step(now, input);
+      if(integration){integration->Boundary(*vm,step);if(integration->Done){quit=true;break;}}
       if(captureOrdinaryChoice && step.Opcode==0x65){
         const auto& choice=vm->State().OrdinaryChoice;const auto status=std::pair(choice.Phase,choice.Selected);
         if(previousOrdinaryState!=status){
@@ -2307,7 +2310,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
         chapterCompleted=true;
       if(captureLip && captureActive && step.Opcode==0x64 && step.Boundary==VmBoundary::CommandCompletedBeforeDispatch &&
           backend.CurrentMessage() && backend.CurrentMessage()->VoiceId>=0){targetCompleted=true;quit=true;}
-      if (step.Boundary == VmBoundary::CommandCompletedBeforeDispatch && capture && !captureReplay && !captureScenarioMenu && !captureParticles && !captureResult &&
+      if (step.Boundary == VmBoundary::CommandCompletedBeforeDispatch && capture && !integration && !captureReplay && !captureScenarioMenu && !captureParticles && !captureResult &&
           (captureUntilMessage
                ? step.Script == captureScript && size_t(step.Command) == *captureUntilMessage
                : step.Opcode == 0x64 && (!captureVoiced || step.Command >= 67))) {
@@ -2938,10 +2941,10 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
     }
     if(captureRuby)signature=std::to_string(message->Command)+':'+std::to_string(message->Reveal.Revealed)+':'+
         std::to_string((now-message->Epoch)/500)+':'+std::to_string(quit);
-    if (capture && captureActive && captureMenuInput!=21 && !captureVisibility && (saved == 0 || signature != previousSignature ||
+    if (capture && !integration && captureActive && captureMenuInput!=21 && !captureVisibility && (saved == 0 || signature != previousSignature ||
                     now - lastSaved >= 1500 || quit)) {
-      const auto file = captureReplay ? std::string{} : "scene-" + std::to_string(saved) + ".bmp";++saved;
-      if(!captureReplay)Capture(captureDirectory / file, width, height);
+      const auto file = (captureReplay || integration) ? std::string{} : "scene-" + std::to_string(saved) + ".bmp";++saved;
+      if(!captureReplay && !integration)Capture(captureDirectory / file, width, height);
       report << "{\"file\":\"" << file << "\",\"now\":" << now
              << ",\"battle_result\":{\"phase\":" << state.BattleResult.Phase << ",\"item\":" << state.BattleResult.Item
              << ",\"outcome\":" << state.BattleResult.Outcome << ",\"visible\":" << state.BattleResult.Visible << ",\"channels\":[";
@@ -3216,6 +3219,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
     report.close();
     pcm.close();
     events.close();
+    if(integration){if(!integration->Done)throw FormatError("bounded integration capture did not reach its command limit");return 0;}
     if(captureVisibility && visibilityCaptureStage!=8)
       throw UnsupportedCommand("message visibility witness did not complete");
     if (!quit || firstMessage == UINT64_MAX || ((captureUntilMessage || captureResult) && !targetCompleted) ||
@@ -3239,7 +3243,7 @@ int RunScenarioScene(ViewerWindow& window,UiBlitRenderer& renderer,
     bool captureConfirmInput=false,int32_t captureMenuInput=0,const std::filesystem::path& capturePlan={},
     const std::filesystem::path& progressRoot={},NativeSlotData* slotProgress=nullptr,
     const NativePendingSlotLoad* load=nullptr,uint8_t captureOrdinaryChoice=0,
-    std::unique_ptr<SemanticState>* returnedTitle=nullptr,std::optional<int32_t> replayScript={}) {
+    std::unique_ptr<SemanticState>* returnedTitle=nullptr,std::optional<int32_t> replayScript={},SceneIntegrationCapture* integration=nullptr) {
   // Normal play borrows the audio-host owner created before title. Standalone
   // viewers install the same service for the entire replacement/load loop.
   std::unique_ptr<PlaybackVoiceAttenuation> standaloneAttenuation;
@@ -3264,7 +3268,7 @@ int RunScenarioScene(ViewerWindow& window,UiBlitRenderer& renderer,
       playback,music,sounds,std::move(*live),completed,root,output,captureAuto,
       captureButtonAuto,captureVoiced,captureUntilMessage,captureFromCommand,
       captureScriptOverride,captureWaitingInput,captureConfirmInput,captureMenuInput,
-      capturePlan,progressRoot,slotProgress,load,captureOrdinaryChoice,&next,replayScript);
+      capturePlan,progressRoot,slotProgress,load,captureOrdinaryChoice,&next,replayScript,integration);
     // The old scope (including modal/model/movie consumers) has retired. Remove
     // only its shared-renderer uploads; borrowed textures belong to the caller.
     for(auto it=renderer.Textures.begin();it!=renderer.Textures.end();) {
@@ -5330,7 +5334,7 @@ int RunMovieInfoProbe(const std::filesystem::path& path,const std::filesystem::p
   }
 }
 int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::path& requestedProgressRoot,
-    const std::filesystem::path& requestedCaptureDirectory,bool capturePointer,bool captureOpening,uint8_t captureMovie,uint8_t captureOptions,uint8_t captureContinue,uint8_t captureScenarioMenu,std::optional<size_t> replayRow,uint8_t captureExtras,std::optional<size_t> captureOpeningEnd){
+    const std::filesystem::path& requestedCaptureDirectory,bool capturePointer,bool captureOpening,uint8_t captureMovie,uint8_t captureOptions,uint8_t captureContinue,uint8_t captureScenarioMenu,std::optional<size_t> replayRow,uint8_t captureExtras,std::optional<size_t> captureOpeningEnd,const std::filesystem::path& integrationDirectory){
   auto captureDirectory=requestedCaptureDirectory;
   bool created=false;
   try{
@@ -5379,6 +5383,12 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
     PlaybackTitleAudio audio(playback,systemSounds,ProfileVoiceGain(progress.Bytes6022c[10],1.0f),ProfileVoiceGain(progress.Bytes6022c[9],1.0f));
     audio.BindVoiceAttenuation(attenuation,audioClock);
     PcMovieFrameLayer movieFrame;MoviePlayback movie;movie.Present=[&](const AVFrame* frame,int64_t pts){movieFrame.Present(frame,pts);};
+    if(!integrationDirectory.empty()) {
+      if(!capture)throw FormatError("integration input requires a bounded output directory");
+      SceneIntegrationCapture integration(integrationDirectory,captureDirectory);integration.SeedOwner(*owner);
+      return RunScenarioScene(window,renderer,textures,font,resources,playback,music,sounds,std::move(*owner),nullptr,
+          usrdir,captureDirectory,false,false,false,{},{},{},false,false,0,{},progressRoot,&session.Slots,&integration.Initial,0,nullptr,{},&integration);
+    }
     // SceneInit runs once at process startup, never on a scenario's return to
     // title. Module captures explicitly start at title; startup has its own
     // bounded capture of the actual logo/movie owner.

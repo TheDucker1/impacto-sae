@@ -180,6 +180,7 @@ class VirtualMachine {
   bool SkipHistoryGate(const HistoryEnvironment& environment,
                        const ScriptReadHistory* currentFileHistory) const;
   void SetGauge(bool battle, int32_t value);
+  void SetMovieSkipAllowed(bool allowed);
   void ActivateLane(size_t lane);
   std::span<const size_t> QueuedLaneCommands(size_t lane) const { return dispatcher_.LaneQueues.at(lane); }
   void RequestLaneFlush() { dispatcher_.FlushLanes = true; }

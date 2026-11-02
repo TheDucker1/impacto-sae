@@ -298,6 +298,11 @@ void VirtualMachine::Load(bool preserveOwnerState) {
     // the Vita context constructor leaves unwritten. Restored inputs stay exact.
     state_.Battle = {true,0,{0,0},{1,1}};
     state_.BattleEntry={};state_.BattleEntry.Known=true;
+    // The native constructor leaves its pre-battle auto/skip cache untouched,
+    // and the context stream does not serialize it. Loading inside battle can
+    // reach the result without running battle Start. Use a safe inactive cache
+    // instead of inherited heap bytes; ordinary Start replaces this normally.
+    state_.BattleEntry.SavedPolicy=BattleEntryState::Policy{};
     state_.BattleVersus={};state_.BattleVersus.Known=true;
     state_.BattleSelection={};
     state_.BattleResult={};state_.BattleResult.Known=true;
@@ -411,6 +416,11 @@ void VirtualMachine::SetGauge(bool battle, int32_t value) {
       boundary_ != VmBoundary::ProfileDestinationLoaded)
     throw std::runtime_error("gauge intervention must precede Start");
   (battle ? state_.BattleGauge : state_.ApproachGauge) = value;
+}
+void VirtualMachine::SetMovieSkipAllowed(bool allowed) {
+  if(Opcode()!=0x2c2 || !CurrentMovie() || CurrentMovie()->Completed)
+    throw FormatError("movie eligibility input requires an active movie command");
+  commands_.at(size_t(state_.CurrentCommandIndex)).MovieState.Command.AllowInputSkip=uint32_t(allowed);
 }
 void VirtualMachine::SeedRandom(uint32_t seed) {
   if (boundary_ != VmBoundary::BeforeStart && boundary_ != VmBoundary::FileLoadedBeforeStart &&
