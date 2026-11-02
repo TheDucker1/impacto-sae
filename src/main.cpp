@@ -114,7 +114,7 @@ static void HandleArguments(std::vector<std::string_view> args) {
 #ifdef IMPACTO_HAS_SAEKANO
               "  -ud, --usrdir DIRECTORY           Saekano data-path override\n"
               "  -sd, --savedatapath DIRECTORY     Saekano save-path override\n"
-              "Without a selected game, open the launcher.\n"
+              "Select saekano with -g saekano to open its launcher.\n"
               "Example: impacto -g saekano -uc launcher.toml\n"
 #endif
               "  -h,  --help                       Show this help\n",stdout);std::exit(0);
@@ -202,22 +202,6 @@ static void HandleArguments(std::vector<std::string_view> args) {
 };
 
 int main(int argc, char* argv[]) {
-#ifdef IMPACTO_HAS_SAEKANO
-  // Keep the existing explicit GUI entry; normal game selection goes through
-  // the same -g/-uc/logging handler table as every other Impacto game.
-  if(argc>=2 && std::string_view(argv[1])=="--saekano-launcher"){
-    std::filesystem::path config;
-    if(argc==4 && std::string_view(argv[2])=="--config")config=Saekano::PcPathFromUtf8(argv[3]);
-    else if(argc!=2){SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Saekano","Use --saekano-launcher, optionally followed by --config PATH. Launcher: -g saekano [-uc FILE].",nullptr);return 1;}
-    return Saekano::RunPcLauncher(config);
-  }
-  std::vector<std::string_view> legacyArguments;
-  if((argc==3 || (argc==5 && std::string_view(argv[3])=="--save-dir")) && std::string_view(argv[1])=="--saekano-play"){
-    legacyArguments={"-g","saekano","-ud",argv[2]};if(argc==5){legacyArguments.push_back("-sd");legacyArguments.push_back(argv[4]);}
-  }else if((argc==2 || (argc==4 && std::string_view(argv[2])=="--config")) && std::string_view(argv[1])=="--saekano-run"){
-    legacyArguments={"-g","saekano"};if(argc==4){legacyArguments.push_back("-uc");legacyArguments.push_back(argv[3]);}
-  }
-#endif
   if (argc == 5 && std::string_view(argv[1]) == "--saekano-ui-sounds" &&
       std::string_view(argv[3]) == "--capture")
     return Saekano::RunUiSoundSession(argv[2], argv[4]);
@@ -250,17 +234,12 @@ int main(int argc, char* argv[]) {
   LogInit();
 
 #ifdef IMPACTO_HAS_SAEKANO
-  if(legacyArguments.empty()){
-    if(const auto result=Saekano::RunPcDiagnostics(argc,argv))return *result;
-  }
+  if(const auto result=Saekano::RunPcDiagnostics(argc,argv))return *result;
 #endif
   std::vector<std::string_view> arguments;
   for (int i = 1; i < argc; ++i) {
     arguments.push_back(argv[i]);
   }
-#ifdef IMPACTO_HAS_SAEKANO
-  if(!legacyArguments.empty())arguments=legacyArguments;
-#endif
 
   HandleArguments(arguments);
   if (arguments.empty() && Io::PathExists("args.txt") == IoError_OK) {
@@ -280,13 +259,8 @@ int main(int argc, char* argv[]) {
   }
 
 #ifdef IMPACTO_HAS_SAEKANO
-  if(!legacyArguments.empty())ImpLog(LogLevel::Warning,LogChannel::General,"Deprecated Saekano alias; use -g saekano to open the launcher.\n");
   const auto config=Saekano::PcPathFromUtf8(UserConfig::UserConfigPath);
   if(UserConfig::GetActiveGame()=="saekano")return Saekano::RunPcLauncher(config,UsrdirOverride,SaveDataOverride);
-  if(UserConfig::GetActiveGame().empty()){
-    if(!UsrdirOverride.empty() || !SaveDataOverride.empty()){ImpLog(LogLevel::Fatal,LogChannel::General,"Data overrides require -g saekano.\n");return 1;}
-    return Saekano::RunPcLauncher(config);
-  }
   if(!UsrdirOverride.empty() || !SaveDataOverride.empty()){ImpLog(LogLevel::Fatal,LogChannel::General,"Saekano data overrides do not apply to the selected game.\n");return 1;}
 #endif
 

@@ -39,7 +39,10 @@ license notices. Original game data and personal saves remain external.
 ./impacto.exe -g saekano -uc 'C:/PC Settings/launcher.toml'
 ```
 
-No arguments also opens the Saekano launcher. Use Game Data to select USRDIR and
+Select this launcher with -g saekano (or --game saekano). Running without a
+selected game follows the original Impacto startup path. The packaged
+Play-Saekano.cmd supplies the game-selection flag for convenience.
+Use Game Data to select USRDIR and
 validate required files, configure display and input, then choose Save and Play.
 Normal validation checks filenames/readability and permits modified contents.
 Optional strict validation compares required files to compiled reference hashes.
