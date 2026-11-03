@@ -27,7 +27,7 @@ size_t Ordinal(int32_t index, size_t count) {
 
 struct SdkLive2dDriver::Item {
   Live2dModelAssets Assets;
-  std::unique_ptr<OpenGL::Cubism2Model> Model;
+  std::unique_ptr<Cubism2Model> Model;
   std::array<std::vector<size_t>, 5> Motions;
   std::vector<size_t> Expressions;
   bool Attached = false, Enabled = false;
@@ -50,7 +50,7 @@ struct SdkLive2dDriver::Item {
   bool MouthEnvelopeBound=false;
   ModelMouthEnvelope Envelope;
 
-  Item(OpenGL::Cubism2Sdk& sdk, Live2dModelAssets assets) : Assets(std::move(assets)) {
+  Item(Cubism2Sdk& sdk, Live2dModelAssets assets) : Assets(std::move(assets)) {
     const auto& mocs = Assets.Get(Live2dSection::Moc);
     if (mocs.size() != 1) throw FormatError("expected one Live2D MOC");
     Model =
@@ -395,7 +395,7 @@ void SdkLive2dDriver::BeginMouthEnvelope(int32_t resource,const ProfileMouthAnim
 void SdkLive2dDriver::EndMouthEnvelope(int32_t resource) {
   auto& item=Get(resource);item.Envelope.Stop();item.MouthEnvelopeBound=true;
 }
-OpenGL::Cubism2Model& SdkLive2dDriver::Model(int32_t resource) {
+Cubism2Model& SdkLive2dDriver::Model(int32_t resource) {
   return *Get(resource).Model;
 }
 const Live2dModelAssets& SdkLive2dDriver::Assets(int32_t resource) const {
@@ -461,7 +461,7 @@ void SdkLive2dDriver::Draw(const Live2dState& state, float width,
     auto& item = Get(record);
     if (!item.Enabled) continue;
     item.Model->SetMatrix(Matrix(*record.ResourceId, width, height));
-    // Native records retain BGRA bytes; the OpenGL SDK adapter takes RGBA.
+    // Native records retain BGRA bytes; the renderer SDK adapter takes RGBA.
     item.Model->SetColor(float(item.Color[2]) / 255, float(item.Color[1]) / 255,
                          float(item.Color[0]) / 255,
                          float(item.Color[3]) / 255);

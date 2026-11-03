@@ -66,6 +66,8 @@ class BaseWindow {
   bool WindowDimensionsChanged;
 
   bool RecreateFBOs = false;
+  // Standalone frontends perform their own layout/letterboxing.
+  bool FullFramebuffer = false;
 
  protected:
   bool CreateSDLWindow(SDL_WindowFlags flags);

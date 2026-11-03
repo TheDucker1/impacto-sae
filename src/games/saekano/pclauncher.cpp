@@ -3,10 +3,9 @@
 #include "desktop.h"
 #include "../../profile/game.h"
 #include "../../profile/games/saekano/game.h"
-#include <glad/glad.h>
+#include "../../renderer/frontend.h"
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
-#include <imgui_custom/backends/imgui_impl_opengl3.h>
 #include <misc/cpp/imgui_stdlib.h>
 #include <pugixml.hpp>
 #include <algorithm>
@@ -68,39 +67,39 @@ struct Svg {
   }
 };
 struct LauncherWindow {
-  SDL_Window* Window=nullptr;SDL_GLContext Context=nullptr;
-  bool Imgui=false,Backend=false,Gl=false;
+  std::unique_ptr<RendererFrontend> Frontend;
+  SDL_Window* Window=nullptr;
   float Scale=1;
-  LauncherWindow(){
-    Require(SDL_Init(SDL_INIT_VIDEO|SDL_INIT_GAMEPAD|SDL_INIT_JOYSTICK),"Initialize launcher");
-    try{
-      Require(SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION,3),"OpenGL version");Require(SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION,3),"OpenGL version");
-      Require(SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,SDL_GL_CONTEXT_PROFILE_COMPATIBILITY),"OpenGL profile");
-      const auto windowName = Profile::Game::WindowName + " - PC Launcher";
-      Window=SDL_CreateWindow(windowName.c_str(),1120,820,SDL_WINDOW_OPENGL|SDL_WINDOW_RESIZABLE|SDL_WINDOW_HIGH_PIXEL_DENSITY);Require(Window!=nullptr,"Create launcher window");
-      Scale=DisplayScale();SDL_Rect available{};SDL_GetDisplayUsableBounds(SDL_GetDisplayForWindow(Window),&available);
-      const int maxWidth=available.w>100?available.w-40:1920,maxHeight=available.h>100?available.h-60:1080;
-      SDL_SetWindowMinimumSize(Window,std::min(int(850*Scale),maxWidth),std::min(int(620*Scale),maxHeight));
-      SDL_SetWindowSize(Window,std::min(int(1120*Scale),maxWidth),std::min(int(820*Scale),maxHeight));SDL_SetWindowPosition(Window,SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED);
-      Context=SDL_GL_CreateContext(Window);Require(Context!=nullptr,"Create launcher renderer");
-      Require(gladLoadGLLoader(reinterpret_cast<GLADloadproc>(SDL_GL_GetProcAddress))!=0,"Load OpenGL");SDL_GL_SetSwapInterval(1);
-      IMGUI_CHECKVERSION();ImGui::CreateContext();Imgui=true;auto& io=ImGui::GetIO();io.IniFilename=nullptr;io.ConfigFlags|=ImGuiConfigFlags_NavEnableKeyboard;
+  LauncherWindow() {
+    ConfigurePcRenderer();
+    const auto windowName=Profile::Game::WindowName+" - PC Launcher";
+    Frontend=std::make_unique<RendererFrontend>(windowName,1120,820);
+    Window=Frontend->GetWindow();
+    Require(SDL_InitSubSystem(SDL_INIT_JOYSTICK),"Initialize launcher joystick input");
+    Scale=DisplayScale();SDL_Rect available{};SDL_GetDisplayUsableBounds(SDL_GetDisplayForWindow(Window),&available);
+    const int maxWidth=available.w>100?available.w-40:1920,maxHeight=available.h>100?available.h-60:1080;
+    SDL_SetWindowMinimumSize(Window,std::min(int(850*Scale),maxWidth),std::min(int(620*Scale),maxHeight));
+    SDL_SetWindowSize(Window,std::min(int(1120*Scale),maxWidth),std::min(int(820*Scale),maxHeight));
+    SDL_SetWindowPosition(Window,SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED);
+    auto& io=ImGui::GetIO();io.ConfigFlags|=ImGuiConfigFlags_NavEnableKeyboard;
 #ifdef _WIN32
-      const std::filesystem::path font="C:/Windows/Fonts/meiryo.ttc";
-      if(std::filesystem::exists(font))io.Fonts->AddFontFromFileTTF(PcPathUtf8(font).c_str(),17);
+    const std::filesystem::path font="C:/Windows/Fonts/meiryo.ttc";
+    if(std::filesystem::exists(font))io.Fonts->AddFontFromFileTTF(PcPathUtf8(font).c_str(),17);
 #endif
-      ImGui::StyleColorsDark();auto& style=ImGui::GetStyle();style.WindowPadding={20,16};style.FramePadding={10,7};style.ItemSpacing={10,9};style.FrameRounding=5;style.ChildRounding=6;
-      style.Colors[ImGuiCol_WindowBg]={.065f,.085f,.12f,1};style.Colors[ImGuiCol_ChildBg]={.08f,.105f,.15f,1};style.Colors[ImGuiCol_Button]={.14f,.24f,.36f,1};style.Colors[ImGuiCol_ButtonHovered]={.2f,.37f,.53f,1};
-      style.ScaleAllSizes(Scale);style.FontScaleDpi=Scale;
-      Require(ImGui_ImplSDL3_InitForOpenGL(Window,Context),"Initialize launcher input");Backend=true;
-      Require(ImGui_ImplOpenGL3_Init("#version 330"),"Initialize launcher drawing");Gl=true;
-    }catch(...){Close();throw;}
+    ImGui::StyleColorsDark();auto& style=ImGui::GetStyle();style.WindowPadding={20,16};style.FramePadding={10,7};style.ItemSpacing={10,9};style.FrameRounding=5;style.ChildRounding=6;
+    style.Colors[ImGuiCol_WindowBg]={.065f,.085f,.12f,1};style.Colors[ImGuiCol_ChildBg]={.08f,.105f,.15f,1};style.Colors[ImGuiCol_Button]={.14f,.24f,.36f,1};style.Colors[ImGuiCol_ButtonHovered]={.2f,.37f,.53f,1};
+    style.ScaleAllSizes(Scale);style.FontScaleDpi=Scale;
   }
-  void Close(){if(Gl){ImGui_ImplOpenGL3_Shutdown();Gl=false;}if(Backend){ImGui_ImplSDL3_Shutdown();Backend=false;}if(Imgui){ImGui::DestroyContext();Imgui=false;}if(Context){SDL_GL_DestroyContext(Context);Context=nullptr;}if(Window){SDL_DestroyWindow(Window);Window=nullptr;}SDL_Quit();}
-  ~LauncherWindow(){Close();}
-  float DisplayScale()const{const float density=SDL_GetWindowPixelDensity(Window),display=SDL_GetWindowDisplayScale(Window);return density>0 && display>0?display/density:1;}
-  void Begin(){const auto next=DisplayScale();if(std::abs(next-Scale)>.01f){auto& style=ImGui::GetStyle();style.ScaleAllSizes(next/Scale);style.FontScaleDpi=next;Scale=next;}ImGui_ImplOpenGL3_NewFrame();ImGui_ImplSDL3_NewFrame();ImGui::NewFrame();}
-  void Present(){ImGui::Render();int w=0,h=0;SDL_GetWindowSizeInPixels(Window,&w,&h);glViewport(0,0,w,h);glClearColor(.065f,.085f,.12f,1);glClear(GL_COLOR_BUFFER_BIT);ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());SDL_GL_SwapWindow(Window);}
+  float DisplayScale()const {
+    const float density=SDL_GetWindowPixelDensity(Window),display=SDL_GetWindowDisplayScale(Window);
+    return density>0 && display>0?display/density:1;
+  }
+  void Begin() {
+    const auto next=DisplayScale();
+    if(std::abs(next-Scale)>.01f){auto& style=ImGui::GetStyle();style.ScaleAllSizes(next/Scale);style.FontScaleDpi=next;Scale=next;}
+    Frontend->BeginGui();
+  }
+  void Present(){Frontend->Present();}
 };
 struct FolderResult {std::mutex Mutex;bool Pending=false,Ready=false;std::string Path,Error;};
 void SDLCALL FolderChosen(void* userdata,const char* const* paths,int){

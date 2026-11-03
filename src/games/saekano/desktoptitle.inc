@@ -176,7 +176,7 @@ class PcTitleOwner final:public TitleServices {
     movie_.Stop();movieFrame_.Retire();
     audio_.Retire();
     for(const auto& key:keys_)if(const auto it=renderer_.Textures.find(key);it!=renderer_.Textures.end()){
-      glDeleteTextures(1,&it->second.Handle);renderer_.Textures.erase(it);
+      Impacto::Renderer->FreeTexture(it->second.Handle);renderer_.Textures.erase(it);
     }
     keys_.clear();ready_=committed_=false;
   }

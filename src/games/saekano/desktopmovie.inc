@@ -176,7 +176,7 @@ int RunMovieHostSession(const std::filesystem::path& root,const std::filesystem:
       std::array<int16_t, 1536> samples{}; playback.Update(0.016f); playback.Render(samples);
       pcm.write(reinterpret_cast<const char*>(samples.data()), sizeof(samples));
       for (auto sample : samples) peak = std::max(peak, std::abs(int32_t(sample)));
-      SdlCheck(SDL_GL_SwapWindow(window.Window), "movie host swap");
+      SdlCheck(window.Present(), "movie host swap");
       now += 16;
       if (frames >= 31 && peak > 8 && movie.PlaybackState().VideoPresented > 1 &&
           movie.PlaybackState().AudioPlayed) { ++frames; break; }
@@ -246,7 +246,7 @@ int RunMoviePlaybackSession(const std::filesystem::path& root,const std::filesys
       if(!controls && layer.Uploads<=2){
         int bytes=0;const auto hash=MovieSourceDigest(frame,frame->width,frame->height,bytes);
         video<<",\"source_md5\":\""<<hash<<"\"";
-        const GLuint ids[]={layer.Planes.LumaId,layer.Planes.CbId,layer.Planes.CrId};GLint alignment=0;glGetIntegerv(GL_PACK_ALIGNMENT,&alignment);glPixelStorei(GL_PACK_ALIGNMENT,1);
+        const GLuint ids[]={layer.Planes->LumaId,layer.Planes->CbId,layer.Planes->CrId};GLint alignment=0;glGetIntegerv(GL_PACK_ALIGNMENT,&alignment);glPixelStorei(GL_PACK_ALIGNMENT,1);
         for(int plane=0;plane<3;++plane){
           const int w=frame->width/(plane?2:1),h=frame->height/(plane?2:1);std::vector<uint8_t> pixels(size_t(w)*h);
           glBindTexture(GL_TEXTURE_2D,ids[plane]);glGetTexImage(GL_TEXTURE_2D,0,GL_RED,GL_UNSIGNED_BYTE,pixels.data());
@@ -302,10 +302,10 @@ int RunMoviePlaybackSession(const std::filesystem::path& root,const std::filesys
       const auto& s=movie.State();frames<<"{\"frame\":"<<frame<<",\"position_us\":"<<s.PositionUs<<",\"video_pts_us\":"<<s.FramePtsUs
         <<",\"video_presented\":"<<s.VideoPresented<<",\"audio_played\":"<<s.AudioPlayed<<",\"pending_audio\":"<<s.PendingAudio<<",\"pending_video\":"<<s.PendingVideo
         <<",\"volume\":"<<s.Volume<<",\"paused\":"<<s.Paused<<",\"finished\":"<<s.Finished<<"}\n";
-      if(!controls && (frame==15 || frame==63))Capture(target/("frame-"+std::to_string(frame)+".bmp"),960,544);
-      SdlCheck(SDL_GL_SwapWindow(window.Window),"movie session swap");
+      if(frame==15 || frame==63)Capture(target/("frame-"+std::to_string(frame)+".bmp"),960,544);
+      SdlCheck(window.Present(),"movie session swap");
     }
-    movie.Update(uint64_t(frame)*16);draw();if(!controls && !movie.State().Finished)Capture(target/"frame-final.bmp",960,544);
+    movie.Update(uint64_t(frame)*16);draw();if(!movie.State().Finished)Capture(target/"frame-final.bmp",960,544);
     const auto state=movie.State();if((!controls && planeChecks!=6) || !state.VideoPresented || !state.AudioPlayed)
       throw FormatError("movie session did not present actual video/audio");
     if(controls && (!paused || !restarted || firstFrame.empty() || state.Paused))throw FormatError("movie controls witness did not finish");

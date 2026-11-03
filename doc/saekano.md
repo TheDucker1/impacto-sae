@@ -5,8 +5,8 @@ include game archives, fonts, movies, audio, saves, native snapshots or test fix
 
 ## Build
 
-The current Windows backend targets x86 with OpenGL3.3 compatibility and a
-compatible legacy Cubism2.1 OpenGL SDK. Use Visual Studio2022 C++ Build Tools,
+The Windows backend targets x86 with OpenGL3.3 compatibility or DirectX9 and a
+compatible legacy Cubism2 SDK for the selected API. Use Visual Studio2022 C++ Build Tools,
 the Windows SDK, CMake/Ninja and the vcpkg dependencies declared by the project.
 Supply the SDK separately through SAEKANO_CUBISM2_SDK_ROOT; respect its license.
 The backend is enabled with IMPACTO_ENABLE_SAEKANO=ON and the x86-windows-saekano
@@ -16,17 +16,31 @@ The local Windows helper uses the existing dependency cache under impacto-build:
 
 ```powershell
 ./tools/saekano/build_pc.ps1
+./tools/saekano/build_pc.ps1 -Renderer DirectX9
 ```
 
-It builds only impacto. The current executable is
-impacto-build/SaekanoPC-x86-Release/impacto.exe. The script does not reinstall
+It builds the actual impacto product. The OpenGL executable is
+impacto-build/SaekanoPC-x86-Release/impacto.exe; DirectX9 uses
+impacto-build/SaekanoPC-DX9-x86-Release/impacto.exe. The script does not reinstall
 cached dependencies unless requested with -AllowDownloads during configuration.
 It expects Visual Studio2022 Build Tools in its standard installation folder.
+
+The build selects `SAEKANO_CUBISM2_BACKEND=OpenGL` or `DirectX9`, with the matching
+SDK in `SAEKANO_CUBISM2_SDK_ROOT`. The helper accepts `-SdkRoot` and `-D3dxRoot`
+when configuring. DirectX9 needs the legacy `live2d_directX_md.lib`, compatible
+framework sources and Microsoft.DXSDK.D3DX9.29.952.8 (`build/native`). Its older
+SDK is isolated in `impacto_cubism2_d3d9.dll`, with the x86 Visual C++2012 runtime
+selected by `SAEKANO_CUBISM2_LEGACY_CRT_DLL`. The helper's default dependency
+directories are under `impacto-build/deps`. Supply these SDK dependencies separately.
+The selected Saekano SDK determines its rendering API; changing that API requires
+the corresponding build. The project's Vulkan backend remains present; a Saekano
+Vulkan scene pass is not implemented.
 
 To create a distribution from a prepared build:
 
 ```powershell
 ./tools/saekano/package_pc.ps1 -OutputDirectory 'C:/Builds/Saekano PC' -SkipBuild
+./tools/saekano/package_pc.ps1 -Renderer DirectX9 -OutputDirectory 'C:/Builds/Saekano DirectX9' -SkipBuild
 ```
 
 The package contains the executable, runtime libraries, shaders, shared UI
@@ -55,7 +69,11 @@ continue to supply their authored UI and game settings through the existing
 binary readers. Lua profiles do not replace the game's bytecode or logic.
 The title portrait mapping is declared in `profiles/saekano/hud/titlemenu.lua`.
 The GPDA archive reader lives in `src/io/gpdaarchive.*`; the existing Cubism 2.1
-SDK adapter lives in `src/renderer/opengl/cubism2.*`. The existing script reader,
+SDK adapter lives in `src/renderer/cubism2.*`. Shared window, texture and movie
+services are used by both builds. Specialized scene shaders, render targets and
+SDK state isolation belong to `src/renderer/opengl/` and `src/renderer/dx9/`, behind
+the `Scene2D` interface; game owners retain draw ordering, timing and resource keys.
+The existing script reader,
 command decoding, control flow and execution loop live in `src/vm/saekano/`;
 presentation and game-mode behavior live in `src/games/saekano/`.
 

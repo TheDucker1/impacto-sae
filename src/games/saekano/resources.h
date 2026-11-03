@@ -118,7 +118,7 @@ class GameResources final : public ScriptSource {
   ProfileVoiceAssets LoadProfileVoice(size_t characterId, size_t entry) const;
   ResourceAsset LoadBattleResultVoice(size_t entry) const;
   std::vector<ScriptVoiceEnvelope> LoadScriptVoiceEnvelopes(int32_t scriptId) const;
-  ResourceAsset LoadImage(ImageSection section, size_t imageId) const;
+  ResourceAsset LoadSceneImage(ImageSection section, size_t imageId) const;
   size_t ImageCount(ImageSection section) const;
   size_t ScriptCount() const { return scripts_.Entries().size(); }
   size_t Live2dCount() const { return live2d_.Entries().size(); }

@@ -10,7 +10,10 @@
 #include "newmarker.h"
 #include "desktop.h"
 
-#include "../../renderer/opengl/cubism2.h"
+#include "../../renderer/cubism2.h"
+#include "../../renderer/renderer.h"
+#include "../../renderer/frontend.h"
+#include "../../renderer/scene2d.h"
 #include "modelscene.h"
 #include "resources.h"
 #include "uisprite.h"
@@ -45,6 +48,7 @@
 #include "optionswidgets.h"
 #include "optionsrepeat.h"
 #include "pcinput.h"
+#include "pcconfig.h"
 #include "pcvalidation.h"
 #include "optionsdialog.h"
 #include "systemmenu.h"
@@ -99,6 +103,7 @@ void SdlCheck(bool ok, const char* operation) {
     throw std::runtime_error(std::string(operation) + ": " + SDL_GetError());
 }
 void GlCheck(const char* operation) {
+  if (Impacto::Renderer && Impacto::Renderer->NativeDeviceHandle()) return;
   const auto error = glGetError();
   if (error != GL_NO_ERROR)
     throw std::runtime_error(std::string(operation) + ": OpenGL error " +
@@ -106,195 +111,207 @@ void GlCheck(const char* operation) {
 }
 GLenum ParticleGlFactor(uint8_t factor, bool alpha) {
   switch (factor) {
-    case 0: return GL_ZERO;
-    case 1: return GL_ONE;
-    case 2: return alpha ? GL_SRC_ALPHA : GL_SRC_COLOR;
-    case 4: return GL_SRC_ALPHA;
-    case 5: return GL_ONE_MINUS_SRC_ALPHA;
-    default: throw FormatError("unsupported particle blend factor");
+    case 0:
+      return GL_ZERO;
+    case 1:
+      return GL_ONE;
+    case 2:
+      return alpha ? GL_SRC_ALPHA : GL_SRC_COLOR;
+    case 4:
+      return GL_SRC_ALPHA;
+    case 5:
+      return GL_ONE_MINUS_SRC_ALPHA;
+    default:
+      throw FormatError("unsupported particle blend factor");
   }
 }
-void ApplyParticleBlend(size_t index) {
-  const auto blend = ParticleBlend(index);
-  if (!blend.Enabled) { glDisable(GL_BLEND); return; }
-  glEnable(GL_BLEND);
-  glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
-  glBlendFuncSeparate(ParticleGlFactor(blend.ColorSource, false),
-                      ParticleGlFactor(blend.ColorDestination, false),
-                      ParticleGlFactor(blend.AlphaSource, true),
-                      ParticleGlFactor(blend.AlphaDestination, true));
-}
-void ApplyParticleFragmentState(const ParticleFragmentState& state, GLuint program) {
+void ApplyParticleBlend(size_t index);
+void ApplyParticleFragmentState(const ParticleFragmentState& state,
+                                GLuint program) {
   // The owning renderer selects ParticleFragmentShaders[state.AlphaFamily].
   if (state.AlphaFamily > 6 || !std::isfinite(state.AlphaThreshold))
     throw FormatError("invalid particle alpha state");
   ApplyParticleBlend(state.BlendIndex);
-  glUniform1f(glGetUniformLocation(program, "nativeAlphaThreshold"), state.AlphaThreshold);
+  glUniform1f(glGetUniformLocation(program, "nativeAlphaThreshold"),
+              state.AlphaThreshold);
 }
 struct ViewerWindow {
+  std::unique_ptr<RendererFrontend> Frontend;
+  std::unique_ptr<Scene2D> Pass;
   SDL_Window* Window = nullptr;
-  SDL_GLContext Context = nullptr;
   inline static std::unique_ptr<PcInputRouter> Input;
+  inline static Scene2D* Gpu = nullptr;
+  inline static RendererFrontend* ActiveFrontend = nullptr;
   static bool PollEvent(SDL_Event* event) {
-    return Input?Input->Poll(*event):SDL_PollEvent(event);
+    return Input ? Input->Poll(*event) : SDL_PollEvent(event);
+  }
+  static void BeginFrame() {
+    if (!ActiveFrontend) throw FormatError("scene frontend is missing");
+    ActiveFrontend->EnsureFrame();
   }
   explicit ViewerWindow(bool hidden, bool stencil = false) {
-    SdlCheck(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_JOYSTICK), "SDL initialization");
-    try {
-      SdlCheck(SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3),
-               "GL major version");
-      SdlCheck(SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3),
-               "GL minor version");
-      // Cubism2 supplies its legacy shader pipeline. Keep this separate from
-      // the SC3 frontend's core-profile context and renderer state caches.
-      SdlCheck(SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,
-                                   SDL_GL_CONTEXT_PROFILE_COMPATIBILITY),
-               "GL profile");
-      SdlCheck(SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1), "GL double buffer");
-      if (stencil) {
-        SdlCheck(SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24), "depth size");
-        SdlCheck(SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8), "stencil size");
-      }
-      const auto flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE |
-                         (hidden ? SDL_WINDOW_HIDDEN : 0);
-      Window = SDL_CreateWindow("Saekano model viewer", 1000, 800, flags);
-      SdlCheck(Window != nullptr, "window creation");
-      Context = SDL_GL_CreateContext(Window);
-      SdlCheck(Context != nullptr, "GL context creation");
-      if (!gladLoadGLLoader(
-              reinterpret_cast<GLADloadproc>(SDL_GL_GetProcAddress)))
-        throw std::runtime_error("cannot load OpenGL functions");
-      SDL_GL_SetSwapInterval(hidden ? 0 : 1);
-      Input=std::make_unique<PcInputRouter>(Window,RuntimePcSettings().InputProfile());
-      glDisable(GL_DEPTH_TEST);
-      glDisable(GL_CULL_FACE);
-      GlCheck("viewer initialization");
-    } catch (...) {
-      Cleanup();
-      throw;
-    }
+    ConfigurePcRenderer();
+    Frontend = std::make_unique<RendererFrontend>("Saekano", 1000, 800, hidden);
+    Window = Frontend->GetWindow();
+    ActiveFrontend = Frontend.get();
+    SdlCheck(SDL_InitSubSystem(SDL_INIT_JOYSTICK), "joystick initialization");
+    Pass = CreateScene2D();
+    Gpu = Pass.get();
+    Input = std::make_unique<PcInputRouter>(Window,
+                                            RuntimePcSettings().InputProfile());
   }
-  void Cleanup() {
+  bool Present() {
+    BeginFrame();
+    Frontend->Present();
+    return true;
+  }
+  ~ViewerWindow() {
     Input.reset();
-    if (Context) SDL_GL_DestroyContext(Context);
-    if (Window) SDL_DestroyWindow(Window);
-    SDL_Quit();
+    Gpu = nullptr;
+    Pass.reset();
+    ActiveFrontend = nullptr;
   }
-  ~ViewerWindow() { Cleanup(); }
 };
-
+void ApplyParticleBlend(size_t index) {
+  const auto b = ParticleBlend(index);
+  ViewerWindow::Gpu->SetBlend({b.Enabled, b.ColorSource, b.ColorDestination,
+                               b.AlphaSource, b.AlphaDestination});
+}
 struct ModelTextures {
   std::vector<uint32_t> Handles;
-  ModelTextures(OpenGL::Cubism2Model& model, const Live2dModelAssets& assets) {
+  ModelTextures(Cubism2Model& model, const Live2dModelAssets& assets) {
     try {
       const auto& textures = assets.Get(Live2dSection::Textures);
-      for (size_t index = 0; index < textures.size(); ++index) {
+      for (size_t i = 0; i < textures.size(); ++i) {
         Texture texture;
-        const auto& data = textures[index].Data;
+        const auto& data = textures[i].Data;
         Io::MemoryStream stream(const_cast<uint8_t*>(data.data()), data.size());
-        if (!texture.Load(&stream))
-          throw FormatError("cannot decode model GXT texture");
-        if (texture.Format != TexFmt_RGBA)
-          throw FormatError("unsupported model texture pixel format");
-        GLuint handle = 0;
-        glGenTextures(1, &handle);
-        Handles.push_back(handle);
-        glBindTexture(GL_TEXTURE_2D, handle);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, texture.Width, texture.Height,
-                     0, GL_RGBA, GL_UNSIGNED_BYTE, texture.Buffer.data());
-        model.BindTexture(index, handle);
+        if (!texture.Load(&stream) || texture.Format != TexFmt_RGBA)
+          throw FormatError("unsupported model GXT texture");
+        const auto handle = Impacto::Renderer->SubmitTexture(
+            texture.Format, texture.Buffer.data(), texture.Width,
+            texture.Height);
+        try {
+          Handles.push_back(handle);
+        } catch (...) {
+          Impacto::Renderer->FreeTexture(handle);
+          throw;
+        }
+        Impacto::Renderer->ConfigureTextureSampling(
+            handle, TextureSampling::LinearClamp);
       }
-      GlCheck("model textures");
+      Bind(model);
     } catch (...) {
       Release();
       throw;
     }
   }
   void Release() {
-    if (!Handles.empty())
-      glDeleteTextures(static_cast<GLsizei>(Handles.size()), Handles.data());
+    for (auto id : Handles) Impacto::Renderer->FreeTexture(id);
     Handles.clear();
   }
   ~ModelTextures() { Release(); }
-  void Bind(OpenGL::Cubism2Model& model) const {
-    for(size_t i=0;i<Handles.size();++i)model.BindTexture(i,Handles[i]);
+  void Bind(Cubism2Model& model) const {
+    model.SetDevice(Impacto::Renderer->NativeDeviceHandle());
+    for (size_t i = 0; i < Handles.size(); ++i)
+      model.BindTexture(i, Impacto::Renderer->NativeTextureHandle(Handles[i]));
   }
 };
-
 // Cubism2 owns a legacy GL pipeline. Keep its client arrays on VAO0 and restore
 // the UI pipeline, including fixed-function state changed by the SDK.
-struct ScopedSdkGlState {
-  using Push=void(APIENTRY*)(GLbitfield);
-  using Pop=void(APIENTRY*)();
-  Pop PopAttributes=nullptr,PopClientAttributes=nullptr;
-  GLint Program=0,Vao=0,ArrayBuffer=0,ActiveTexture=0;
-  ScopedSdkGlState() {
+struct ReferenceGlState {
+  using Push = void(APIENTRY*)(GLbitfield);
+  using Pop = void(APIENTRY*)();
+  Pop PopAttributes = nullptr, PopClientAttributes = nullptr;
+  GLint Program = 0, Vao = 0, ArrayBuffer = 0, ActiveTexture = 0;
+  ReferenceGlState() {
     // The app's GLAD surface is core-only; resolve the compatibility functions
     // from the compatibility context created for the legacy SDK.
-    const auto push=reinterpret_cast<Push>(SDL_GL_GetProcAddress("glPushAttrib"));
-    const auto pushClient=reinterpret_cast<Push>(SDL_GL_GetProcAddress("glPushClientAttrib"));
-    PopAttributes=reinterpret_cast<Pop>(SDL_GL_GetProcAddress("glPopAttrib"));
-    PopClientAttributes=reinterpret_cast<Pop>(SDL_GL_GetProcAddress("glPopClientAttrib"));
-    if(!push || !pushClient || !PopAttributes || !PopClientAttributes)
-      throw UnsupportedCommand("SDK compatibility GL state functions are unavailable");
-    glGetIntegerv(GL_CURRENT_PROGRAM,&Program);glGetIntegerv(GL_VERTEX_ARRAY_BINDING,&Vao);
-    glGetIntegerv(GL_ARRAY_BUFFER_BINDING,&ArrayBuffer);glGetIntegerv(GL_ACTIVE_TEXTURE,&ActiveTexture);
-    push(0x000fffff);glBindVertexArray(0);  // GL_ALL_ATTRIB_BITS.
-    pushClient(0xffffffff);glUseProgram(0);glActiveTexture(GL_TEXTURE0);
+    const auto push =
+        reinterpret_cast<Push>(SDL_GL_GetProcAddress("glPushAttrib"));
+    const auto pushClient =
+        reinterpret_cast<Push>(SDL_GL_GetProcAddress("glPushClientAttrib"));
+    PopAttributes = reinterpret_cast<Pop>(SDL_GL_GetProcAddress("glPopAttrib"));
+    PopClientAttributes =
+        reinterpret_cast<Pop>(SDL_GL_GetProcAddress("glPopClientAttrib"));
+    if (!push || !pushClient || !PopAttributes || !PopClientAttributes)
+      throw UnsupportedCommand(
+          "SDK compatibility GL state functions are unavailable");
+    glGetIntegerv(GL_CURRENT_PROGRAM, &Program);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &Vao);
+    glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &ArrayBuffer);
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &ActiveTexture);
+    push(0x000fffff);
+    glBindVertexArray(0);  // GL_ALL_ATTRIB_BITS.
+    pushClient(0xffffffff);
+    glUseProgram(0);
+    glActiveTexture(GL_TEXTURE0);
   }
-  ~ScopedSdkGlState() {
-    PopClientAttributes();PopAttributes();glUseProgram(GLuint(Program));
-    glBindVertexArray(GLuint(Vao));glBindBuffer(GL_ARRAY_BUFFER,GLuint(ArrayBuffer));
+  ~ReferenceGlState() {
+    PopClientAttributes();
+    PopAttributes();
+    glUseProgram(GLuint(Program));
+    glBindVertexArray(GLuint(Vao));
+    glBindBuffer(GL_ARRAY_BUFFER, GLuint(ArrayBuffer));
     glActiveTexture(GLenum(ActiveTexture));
   }
 };
+struct ScopedSceneRenderState {
+  std::unique_ptr<SceneRenderState> State = ViewerWindow::Gpu->SaveState();
+};
 std::vector<GLint> UiGlState() {
   std::vector<GLint> result;
-  for(const GLenum key:{GL_CURRENT_PROGRAM,GL_VERTEX_ARRAY_BINDING,GL_ARRAY_BUFFER_BINDING,
-      GL_ELEMENT_ARRAY_BUFFER_BINDING,GL_ACTIVE_TEXTURE,GL_TEXTURE_BINDING_2D,
-      GL_BLEND_SRC_RGB,GL_BLEND_DST_RGB,GL_BLEND_SRC_ALPHA,GL_BLEND_DST_ALPHA,
-      GL_BLEND_EQUATION_RGB,GL_BLEND_EQUATION_ALPHA,GL_DEPTH_WRITEMASK,
-      GL_UNPACK_ALIGNMENT}) {
-    GLint value=0;glGetIntegerv(key,&value);result.push_back(value);
+  for (const GLenum key :
+       {GL_CURRENT_PROGRAM, GL_VERTEX_ARRAY_BINDING, GL_ARRAY_BUFFER_BINDING,
+        GL_ELEMENT_ARRAY_BUFFER_BINDING, GL_ACTIVE_TEXTURE,
+        GL_TEXTURE_BINDING_2D, GL_BLEND_SRC_RGB, GL_BLEND_DST_RGB,
+        GL_BLEND_SRC_ALPHA, GL_BLEND_DST_ALPHA, GL_BLEND_EQUATION_RGB,
+        GL_BLEND_EQUATION_ALPHA, GL_DEPTH_WRITEMASK, GL_UNPACK_ALIGNMENT}) {
+    GLint value = 0;
+    glGetIntegerv(key, &value);
+    result.push_back(value);
   }
-  for(const GLenum key:{GL_BLEND,GL_DEPTH_TEST,GL_STENCIL_TEST,GL_CULL_FACE,
-      GL_SCISSOR_TEST,0x0bc0,GL_FRAMEBUFFER_SRGB})result.push_back(glIsEnabled(key)); // GL_ALPHA_TEST.
-  std::array<GLint,4> viewport{};glGetIntegerv(GL_VIEWPORT,viewport.data());
-  result.insert(result.end(),viewport.begin(),viewport.end());return result;
+  for (const GLenum key :
+       {GL_BLEND, GL_DEPTH_TEST, GL_STENCIL_TEST, GL_CULL_FACE, GL_SCISSOR_TEST,
+        0x0bc0, GL_FRAMEBUFFER_SRGB})
+    result.push_back(glIsEnabled(key));  // GL_ALPHA_TEST.
+  std::array<GLint, 4> viewport{};
+  glGetIntegerv(GL_VIEWPORT, viewport.data());
+  result.insert(result.end(), viewport.begin(), viewport.end());
+  return result;
 }
-void DrawSceneModels(SdkLive2dDriver& models,const Live2dState& state,
-    std::map<int32_t,std::unique_ptr<ModelTextures>>& textures,bool verifyState) {
-  if(state.Records.empty())return;
-  const auto before=verifyState?UiGlState():std::vector<GLint>{};
-  {
-    ScopedSdkGlState scope;
-    for(const auto& record:state.Records) {
-      if(!record.ResourceId)continue;
-      const auto id=*record.ResourceId;
-      if(!textures.contains(id))textures[id]=std::make_unique<ModelTextures>(models.Model(id),models.Assets(id));
+void DrawSceneModels(
+    SdkLive2dDriver& models, const Live2dState& state,
+    std::map<int32_t, std::unique_ptr<ModelTextures>>& textures,
+    bool verifyState) {
+  if (state.Records.empty()) return;
+  const bool checkGl = verifyState && !Impacto::Renderer->NativeDeviceHandle();
+  const auto before = checkGl ? UiGlState() : std::vector<GLint>{};
+  ViewerWindow::Gpu->DrawExternal([&] {
+    for (const auto& record : state.Records) {
+      if (!record.ResourceId) continue;
+      const auto id = *record.ResourceId;
+      if (!textures.contains(id))
+        textures[id] = std::make_unique<ModelTextures>(models.Model(id),
+                                                       models.Assets(id));
       // The SDK object may have been reattached since the texture upload.
       textures.at(id)->Bind(models.Model(id));
     }
     models.Draw(state);
-  }
-  GlCheck("scene SDK draw/state restoration");
-  if(verifyState && UiGlState()!=before)throw FormatError("SDK drawing disturbed UI OpenGL state");
+  });
+  if (checkGl && UiGlState() != before)
+    throw FormatError("SDK drawing disturbed UI OpenGL state");
 }
 
 struct ViewerModel {
-  std::unique_ptr<OpenGL::Cubism2Model> Model;
+  std::unique_ptr<Cubism2Model> Model;
   std::unique_ptr<ModelTextures> Textures;
   int IdleHandle = -1;
   size_t IdleMotion = 0;
   std::vector<size_t> Expressions;
   size_t ExpressionIndex = 0;
   std::string Name;
-  ViewerModel(OpenGL::Cubism2Sdk& sdk, const Live2dModelAssets& assets) {
+  ViewerModel(Cubism2Sdk& sdk, const Live2dModelAssets& assets) {
     const auto& mocs = assets.Get(Live2dSection::Moc);
     if (mocs.size() != 1) throw FormatError("expected one MOC per model");
     const auto& textureAssets = assets.Get(Live2dSection::Textures);
@@ -346,20 +363,16 @@ struct ViewerModel {
     Model->StartExpression(Expressions[ExpressionIndex]);
   }
   void Draw(int width, int height) {
-    glViewport(0, 0, width, height);
-    glClearColor(32.0f / 255, 32.0f / 255, 32.0f / 255, 1);
-    glDisable(GL_STENCIL_TEST);
-    glStencilMask(0xff);
-    glDepthMask(GL_TRUE);
-    glClearDepth(1);
-    glClearStencil(0);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    ViewerWindow::BeginFrame();
+    ViewerWindow::Gpu->SetViewport({0, 0, width, height});
+    ViewerWindow::Gpu->Clear({32.f / 255, 32.f / 255, 32.f / 255, 1});
     const auto scale = std::min(float(width) / Model->CanvasWidth(),
                                 float(height) / Model->CanvasHeight());
     const int viewWidth = int(Model->CanvasWidth() * scale);
     const int viewHeight = int(Model->CanvasHeight() * scale);
-    glViewport((width - viewWidth) / 2, (height - viewHeight) / 2, viewWidth,
-               viewHeight);
+    ViewerWindow::Gpu->SetViewport({(width - viewWidth) / 2,
+                                    (height - viewHeight) / 2, viewWidth,
+                                    viewHeight});
     if (Model->MotionFinished(0, IdleHandle))
       IdleHandle = Model->StartMotion(IdleMotion, 0);
     Model->RestoreParameters();
@@ -368,8 +381,7 @@ struct ViewerModel {
     Model->ApplyExpression();
     Model->ApplyPose();
     Model->Update();
-    Model->Draw();
-    GlCheck("model draw");
+    ViewerWindow::Gpu->DrawExternal([&] { Model->Draw(); });
   }
 };
 
@@ -394,9 +406,8 @@ void WriteUiBlit(std::ostream& out, const UiSpriteBlit& blit) {
   out << ']';
   if (blit.Rotation)
     out << ",\"rotation\":{\"radians_bits\":"
-        << std::bit_cast<uint32_t>(blit.Rotation->Radians)
-        << ",\"pivot\":[" << blit.Rotation->Pivot[0] << ','
-        << blit.Rotation->Pivot[1] << "]}";
+        << std::bit_cast<uint32_t>(blit.Rotation->Radians) << ",\"pivot\":["
+        << blit.Rotation->Pivot[0] << ',' << blit.Rotation->Pivot[1] << "]}";
   out << '}';
 }
 void WriteUiCommand(std::ostream& out, const UiRenderCommand& command) {
@@ -405,7 +416,7 @@ void WriteUiCommand(std::ostream& out, const UiRenderCommand& command) {
     return;
   }
   out << "{\"kind\":" << int(command.Kind) << ",\"mode\":" << command.Mode;
-  if(command.TestEnabled)out << ",\"enabled\":" << *command.TestEnabled;
+  if (command.TestEnabled) out << ",\"enabled\":" << *command.TestEnabled;
   if (command.Kind == UiRenderKind::Rectangle) {
     out << ",\"rectangle\":[";
     for (size_t i = 0; i < 4; ++i) {
@@ -438,297 +449,93 @@ void WriteItemLabel(std::ostream& out, const ProfileItemSlotDraw& slot) {
   out << "]}";
 }
 void WriteDescription(std::ostream& out, int32_t row, const UiTextBlit& line) {
-  out<<"{\"row\":"<<row<<",\"text\":[";
-  for(size_t i=0;i<line.Text.size();++i){if(i)out<<',';out<<uint16_t(line.Text[i]);}
-  out<<"],\"position\":["<<line.Position[0]<<','<<line.Position[1]<<"],\"size\":"<<line.Size<<",\"color\":[";
-  for(size_t i=0;i<4;++i){if(i)out<<',';out<<unsigned(line.Color[i]);}
-  out<<"]}";
+  out << "{\"row\":" << row << ",\"text\":[";
+  for (size_t i = 0; i < line.Text.size(); ++i) {
+    if (i) out << ',';
+    out << uint16_t(line.Text[i]);
+  }
+  out << "],\"position\":[" << line.Position[0] << ',' << line.Position[1]
+      << "],\"size\":" << line.Size << ",\"color\":[";
+  for (size_t i = 0; i < 4; ++i) {
+    if (i) out << ',';
+    out << unsigned(line.Color[i]);
+  }
+  out << "]}";
 }
 struct UiBlitRenderer {
-  GLuint Program = 0, Vertex = 0, Fragment = 0, Vao = 0, Buffer = 0;
-  GLint Tint = -1, Solid = -1, AlphaMode = -1;
-  GLint FilterMode = -1, FilterValue = -1, Glyph = -1, AlphaGlyph = -1;
-  GLint ColoredRule = -1, ImageRule = -1, RuleValue = -1;
-  struct BoundTexture {
-    GLuint Handle;
-    uint32_t Width, Height;
-  };
+  using BoundTexture = SceneTexture;
   std::map<ProfileTextureKey, BoundTexture> Textures;
-  static GLuint Compile(GLenum type, const char* source) {
-    const auto shader = glCreateShader(type);
-    glShaderSource(shader, 1, &source, nullptr);
-    glCompileShader(shader);
-    GLint ok = 0;
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
-    if (!ok) {
-      char log[1024]{};
-      glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
-      glDeleteShader(shader);
-      throw FormatError(std::string("UI shader: ") + log);
-    }
-    return shader;
+  Scene2D& Gpu() const { return *ViewerWindow::Gpu; }
+  void SetFilter(int32_t mode, float value) { Gpu().SetFilter(mode, value); }
+  void SetAlpha(int mode) { Gpu().SetAlphaTest(mode); }
+  void ResetTests() {
+    Gpu().SetAlphaTest(0);
+    Gpu().SetDepthTest(5, false);
+    Gpu().SetStencil(0);
   }
-  explicit UiBlitRenderer(const char* referenceFragment = nullptr) {
-    try {
-      Vertex = Compile(GL_VERTEX_SHADER, R"GLSL(#version 330
-layout(location=0) in vec2 position;
-layout(location=1) in vec2 uv;
-out vec2 texturePosition;
-void main(){texturePosition=uv;gl_Position=vec4(position.x/480.0-1.0,1.0-position.y/272.0,0.0,1.0);}
-)GLSL");
-      Fragment = Compile(GL_FRAGMENT_SHADER, referenceFragment ? referenceFragment : R"GLSL(#version 330
-#extension GL_ARB_shading_language_packing : require
-#extension GL_ARB_gpu_shader5 : require
-in vec2 texturePosition;
-uniform sampler2D image;
-uniform sampler2D ruleMask;
-uniform vec4 tint;
-uniform bool solid;
-uniform int alphaMode;
-uniform int filterMode;
-uniform float filterValue;
-uniform bool glyph;
-uniform bool alphaGlyph;
-uniform bool coloredRule;
-uniform bool imageRule;
-uniform float ruleValue;
-out vec4 outputColor;
-// Original image-rule GXP arithmetic; preserve its packed register stores.
-vec4 pa[32],sa[32],internals[3];
-float pack2xF16(vec2 _240)
-{
-    return uintBitsToFloat(packHalf2x16(_240));
-}
-
-void primary_program()
-{
-    vec2 _162 = vec2(pa[1].x, pa[1].y);
-    vec2 _170 = vec2(pa[1].z, pa[1].w);
-    internals[0] = vec4(_162.x, _162.y, _170.x, _170.y);
-    internals[0] = pa[0] * internals[0];
-    vec4 _201 = internals[1];
-    _201.x = sa[0].x + pa[2].w;
-    internals[1] = _201;
-    vec4 _215 = internals[1];
-    _215.x = min(internals[1].x, sa[0].z);
-    internals[1] = _215;
-    vec4 _224 = internals[1];
-    _224.x = max(internals[1].x, 0.0);
-    internals[1] = _224;
-    vec4 _235 = vec4(1.0, 1.0, 1.0, internals[1].x) * internals[0];
-    vec2 _251 = vec2(pack2xF16(vec2(_235.x, _235.y)), pack2xF16(vec2(_235.z, _235.w)));
-    pa[0] = vec4(_251.x, _251.y, pa[0].z, pa[0].w);
-}
-
-vec2 unpack2xF16(float _116)
-{
-    return unpackHalf2x16(floatBitsToUint(_116));
-}
-
-void frag_output_finalize()
-{
-    vec2 _113 = vec2(pa[0].x, pa[0].y);
-    vec2 _122 = unpack2xF16(_113.x);
-    vec2 _124 = unpack2xF16(_113.y);
-    outputColor = vec4(_122.x, _122.y, _124.x, _124.y);
-}
-
-void main(){
-  outputColor=solid?tint:texture(image,texturePosition)*tint;
-  // Native rectangles and glyphs use independent fragment programs.
-  if(alphaGlyph){
-    // Original GXP8025729c: the generated A8 atlas supplies coverage only.
-    // Multiplying interpolated RGB introduces dark edges on colored text.
-    vec4 result=tint*vec4(1.0,1.0,1.0,texture(image,texturePosition).a);
-    outputColor=vec4(unpackHalf2x16(packHalf2x16(result.xy)),unpackHalf2x16(packHalf2x16(result.zw)));
-  }else if(imageRule){
-    sa[0]=vec4(ruleValue,0.0,1.0,0.0);
-    pa[0]=tint;pa[1]=texture(image,texturePosition);pa[2]=texture(ruleMask,texturePosition);
-    primary_program();frag_output_finalize();
-  }else if(coloredRule){
-    vec4 result=vec4(tint.rgb,clamp(texture(image,texturePosition).a+ruleValue,0.0,1.0));
-    outputColor=vec4(unpackHalf2x16(packHalf2x16(result.xy)),unpackHalf2x16(packHalf2x16(result.zw)));
-  }else if(filterMode==1 && !solid && !glyph){
-    float value=clamp(filterValue,0.0,1.0);
-    float luminance=dot(vec3(0.298911988735199,0.5866109728813171,0.11447799950838089),outputColor.rgb);
-    float weighted=value*luminance;
-    vec3 base=outputColor.rgb*(1.0-value);
-    vec3 rgb=fma(vec3(weighted),vec3(0.9411764740943909,0.7843137383460999,0.5686274766921997),base);
-    vec4 result=tint*vec4(rgb,outputColor.a);
-    outputColor=vec4(unpackHalf2x16(packHalf2x16(result.xy)),unpackHalf2x16(packHalf2x16(result.zw)));
-  }
-  if((alphaMode==6 && outputColor.a<=0.0)||(alphaMode==3 && outputColor.a==0.0))discard;
-}
-)GLSL");
-      Program = glCreateProgram();
-      glAttachShader(Program, Vertex);
-      glAttachShader(Program, Fragment);
-      glLinkProgram(Program);
-      GLint ok = 0;
-      glGetProgramiv(Program, GL_LINK_STATUS, &ok);
-      if (!ok) throw FormatError("UI shader program link failed");
-      glDeleteShader(Vertex);
-      Vertex = 0;
-      glDeleteShader(Fragment);
-      Fragment = 0;
-      glGenVertexArrays(1, &Vao);
-      glGenBuffers(1, &Buffer);
-      glBindVertexArray(Vao);
-      glBindBuffer(GL_ARRAY_BUFFER, Buffer);
-      glBufferData(GL_ARRAY_BUFFER, 24 * sizeof(float), nullptr,
-                   GL_DYNAMIC_DRAW);
-      glEnableVertexAttribArray(0);
-      glEnableVertexAttribArray(1);
-      glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
-                            nullptr);
-      glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
-                            reinterpret_cast<void*>(2 * sizeof(float)));
-      glUseProgram(Program);
-      glUniform1i(glGetUniformLocation(Program, "image"), 0);
-      glUniform1i(glGetUniformLocation(Program, "ruleMask"), 1);
-      Tint = glGetUniformLocation(Program, "tint");
-      Solid = glGetUniformLocation(Program, "solid");
-      AlphaMode = glGetUniformLocation(Program, "alphaMode");
-      FilterMode = glGetUniformLocation(Program, "filterMode");
-      FilterValue = glGetUniformLocation(Program, "filterValue");
-      Glyph = glGetUniformLocation(Program, "glyph");
-      AlphaGlyph = glGetUniformLocation(Program, "alphaGlyph");
-      ColoredRule = glGetUniformLocation(Program, "coloredRule");
-      ImageRule = glGetUniformLocation(Program, "imageRule");
-      RuleValue = glGetUniformLocation(Program, "ruleValue");
-      GlCheck("UI renderer initialization");
-    } catch (...) {
-      Release();
-      throw;
-    }
-  }
-  void SetFilter(int32_t mode, float value) {
-    if (mode != 0 && mode != 1)
-      throw UnsupportedCommand("scene screen filter mode is not bound");
-    if (!std::isfinite(value)) throw FormatError("nonfinite scene filter intensity");
-    glUniform1i(FilterMode, mode);
-    glUniform1f(FilterValue, std::clamp(value, 0.0f, 1.0f));
-  }
+  void Bind() { Gpu().Bind(); }
   void Upload(ProfileTextureKey key, const ImagePixels& pixels) {
     if (Textures.contains(key))
       throw FormatError("duplicate UI texture binding");
-    GLuint handle = 0;
-    glGenTextures(1, &handle);
-    Textures.emplace(key, BoundTexture{handle, pixels.Width, pixels.Height});
-    glBindTexture(GL_TEXTURE_2D, handle);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, pixels.Width, pixels.Height, 0,
-                 GL_RGBA, GL_UNSIGNED_BYTE, pixels.Rgba.data());
-    GlCheck("profile UI texture upload");
-  }
-  void UploadSlotThumbnail(uint32_t slot,const SlotThumbnail& thumbnail) {
-    if(slot>=NativeSlotData::SlotCount || thumbnail.Format!=4 || thumbnail.Pixels.size()!=192*108*2)
-      throw FormatError("invalid slot thumbnail surface");
-    const ProfileTextureKey key{ProfileTextureSection::SlotThumbnail,-1,slot};
-    if(Textures.contains(key))throw FormatError("slot thumbnail is owned by another screen");
-    GLuint handle=0;glGenTextures(1,&handle);
+    const auto id = Impacto::Renderer->SubmitTexture(
+        TexFmt_RGBA, const_cast<uint8_t*>(pixels.Rgba.data()), pixels.Width,
+        pixels.Height);
     try {
-      glBindTexture(GL_TEXTURE_2D,handle);
-      // Native b5b9e assembly: linear192x108, one mip, LINEAR min/mag.
-      // InitLinear's default U/V mode is CLAMP. Native source rectangles can
-      // extend one pixel past width; retain them and clamp the actual sampler.
-      glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
-      glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
-      glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
-      glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
-      // GXM05001000 U5U6U5_RGB: GL565 plus the GXM RGB swizzle.
-      // Keep packed precision, including during bilinear filtering.
-      const GLint swizzle[]={GL_BLUE,GL_GREEN,GL_RED,GL_ONE};
-      glTexParameteriv(GL_TEXTURE_2D,GL_TEXTURE_SWIZZLE_RGBA,swizzle);
-      glPixelStorei(GL_UNPACK_ALIGNMENT,2);
-      glPixelStorei(GL_UNPACK_ROW_LENGTH,0);
-      glPixelStorei(GL_UNPACK_SWAP_BYTES,GL_FALSE);
-      glTexImage2D(GL_TEXTURE_2D,0,GL_RGB565,192,108,0,GL_RGB,
-                   GL_UNSIGNED_SHORT_5_6_5,thumbnail.Pixels.data());
-      GlCheck("packed slot thumbnail upload");
-      Textures.emplace(key,BoundTexture{handle,192,108});
-    }catch(...){glDeleteTextures(1,&handle);throw;}
+      Impacto::Renderer->ConfigureTextureSampling(id,
+                                                  TextureSampling::LinearClamp);
+      Textures.emplace(key, BoundTexture{id, pixels.Width, pixels.Height});
+    } catch (...) {
+      Impacto::Renderer->FreeTexture(id);
+      throw;
+    }
+  }
+  void UploadSlotThumbnail(uint32_t slot, const SlotThumbnail& thumbnail) {
+    if (slot >= NativeSlotData::SlotCount || thumbnail.Format != 4 ||
+        thumbnail.Pixels.size() != 192 * 108 * 2)
+      throw FormatError("invalid slot thumbnail surface");
+    const ProfileTextureKey key{ProfileTextureSection::SlotThumbnail, -1, slot};
+    if (Textures.contains(key))
+      throw FormatError("slot thumbnail is owned by another screen");
+    const auto id = Impacto::Renderer->SubmitTexture(
+        TexFmt_RGB565LowRed, const_cast<uint8_t*>(thumbnail.Pixels.data()), 192,
+        108);
+    try {
+      Impacto::Renderer->ConfigureTextureSampling(id,
+                                                  TextureSampling::LinearClamp);
+      Textures.emplace(key, BoundTexture{id, 192, 108});
+    } catch (...) {
+      Impacto::Renderer->FreeTexture(id);
+      throw;
+    }
   }
   void Draw(std::span<const UiSpriteBlit> blits, int width, int height,
             std::span<const UiRenderCommand> commands = {}) {
     if (width <= 0 || height <= 0) return;
-    glViewport(0, 0, width, height);
-    // ScenarioGameWrapper::Draw (8003110e) clears RGBA ffffffff before HUD drawing.
-    // The native chapter loader capture also observes this clear, before 800764e4.
-    glClearColor(1, 1, 1, 1);
-    glDisable(GL_SCISSOR_TEST);
-    glDisable(GL_STENCIL_TEST);
-    glStencilMask(0xff);
-    glDepthMask(GL_TRUE);
-    glClearDepth(1);
-    glClearStencil(0);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    ViewerWindow::BeginFrame();
+    Gpu().SetViewport({0, 0, width, height});
+    Gpu().Clear({1, 1, 1, 1});
     const auto scale = std::min(float(width) / 960, float(height) / 544);
     const int w = int(960 * scale), h = int(544 * scale);
-    glViewport((width - w) / 2, (height - h) / 2, w, h);
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);
-    glDisable(GL_SCISSOR_TEST);
-    glDisable(GL_FRAMEBUFFER_SRGB);
-    glEnable(GL_BLEND);
-    glBlendEquation(GL_FUNC_ADD);
-    // Same normal sprite blend policy as Impacto's OpenGL renderer.
-    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE);
-    glUseProgram(Program);
-    glBindVertexArray(Vao);
-    glBindBuffer(GL_ARRAY_BUFFER, Buffer);
-    glActiveTexture(GL_TEXTURE0);
-    glUniform1i(AlphaMode, 0);
-    SetFilter(0, 0.0f);
+    Gpu().SetViewport({(width - w) / 2, (height - h) / 2, w, h});
+    Bind();
     for (const auto& blit : blits)
       DrawQuad(blit, Textures.at(blit.Texture), false);
     Execute(commands);
   }
   void Execute(std::span<const UiRenderCommand> commands) {
-    if (!commands.empty()) {
-      GLint bits = 0;
-      glGetIntegerv(GL_STENCIL_BITS, &bits);
-      if (bits < 8)
-        throw FormatError(
-            "profile item pass requires an eight-bit stencil buffer");
-    }
-    for (const auto& command : commands) {
-      switch (command.Kind) {
+    for (const auto& command : commands) switch (command.Kind) {
         case UiRenderKind::ResetDepthStencilBackground:
-          glClearDepth(1);
-          glClearStencil(0);
-          break;
+          break;  // Clear values are fixed at frame start.
         case UiRenderKind::Stencil:
-          if (command.Mode == 0) {
-            glDisable(GL_STENCIL_TEST);
-          } else if (command.Mode >= 1 && command.Mode <= 3) {
-            glEnable(GL_STENCIL_TEST);
-            glStencilMask(0xff);
-            glStencilFunc(command.Mode == 3 ? GL_EQUAL : GL_ALWAYS,
-                          command.Mode == 1 ? 1 : 0, 0xff);
-            glStencilOp(GL_KEEP, command.Mode == 3 ? GL_KEEP : GL_REPLACE,
-                        command.Mode == 3 ? GL_KEEP : GL_REPLACE);
-          } else
-            throw UnsupportedCommand("unknown profile stencil mode");
+          Gpu().SetStencil(command.Mode);
           break;
         case UiRenderKind::AlphaTest:
           if (command.Mode != 3 && command.Mode != 6)
             throw UnsupportedCommand("unsupported profile alpha comparison");
-          glUniform1i(AlphaMode, command.TestEnabled.value_or(true)?command.Mode:0);
+          SetAlpha(command.TestEnabled.value_or(true) ? command.Mode : 0);
           break;
         case UiRenderKind::DepthTest:
-          if (command.Mode != 0 && command.Mode != 5)
-            throw UnsupportedCommand("unsupported profile depth comparison");
-          if(command.TestEnabled.value_or(true)) {
-            glEnable(GL_DEPTH_TEST);glDepthMask(GL_TRUE);
-            glDepthFunc(command.Mode == 0 ? GL_NEVER : GL_LEQUAL);
-          } else {
-            glDisable(GL_DEPTH_TEST);glDepthMask(GL_FALSE);glDepthFunc(GL_ALWAYS);
-          }
+          Gpu().SetDepthTest(command.Mode, command.TestEnabled.value_or(true));
           break;
         case UiRenderKind::Rectangle: {
           UiSpriteBlit solid;
@@ -741,204 +548,192 @@ void main(){
           DrawQuad(command.Sprite, Textures.at(command.Sprite.Texture), false);
           break;
       }
-    }
-    GlCheck("profile UI drawing");
   }
   void DrawQuad(const UiSpriteBlit& blit, const BoundTexture& texture,
                 bool solid, bool glyph = false,
-                std::optional<float> coloredRule = {},const BoundTexture* ruleMask=nullptr,bool alphaGlyph=false) {
+                std::optional<float> coloredRule = {},
+                const BoundTexture* ruleMask = nullptr,
+                bool alphaGlyph = false) {
     if (coloredRule && !std::isfinite(*coloredRule))
       throw FormatError("nonfinite rule shader value");
-    glUniform1i(Solid, solid ? 1 : 0);
-    glUniform1i(Glyph, glyph ? 1 : 0);
-    glUniform1i(AlphaGlyph, alphaGlyph ? 1 : 0);
-    glUniform1i(ColoredRule, coloredRule.has_value() && !ruleMask ? 1 : 0);
-    glUniform1i(ImageRule, ruleMask ? 1 : 0);
-    glUniform1f(RuleValue, coloredRule.value_or(0.0f));
-    auto quad = ResolveUiQuad(blit, texture.Width, texture.Height);
-    if(alphaGlyph) {
-      // Gxm_DrawGlyphQuad starts at texel centers; the far source boundary
-      // remains (source+extent)/textureSize, as in800c2756..800c27c6.
-      for(auto corner:{0u,2u})quad[corner][2]+=0.5f/float(texture.Width);
-      for(auto corner:{0u,1u})quad[corner][3]+=0.5f/float(texture.Height);
+    SceneQuad q;
+    q.Vertices = ResolveUiQuad(blit, texture.Width, texture.Height);
+    q.Color = blit.Color;
+    q.Solid = solid;
+    q.Glyph = glyph;
+    q.AlphaGlyph = alphaGlyph;
+    q.ColoredRule = coloredRule.has_value() && !ruleMask;
+    q.ImageRule = ruleMask != nullptr;
+    q.RuleValue = coloredRule.value_or(0);
+    if (alphaGlyph) {
+      for (auto c : {0u, 2u}) q.Vertices[c][2] += .5f / texture.Width;
+      for (auto c : {0u, 1u}) q.Vertices[c][3] += .5f / texture.Height;
     }
-    std::array<float, 24> vertices;
-    constexpr std::array<size_t, 6> corners{0, 1, 2, 2, 1, 3};
-    for (size_t i = 0; i < corners.size(); ++i)
-      std::copy(quad[corners[i]].begin(), quad[corners[i]].end(),
-                vertices.begin() + i * 4);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices.data());
-    if(ruleMask) {
-      glActiveTexture(GL_TEXTURE1);glBindTexture(GL_TEXTURE_2D,ruleMask->Handle);
-    }
-    glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D, texture.Handle);
-    glUniform4f(Tint, blit.Color[0] / 255.0f, blit.Color[1] / 255.0f,
-                blit.Color[2] / 255.0f, blit.Color[3] / 255.0f);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
+    if (texture.Flipped)
+      for (auto& v : q.Vertices) v[3] = 1.f - v[3];
+    Gpu().DrawQuad(q, texture, ruleMask ? *ruleMask : BoundTexture{});
   }
-  void Release() {
-    for (const auto& [key, texture] : Textures) {
-      (void)key;
-      glDeleteTextures(1, &texture.Handle);
-    }
-    Textures.clear();
-    if (Buffer) glDeleteBuffers(1, &Buffer);
-    if (Vao) glDeleteVertexArrays(1, &Vao);
-    if (Program) glDeleteProgram(Program);
-    if (Vertex) glDeleteShader(Vertex);
-    if (Fragment) glDeleteShader(Fragment);
-    Buffer = Vao = Program = Vertex = Fragment = 0;
+  ~UiBlitRenderer() {
+    for (const auto& [key, t] : Textures)
+      Impacto::Renderer->FreeTexture(t.Handle);
   }
-  ~UiBlitRenderer() { Release(); }
 };
 class PcSlotThumbnails {
  public:
-  PcSlotThumbnails(UiBlitRenderer& renderer,std::span<const NativeSlotRecord> records):renderer_(renderer){
-    if(records.size()>NativeSlotData::SlotCount)throw FormatError("too many slot thumbnail records");
-    try{
-      for(size_t i=0;i<records.size();++i)if(records[i].Thumbnail){
-        const ProfileTextureKey key{ProfileTextureSection::SlotThumbnail,-1,uint32_t(i)};
-        // Reserve ownership before upload so allocation failure also rolls back.
-        keys_.push_back(key);
-        try{renderer_.UploadSlotThumbnail(uint32_t(i),*records[i].Thumbnail);}
-        catch(...){keys_.pop_back();throw;}
-      }
-    }catch(...){Release();throw;}
+  PcSlotThumbnails(UiBlitRenderer& renderer,
+                   std::span<const NativeSlotRecord> records)
+      : renderer_(renderer) {
+    if (records.size() > NativeSlotData::SlotCount)
+      throw FormatError("too many slot thumbnail records");
+    try {
+      for (size_t i = 0; i < records.size(); ++i)
+        if (records[i].Thumbnail) {
+          const ProfileTextureKey key{ProfileTextureSection::SlotThumbnail, -1,
+                                      uint32_t(i)};
+          // Reserve ownership before upload so allocation failure also rolls
+          // back.
+          keys_.push_back(key);
+          try {
+            renderer_.UploadSlotThumbnail(uint32_t(i), *records[i].Thumbnail);
+          } catch (...) {
+            keys_.pop_back();
+            throw;
+          }
+        }
+    } catch (...) {
+      Release();
+      throw;
+    }
   }
-  PcSlotThumbnails(const PcSlotThumbnails&)=delete;
-  PcSlotThumbnails& operator=(const PcSlotThumbnails&)=delete;
-  ~PcSlotThumbnails(){Release();}
-  size_t Size()const{return keys_.size();}
-  void Replace(uint32_t slot,const std::optional<SlotThumbnail>& thumbnail) {
-    const ProfileTextureKey key{ProfileTextureSection::SlotThumbnail,-1,slot};
-    const auto owned=std::find(keys_.begin(),keys_.end(),key);
-    if(owned!=keys_.end()) {
-      if(const auto it=renderer_.Textures.find(key);it!=renderer_.Textures.end()) {
-        glDeleteTextures(1,&it->second.Handle);renderer_.Textures.erase(it);
+  PcSlotThumbnails(const PcSlotThumbnails&) = delete;
+  PcSlotThumbnails& operator=(const PcSlotThumbnails&) = delete;
+  ~PcSlotThumbnails() { Release(); }
+  size_t Size() const { return keys_.size(); }
+  void Replace(uint32_t slot, const std::optional<SlotThumbnail>& thumbnail) {
+    const ProfileTextureKey key{ProfileTextureSection::SlotThumbnail, -1, slot};
+    const auto owned = std::find(keys_.begin(), keys_.end(), key);
+    if (owned != keys_.end()) {
+      if (const auto it = renderer_.Textures.find(key);
+          it != renderer_.Textures.end()) {
+        Impacto::Renderer->FreeTexture(it->second.Handle);
+        renderer_.Textures.erase(it);
       }
       keys_.erase(owned);
     }
-    if(thumbnail) {
+    if (thumbnail) {
       keys_.push_back(key);
-      try{renderer_.UploadSlotThumbnail(slot,*thumbnail);}
-      catch(...){keys_.pop_back();throw;}
+      try {
+        renderer_.UploadSlotThumbnail(slot, *thumbnail);
+      } catch (...) {
+        keys_.pop_back();
+        throw;
+      }
     }
   }
+
  private:
-  void Release(){
-    for(const auto& key:keys_)if(const auto it=renderer_.Textures.find(key);it!=renderer_.Textures.end()){
-      glDeleteTextures(1,&it->second.Handle);renderer_.Textures.erase(it);
-    }
+  void Release() {
+    for (const auto& key : keys_)
+      if (const auto it = renderer_.Textures.find(key);
+          it != renderer_.Textures.end()) {
+        Impacto::Renderer->FreeTexture(it->second.Handle);
+        renderer_.Textures.erase(it);
+      }
     keys_.clear();
   }
-  UiBlitRenderer& renderer_;std::vector<ProfileTextureKey> keys_;
+  UiBlitRenderer& renderer_;
+  std::vector<ProfileTextureKey> keys_;
 };
 struct ParticleGlRenderer {
   const ParticleManager* TextureOwner = nullptr;
   uint64_t TextureGeneration = 0;
-  std::map<size_t,UiBlitRenderer::BoundTexture> Textures;
-  GLuint Vao = 0, Buffer = 0;
-  std::array<GLuint,7> Programs{};
-  ParticleGlRenderer() {
-    glGenVertexArrays(1,&Vao);glGenBuffers(1,&Buffer);
-  }
-  ~ParticleGlRenderer() {
-    ResetTextures();
-    for (auto program : Programs) if (program) glDeleteProgram(program);
-    if (Buffer) glDeleteBuffers(1,&Buffer);
-    if (Vao) glDeleteVertexArrays(1,&Vao);
-  }
+  std::map<size_t, SceneTexture> Textures;
   void ResetTextures() {
-    for (const auto& [index,texture] : Textures) glDeleteTextures(1,&texture.Handle);
-    Textures.clear(); TextureOwner=nullptr;
+    for (const auto& [i, t] : Textures)
+      Impacto::Renderer->FreeTexture(t.Handle);
+    Textures.clear();
+    TextureOwner = nullptr;
   }
-  const UiBlitRenderer::BoundTexture& Texture(const ParticleManager& manager,size_t index) {
-    if (TextureOwner!=&manager || TextureGeneration!=manager.ResourceGeneration()) {
-      ResetTextures();TextureOwner=&manager;TextureGeneration=manager.ResourceGeneration();
+  ~ParticleGlRenderer() { ResetTextures(); }
+  const SceneTexture& Texture(const ParticleManager& manager, size_t index) {
+    if (TextureOwner != &manager ||
+        TextureGeneration != manager.ResourceGeneration()) {
+      ResetTextures();
+      TextureOwner = &manager;
+      TextureGeneration = manager.ResourceGeneration();
     }
-    if (const auto found=Textures.find(index);found!=Textures.end()) return found->second;
-    ScopedSdkGlState scope;
-    const auto pixels=DecodeSceneImage(manager.TextureData(index)); GLuint handle=0;glGenTextures(1,&handle);
-    const auto found=Textures.emplace(index,UiBlitRenderer::BoundTexture{handle,pixels.Width,pixels.Height}).first;
-    glBindTexture(GL_TEXTURE_2D,handle);
-    // Original b5cb2's final setters: LINEAR min/mag and CLAMP U/V.
-    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
-    glPixelStorei(GL_UNPACK_ALIGNMENT,4);
-    glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,pixels.Width,pixels.Height,0,GL_RGBA,GL_UNSIGNED_BYTE,pixels.Rgba.data());
-    GlCheck("particle GXT upload");return found->second;
+    if (const auto it = Textures.find(index); it != Textures.end())
+      return it->second;
+    const auto pixels = DecodeSceneImage(manager.TextureData(index));
+    const auto id = Impacto::Renderer->SubmitTexture(
+        TexFmt_RGBA, const_cast<uint8_t*>(pixels.Rgba.data()), pixels.Width,
+        pixels.Height);
+    try {
+      Impacto::Renderer->ConfigureTextureSampling(id,
+                                                  TextureSampling::LinearClamp);
+      return Textures
+          .emplace(index, SceneTexture{id, pixels.Width, pixels.Height})
+          .first->second;
+    } catch (...) {
+      Impacto::Renderer->FreeTexture(id);
+      throw;
+    }
   }
-  size_t DrawGroup(const ParticleManager& manager,size_t group,float opacity,
-      const ParticleProjectionUniforms& projection,const ParticleFragmentState& fragment,
-      const ParticleRasterViewport& viewport) {
-    std::vector<std::array<uint32_t,2>> sizes(manager.TextureOrder().size());
-    for (const bool batched : {true,false}) for (const auto& source : manager.CollectDrawSources(group,batched)) {
-      if (!source.Particle->Birth.Flags[0] || !source.TextureIndex) continue;
-      const auto index=*source.TextureIndex;const auto& texture=Texture(manager,index);
-      sizes[index]={texture.Width,texture.Height};
-    }
-    const auto draws=manager.BuildDrawCommands(group,sizes,opacity);
+  size_t DrawGroup(const ParticleManager& manager, size_t group, float opacity,
+                   const ParticleProjectionUniforms& projection,
+                   const ParticleFragmentState& fragment,
+                   const ParticleRasterViewport& viewport) {
+    std::vector<std::array<uint32_t, 2>> sizes(manager.TextureOrder().size());
+    for (const bool batched : {true, false})
+      for (const auto& source : manager.CollectDrawSources(group, batched)) {
+        if (!source.Particle->Birth.Flags[0] || !source.TextureIndex) continue;
+        const auto index = *source.TextureIndex;
+        const auto& texture = Texture(manager, index);
+        sizes[index] = {texture.Width, texture.Height};
+      }
+    const auto draws = manager.BuildDrawCommands(group, sizes, opacity);
     for (const auto& draw : draws) {
-      if (draw.Batched) throw UnsupportedCommand("batched particle GPU submission is not bound");
-      const auto& texture=Texture(manager,draw.TextureIndex);
-      Draw(draw.Packet,texture.Handle,texture.Width,texture.Height,projection,fragment,viewport);
+      if (draw.Batched)
+        throw UnsupportedCommand(
+            "batched particle GPU submission is not bound");
+      const auto& t = Texture(manager, draw.TextureIndex);
+      Draw(draw.Packet, t.Handle, t.Width, t.Height, projection, fragment,
+           viewport);
     }
     return draws.size();
   }
-  GLuint Program(uint32_t family) {
-    if (family >= Programs.size()) throw FormatError("unknown particle fragment family");
-    if (Programs[family]) return Programs[family];
-    const auto vertex = UiBlitRenderer::Compile(GL_VERTEX_SHADER,ParticleMode0RasterVertexShader);
-    GLuint fragment = 0, program = 0;
-    try {
-      fragment=UiBlitRenderer::Compile(GL_FRAGMENT_SHADER,ParticleSceneFragmentShaders[family]);
-      program=glCreateProgram();glAttachShader(program,vertex);glAttachShader(program,fragment);
-      glLinkProgram(program);GLint linked=0;glGetProgramiv(program,GL_LINK_STATUS,&linked);
-      if (!linked) { char log[1024]{};glGetProgramInfoLog(program,sizeof(log),nullptr,log);throw FormatError(log); }
-    } catch (...) {
-      if (program) glDeleteProgram(program);if (fragment) glDeleteShader(fragment);glDeleteShader(vertex);throw;
-    }
-    glDeleteShader(vertex);glDeleteShader(fragment);Programs[family]=program;return program;
-  }
-  void Draw(const ParticleDrawPacket& packet, GLuint texture, uint32_t textureWidth,
-            uint32_t textureHeight, const ParticleProjectionUniforms& projection,
-            const ParticleFragmentState& fragment, const ParticleRasterViewport& viewport) {
-    if (packet.RenderMode != 0) throw UnsupportedCommand("particle shader mode is not implemented");
-    if (!texture) throw FormatError("particle draw has no texture");
-    if (!(viewport.TargetSize[0]>0) || !(viewport.TargetSize[1]>0))
-      throw FormatError("particle target size is invalid");
-    // Native98c8's mode0 reset supersedes the earlier intensity filter setup.
-    // Keep the PC UI's physical pipeline intact; logical native state is owned
-    // separately by the scene. This scope does not touch the target framebuffer.
-    ScopedSdkGlState scope;
-    const auto program=Program(fragment.AlphaFamily);glUseProgram(program);
-    const auto uniforms=projection.Pack();
-    glUniform4fv(glGetUniformLocation(program,"nativeUniforms"),13,uniforms.data());
-    glUniform4fv(glGetUniformLocation(program,"nativeViewportFlip"),1,viewport.Flip.data());
-    glUniform2fv(glGetUniformLocation(program,"nativeTargetSize"),1,viewport.TargetSize.data());
-    glUniform1f(glGetUniformLocation(program,"viewportEnabled"),viewport.Enabled);
-    glUniform1f(glGetUniformLocation(program,"nativeDepthOffset"),viewport.DepthOffset);
-    glUniform1f(glGetUniformLocation(program,"nativeDepthScale"),viewport.DepthScale);
-    glUniform1i(glGetUniformLocation(program,"presentToPc"),viewport.PresentToPc);
-    glUniform1i(glGetUniformLocation(program,"image"),0);
-    ApplyParticleFragmentState(fragment,program);
-    glDisable(GL_CULL_FACE);glDisable(GL_DEPTH_TEST);glDepthMask(GL_FALSE);
-    glDisable(GL_FRAMEBUFFER_SRGB);
-    glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,texture);
-    const auto vertices=BuildParticleQuad(packet,textureWidth,textureHeight);
-    glBindVertexArray(Vao);glBindBuffer(GL_ARRAY_BUFFER,Buffer);
-    glBufferData(GL_ARRAY_BUFFER,sizeof(vertices),vertices.data(),GL_STREAM_DRAW);
-    constexpr GLint components[]{3,4,2,3,3};constexpr size_t offsets[]{0,12,16,24,36};
-    for (GLuint index=0;index<5;++index) {
-      glEnableVertexAttribArray(index);
-      glVertexAttribPointer(index,components[index],index==1?GL_UNSIGNED_BYTE:GL_FLOAT,
-          index==1?GL_TRUE:GL_FALSE,sizeof(ParticleVertex),reinterpret_cast<void*>(offsets[index]));
-    }
-    glDrawArrays(GL_TRIANGLE_STRIP,0,4);GlCheck("particle raster drawing");
+  void Draw(const ParticleDrawPacket& packet, uint32_t texture, uint32_t width,
+            uint32_t height, const ParticleProjectionUniforms& projection,
+            const ParticleFragmentState& fragment,
+            const ParticleRasterViewport& viewport) {
+    if (packet.RenderMode != 0)
+      throw UnsupportedCommand("particle shader mode is not implemented");
+    if (!texture || !(viewport.TargetSize[0] > 0) ||
+        !(viewport.TargetSize[1] > 0))
+      throw FormatError("invalid particle target");
+    const auto source = BuildParticleQuad(packet, width, height);
+    std::array<SceneParticleVertex, 4> vertices;
+    for (size_t i = 0; i < 4; ++i)
+      vertices[i] = {source[i].LocalPosition, source[i].Rgba, source[i].Uv,
+                     source[i].Position, source[i].Angles};
+    const auto b = ParticleBlend(fragment.BlendIndex);
+    SceneParticleUniforms uniforms{
+        projection.Pack(),
+        viewport.Flip,
+        viewport.TargetSize,
+        viewport.Enabled,
+        viewport.DepthOffset,
+        viewport.DepthScale,
+        fragment.AlphaThreshold,
+        viewport.PresentToPc,
+        fragment.AlphaFamily,
+        {b.Enabled, b.ColorSource, b.ColorDestination, b.AlphaSource,
+         b.AlphaDestination}};
+    ViewerWindow::Gpu->DrawParticles(vertices, {texture, width, height},
+                                     uniforms);
   }
 };
+#include "../../renderer/opengl/scene2dreference.inc"
 struct FontTextures {
   std::map<std::pair<bool, uint32_t>, UiBlitRenderer::BoundTexture> Textures;
   const UiBlitRenderer::BoundTexture& Get(bool bitmap, uint32_t id,
@@ -946,28 +741,24 @@ struct FontTextures {
     const auto key = std::pair{bitmap, id};
     if (const auto found = Textures.find(key); found != Textures.end())
       return found->second;
-    GLuint handle = 0;
-    glGenTextures(1, &handle);
+    const auto handle = Impacto::Renderer->SubmitTexture(
+        TexFmt_RGBA, const_cast<uint8_t*>(pixels.Rgba.data()), pixels.Width,
+        pixels.Height);
     const auto inserted = Textures.emplace(
         key, UiBlitRenderer::BoundTexture{handle, pixels.Width, pixels.Height});
-    glBindTexture(GL_TEXTURE_2D, handle);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, pixels.Width, pixels.Height, 0,
-                 GL_RGBA, GL_UNSIGNED_BYTE, pixels.Rgba.data());
-    GlCheck("font texture upload");
+    Impacto::Renderer->ConfigureTextureSampling(handle,
+                                                TextureSampling::LinearClamp);
     return inserted.first->second;
   }
-  void DrawString(UiBlitRenderer& renderer, PcFontFace& font,
+  template <typename UiRenderer>
+  void DrawString(UiRenderer& renderer, PcFontFace& font,
                   std::u16string_view text, int32_t x, int32_t y, uint32_t size,
                   std::array<uint8_t, 4> color,
                   std::ostream* report = nullptr) {
     if (size > 1024) throw FormatError("PC text size outside display budget");
     for (const auto character : text) {
-      if (character == 0) break;  // Native DrawString consumes a UTF16 C string.
+      if (character == 0)
+        break;  // Native DrawString consumes a UTF16 C string.
       UiSpriteBlit blit;
       blit.Color = color;
       const auto cached = ResolveGsfGlyph(font.Cached(), character, x, y, size);
@@ -986,7 +777,8 @@ struct FontTextures {
         blit.Source = {0, 0, int32_t(pixels->Width), int32_t(pixels->Height)};
       }
       if (pixels) {
-        renderer.DrawQuad(blit, Get(bitmap, id, *pixels), false, true,{},nullptr,!bitmap);
+        renderer.DrawQuad(blit, Get(bitmap, id, *pixels), false, true, {},
+                          nullptr, !bitmap);
         if (report) {
           *report << "{\"character\":" << uint16_t(character)
                   << ",\"bitmap\":" << (bitmap ? "true" : "false")
@@ -1006,31 +798,22 @@ struct FontTextures {
       x = std::bit_cast<int32_t>(uint32_t(x) +
                                  PvfGlyphAdvance(character, size));
     }
-    GlCheck("font text drawing");
   }
   ~FontTextures() {
     for (const auto& [key, texture] : Textures) {
       (void)key;
-      glDeleteTextures(1, &texture.Handle);
+      Impacto::Renderer->FreeTexture(texture.Handle);
     }
   }
 };
 void Capture(const std::filesystem::path& file, int width, int height) {
-  std::vector<uint8_t> pixels(size_t(width) * size_t(height) * 4);
-  glPixelStorei(GL_PACK_ALIGNMENT, 4);
-  glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-  GlCheck("frame readback");
+  auto pixels = ViewerWindow::Gpu->ReadTarget(nullptr, {0, 0, width, height});
   size_t changed = 0;
   for (size_t i = 0; i < pixels.size(); i += 4)
     if (pixels[i] != 32 || pixels[i + 1] != 32 || pixels[i + 2] != 32)
       ++changed;
   if (changed < 100)
     throw std::runtime_error("model draw produced an empty frame");
-  const size_t row = size_t(width) * 4;
-  for (int y = 0; y < height / 2; ++y)
-    std::swap_ranges(pixels.begin() + size_t(y) * row,
-                     pixels.begin() + size_t(y + 1) * row,
-                     pixels.begin() + size_t(height - 1 - y) * row);
   std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> surface(
       SDL_CreateSurfaceFrom(width, height, SDL_PIXELFORMAT_RGBA32,
                             pixels.data(), width * 4),
@@ -1049,12 +832,13 @@ Bytes ReadGameFile(const std::filesystem::path& gameData,
 }
 // Shared PC title drawing consumer. Scene owners supply effects and overlay
 // services; an absent owner must reject its request rather than dropping it.
-void DrawTitleFrame(UiBlitRenderer& renderer,FontTextures& textures,PcFontFace& font,
-    const TitleEnvironment& env,std::span<const TitleDrawCommand> main,
-    std::span<const TitleOverlayCommand> overlay,int width,int height,
+void DrawTitleFrame(
+    UiBlitRenderer& renderer, FontTextures& textures, PcFontFace& font,
+    const TitleEnvironment& env, std::span<const TitleDrawCommand> main,
+    std::span<const TitleOverlayCommand> overlay, int width, int height,
     const std::function<void(uint32_t)>& effects,
     const std::function<void(const TitleOverlayCommand&)>& services,
-    std::ostream* sprites=nullptr,std::ostream* glyphs=nullptr){
+    std::ostream* sprites = nullptr, std::ostream* glyphs = nullptr) {
   const auto rectangle=[&](std::array<int32_t,4> geometry,std::array<uint8_t,4> color){
     UiSpriteBlit solid;solid.Destination=geometry;solid.Color=color;renderer.DrawQuad(solid,{0,1,1},true);
   };
@@ -1062,7 +846,7 @@ void DrawTitleFrame(UiBlitRenderer& renderer,FontTextures& textures,PcFontFace& 
     case TitleDrawKind::Clear:renderer.Draw({},width,height);break;
     case TitleDrawKind::Blend:
       if(c.Index!=1)throw UnsupportedCommand("unknown title blend mode");
-      glEnable(GL_BLEND);glBlendEquation(GL_FUNC_ADD);glBlendFuncSeparate(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA,GL_ONE,GL_ONE);break;
+      ViewerWindow::Gpu->SetBlend({});break;
     case TitleDrawKind::TransformReset:
       // UiBlitRenderer resolves each quad directly in logical960x544 space.
       // It retains no inherited native transform between these submissions.
@@ -1117,9 +901,9 @@ struct SceneDialogLayer {
   void Draw(const DialogState& modal,const std::u16string& prompt,const DialogContentLayout& layout,size_t group,
       std::array<uint8_t,4> overlayColor={0,0,0,90}) {
     if(!modal.Visible)return;
-    glUseProgram(Renderer.Program);glBindVertexArray(Renderer.Vao);glBindBuffer(GL_ARRAY_BUFFER,Renderer.Buffer);
-    glActiveTexture(GL_TEXTURE0);glDisable(GL_DEPTH_TEST);glDisable(GL_STENCIL_TEST);glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);glUniform1i(Renderer.AlphaMode,0);Renderer.SetFilter(0,0);
+    Renderer.Bind();
+    ViewerWindow::Gpu->SetBlend({});
+    ViewerWindow::Gpu->SetBlend({true,4,5,4,5});Renderer.SetAlpha(0);Renderer.SetFilter(0,0);
     const auto progress=modal.Opacity.Current;
     const auto frame=BuildDialogFrame(Environment,{480,272},layout.Width,layout.BodyHeight,progress,overlayColor);
     UiSpriteBlit overlay;overlay.Destination=frame.Overlay.Rectangle;overlay.Color=frame.Overlay.Color;
@@ -1256,11 +1040,9 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
   battleAssets.Upload=[&](const PreparedProfileTexture& texture){
     renderer.Upload(texture.Key,texture.Pixels);
     if(captureBattle) {
-      std::vector<uint8_t> actual(texture.Pixels.Rgba.size());GLint previousTexture=0;
-      glGetIntegerv(GL_TEXTURE_BINDING_2D,&previousTexture);
-      glBindTexture(GL_TEXTURE_2D,renderer.Textures.at(texture.Key).Handle);
-      glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_UNSIGNED_BYTE,actual.data());
-      glBindTexture(GL_TEXTURE_2D,GLuint(previousTexture));GlCheck("battle texture storage readback");
+      SpriteSheet sheet(float(texture.Pixels.Width),float(texture.Pixels.Height));
+      sheet.Texture=renderer.Textures.at(texture.Key).Handle;
+      const auto actual=Impacto::Renderer->GetSpriteSheetImage(sheet);
       if(actual!=texture.Pixels.Rgba)throw FormatError("battle texture upload differs from decoded source");
       ++battleUploadsChecked;
     }
@@ -1490,10 +1272,8 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
     if(renderer.Textures.contains(key))return;
     const auto pixels=DecodeSceneImage(resources.LoadProfileTexture(key).Data);upload(key,pixels);
     if(captureVersus || captureDialogue || captureSelection) {
-      std::vector<uint8_t> actual(pixels.Rgba.size());GLint previousTexture=0;
-      glGetIntegerv(GL_TEXTURE_BINDING_2D,&previousTexture);glBindTexture(GL_TEXTURE_2D,renderer.Textures.at(key).Handle);
-      glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_UNSIGNED_BYTE,actual.data());
-      glBindTexture(GL_TEXTURE_2D,GLuint(previousTexture));GlCheck("versus atlas storage readback");
+      SpriteSheet sheet(float(pixels.Width),float(pixels.Height));sheet.Texture=renderer.Textures.at(key).Handle;
+      const auto actual=Impacto::Renderer->GetSpriteSheetImage(sheet);
       if(actual!=pixels.Rgba)throw FormatError("versus atlas upload differs from decoded source");
       ++versusUploadsChecked;
     }
@@ -2412,7 +2192,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
           << ",\"ordinal\":" << mode->Selection().Ordinal << ",\"selector\":" << mode->Selection().Selectors.at(mode->Selection().Ordinal)
           << ",\"result_revealed\":" << profileServices.ResultText().Revealed << ",\"response_revealed\":" << profileServices.ResponseText().Revealed
           << ",\"voice_stopped\":" << profileVoice.Stopped() << "}\n";
-        SdlCheck(SDL_GL_SwapWindow(window.Window),"profile scene swap");
+        SdlCheck(window.Present(),"profile scene swap");
       }
       if(!capture)SDL_Delay(16);
       continue;
@@ -2498,7 +2278,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
     SdlCheck(SDL_GetWindowSizeInPixels(window.Window, &width, &height),
              "scene frame size");
     renderer.Draw({}, width, height);
-    std::array<GLint,4> sceneViewport{};glGetIntegerv(GL_VIEWPORT,sceneViewport.data());
+    const auto sceneViewport=ViewerWindow::Gpu->GetViewport();
     renderer.SetFilter(*state.ScreenFilter.Mode, *state.ScreenFilter.Intensity);
     const auto* activeMessage = backend.CurrentMessage();
     const bool approach=state.ApproachMode.Enabled.value_or(false);
@@ -2664,7 +2444,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
           spriteDraws.push_back(sprite);
         }
       } else if(pass.Kind==SceneDrawKind::OrdinaryChoice) {
-        renderer.SetFilter(0,0);glUniform1i(renderer.AlphaMode,1);
+        renderer.SetFilter(0,0);renderer.SetAlpha(1);
         const auto* menu=vm->CurrentOrdinaryChoice();
         if(!menu || !state.ReadColorEnabled)throw FormatError("ordinary choice draw owner is missing");
         std::vector<uint8_t> history(menu->Entries.size());
@@ -2682,7 +2462,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
         }
       } else if(pass.Kind==SceneDrawKind::ApproachSelection) {
         particleFragment.SetBlendMode(1);
-        renderer.SetFilter(0,0);glUniform1i(renderer.AlphaMode,1);
+        renderer.SetFilter(0,0);renderer.SetAlpha(1);
         if(!state.ReadColorEnabled)throw UnsupportedCommand("approach read-color setting is unknown");
         const auto readHistory=ApproachChoiceHistory(historySettings,registeredHistory,
             state.ScriptFileId,uint32_t(state.CurrentCommandIndex),vm->CurrentApproachEntries().size(),*state.ReadColorEnabled);
@@ -2699,9 +2479,8 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
             particleFragment.SetAlphaTest(true,6,0);
             const auto& r=draw.Clip;const int x=std::max(0,r[0]),y=std::max(0,r[1]);
             const int right=std::clamp(r[0]+r[2],0,960),bottom=std::clamp(r[1]+r[3],0,544);
-            glEnable(GL_SCISSOR_TEST);glScissor(x*width/960,(544-bottom)*height/544,
-                std::max(0,right-x)*width/960,std::max(0,bottom-y)*height/544);
-          } else {glDisable(GL_SCISSOR_TEST);particleFragment.SetAlphaTest(false,3,0);}
+            ViewerWindow::Gpu->SetScissor(std::array<int,4>{x,y,std::max(0,right-x),std::max(0,bottom-y)});
+          } else {ViewerWindow::Gpu->SetScissor({});particleFragment.SetAlphaTest(false,3,0);}
         }
         renderer.SetFilter(*state.ScreenFilter.Mode,*state.ScreenFilter.Intensity);
       } else if(pass.Kind==SceneDrawKind::SplitFirstWindow || pass.Kind==SceneDrawKind::SplitSecondWindow) {
@@ -2709,7 +2488,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
         renderer.SetFilter(0,0.0f);
         for(const auto& sprite:BuildBattleDialogueBubble(dialogueVisual,side,state.WindowTypes[side],
             state.WindowOpenness[side],opacity,*state.Quake[2])) {
-          uploadBattleUi(sprite.Texture.Entry);glUniform1i(renderer.AlphaMode,1);
+          uploadBattleUi(sprite.Texture.Entry);renderer.SetAlpha(1);
           drawSprite(sprite);spriteDraws.push_back(sprite);
         }
         renderer.SetFilter(*state.ScreenFilter.Mode,*state.ScreenFilter.Intensity);
@@ -2743,7 +2522,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
               spriteDraws.push_back(sprite);
             }
           } else if (draw.Kind == MessageWindowDrawKind::AlphaTest)
-            glUniform1i(renderer.AlphaMode, draw.Index);
+            renderer.SetAlpha(draw.Index);
           else if (draw.Kind == MessageWindowDrawKind::RendererState)
             renderer.SetFilter(int32_t(draw.Index), std::bit_cast<float>(draw.Parameter));
         }
@@ -2773,7 +2552,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
                                   text.Position[1], text.Size, text.Color);
       } else if (pass.Kind == SceneDrawKind::Fill) {
         const auto sprite = BuildSceneFill(state.SceneImages.Slots.FillRects.at(pass.Index));
-        glUniform1i(renderer.AlphaMode, 1);
+        renderer.SetAlpha(1);
         renderer.DrawQuad(sprite, {0, 1, 1}, true);
         spriteDraws.push_back(sprite);
       }
@@ -2856,7 +2635,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       scenarioMovieFrame.Draw();
     // Native HUD tail8007708c draws white after queued presentation/HUD.
     if (const auto fade = BuildScreenFade(*state.ScreenFade)) {
-      glUniform1i(renderer.AlphaMode, 1);
+      renderer.SetAlpha(1);
       renderer.DrawQuad(*fade, {0, 1, 1}, true);
       spriteDraws.push_back(*fade);
     }
@@ -3077,7 +2856,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
         for(size_t i=0;i<matrix.size();++i){if(i)report << ',';report << matrix[i];}
         report << "],\"textures\":" << modelTextures.at(id)->Handles.size()
                << ",\"mouth_active\":" << observation.MouthActive << ",\"mouth_bits\":" << std::bit_cast<uint32_t>(observation.Mouth)
-               << ",\"ui_gl_state_restored\":true}";
+               << ",\"ui_state_isolated\":true}";
       }
       report << "],\"widget_inputs\":[";
       for (size_t i = 0; i < widgetInputs.size(); ++i) {
@@ -3183,7 +2962,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       previousSignature = signature;
       lastSaved = now;
     }
-    SdlCheck(SDL_GL_SwapWindow(window.Window), "scene frame swap");
+    SdlCheck(window.Present(), "scene frame swap");
     if(titleRequested) {
       if(captureEnding){quit=true;break;}
       beginReturnTitle(now,true);
@@ -3270,7 +3049,7 @@ int RunScenarioScene(ViewerWindow& window,UiBlitRenderer& renderer,
     // The old scope (including modal/model/movie consumers) has retired. Remove
     // only its shared-renderer uploads; borrowed textures belong to the caller.
     for(auto it=renderer.Textures.begin();it!=renderer.Textures.end();) {
-      if(!borrowedTextures.contains(it->first)){glDeleteTextures(1,&it->second.Handle);it=renderer.Textures.erase(it);}
+      if(!borrowedTextures.contains(it->first)){Impacto::Renderer->FreeTexture(it->second.Handle);it=renderer.Textures.erase(it);}
       else ++it;
     }
     if(next.Title || next.Replay) {
@@ -3310,14 +3089,15 @@ int RunSceneSdkUiProbe(const std::filesystem::path& usrdir,
     if(std::filesystem::exists(out))throw FormatError("choose a fresh SDK/UI capture directory");
     std::filesystem::create_directories(out);created=true;
     GameResources resources(ReadGameFile(usrdir, Profile::Saekano::GameAsset::ResourceArchive));
-    ViewerWindow window(true,true);UiBlitRenderer renderer;
+    ViewerWindow window(true,true);SdlCheck(SDL_SetWindowSize(window.Window,960,544),"SDK/UI viewport");UiBlitRenderer renderer;
     std::map<int32_t,std::unique_ptr<ModelTextures>> textures;
     SdkLive2dDriver models(resources,Live2dEnvironment::Decode(ReadGameFile(usrdir, Profile::Saekano::GameAsset::Live2dEnvironment)));
     const auto state=RunModelSetupScene(resources,models,{1,13,20});
     models.Frame(state.Live2d,0);models.Frame(state.Live2d,16);
-    renderer.Draw({},960,544);DrawSceneModels(models,state.Live2d,textures,true);
-    std::vector<uint8_t> pixels(960*544*4);glReadPixels(0,0,960,544,GL_RGBA,GL_UNSIGNED_BYTE,pixels.data());
-    size_t visible=0;for(size_t i=0;i<pixels.size();i+=4)if(pixels[i] || pixels[i+1] || pixels[i+2])++visible;
+    renderer.Draw({},960,544);const auto background=ViewerWindow::Gpu->ReadTarget(nullptr,{0,0,960,544});
+    DrawSceneModels(models,state.Live2d,textures,true);
+    const auto pixels=ViewerWindow::Gpu->ReadTarget(nullptr,{0,0,960,544});
+    size_t visible=0;for(size_t i=0;i<pixels.size();i+=4)if(!std::equal(pixels.begin()+i,pixels.begin()+i+4,background.begin()+i))++visible;
     if(visible<1000)throw FormatError("SDK/UI probe did not draw visible model pixels");
     const auto raw=ReadGameFile(usrdir, Profile::Saekano::GameAsset::ApproachEnvironment);
     const auto visual=ApproachVisualEnvironment::Decode(raw);
@@ -3333,14 +3113,16 @@ int RunSceneSdkUiProbe(const std::filesystem::path& usrdir,
       }
     UiSpriteBlit marker;marker.Destination={8,8,8,8};marker.Color={21,63,127,255};
     renderer.DrawQuad(marker,{0,1,1},true);
-    std::array<uint8_t,4> sample{};glReadPixels(12,544-12,1,1,GL_RGBA,GL_UNSIGNED_BYTE,sample.data());
+    const auto pixel=ViewerWindow::Gpu->ReadTarget(nullptr,{12,12,1,1});
+    std::array<uint8_t,4> sample{pixel[0],pixel[1],pixel[2],pixel[3]};
+    Capture(out/"sdk-ui.bmp",960,544);
     if(sample[0]!=21 || sample[1]!=63 || sample[2]!=127)
       throw FormatError("UI draw after SDK did not preserve shader/vertex/blend state");
-    GlCheck("SDK/UI sentinel readback");Capture(out/"sdk-ui.bmp",960,544);
+    GlCheck("SDK/UI sentinel readback");
     std::ofstream report(out/"sdk-ui.json");
     report << "{\"passed\":true,\"setup_script\":1,\"setup_begin\":13,\"setup_end\":20,"
               "\"sdk_model_pixels\":" << visible << ",\"approach_sprites\":" << sprites
-           << ",\"ui_gl_state_restored\":true,\"post_sdk_rgb\":[" << int(sample[0]) << ','
+           << ",\"ui_state_isolated\":true,\"post_sdk_rgb\":[" << int(sample[0]) << ','
            << int(sample[1]) << ',' << int(sample[2]) << "],\"actual_scene_route\":false}\n";
     if(!report)throw FormatError("cannot save SDK/UI probe report");return 0;
   }catch(const std::exception& error) {
@@ -3349,6 +3131,8 @@ int RunSceneSdkUiProbe(const std::filesystem::path& usrdir,
   }
 }
 int RunResultRenderStateProbe(const std::filesystem::path& output) {
+  using UiBlitRenderer=ReferenceGlUiBlitRenderer;
+  using ParticleGlRenderer=ReferenceParticleGlRenderer;
   try {
     if(std::filesystem::exists(output))throw FormatError("choose fresh result renderer-state output");
     ViewerWindow window(true,true);UiBlitRenderer renderer;std::ofstream report(output);
@@ -3447,6 +3231,8 @@ int RunParticleGroupProbe(const std::filesystem::path& usrdir,
 }
 int RunParticleRasterProbe(const std::filesystem::path& fixtureDirectory,
                            const std::filesystem::path& output) {
+  using UiBlitRenderer=ReferenceGlUiBlitRenderer;
+  using ParticleGlRenderer=ReferenceParticleGlRenderer;
   try {
     if (std::filesystem::exists(output)) throw FormatError("choose a fresh particle raster output");
     const auto bytes=SceneRead(fixtureDirectory/"cases.bin");PayloadReader reader(bytes);
@@ -3562,6 +3348,8 @@ int RunParticleRasterProbe(const std::filesystem::path& fixtureDirectory,
 }
 int RunParticleProjectionProbe(const std::filesystem::path& fixtureDirectory,
                                const std::filesystem::path& output) {
+  using UiBlitRenderer=ReferenceGlUiBlitRenderer;
+  using ParticleGlRenderer=ReferenceParticleGlRenderer;
   try {
     if (std::filesystem::exists(output)) throw FormatError("choose a fresh particle projection output");
     const auto bytes = SceneRead(fixtureDirectory / "cases.bin"); PayloadReader reader(bytes);
@@ -3641,6 +3429,8 @@ int RunParticleProjectionProbe(const std::filesystem::path& fixtureDirectory,
 }
 int RunParticleFragmentProbe(const std::filesystem::path& fixtureDirectory,
                              const std::filesystem::path& output) {
+  using UiBlitRenderer=ReferenceGlUiBlitRenderer;
+  using ParticleGlRenderer=ReferenceParticleGlRenderer;
   try {
     if (std::filesystem::exists(output)) throw FormatError("choose a fresh particle fragment output");
     const auto bytes = SceneRead(fixtureDirectory / "cases.bin");
@@ -3746,6 +3536,8 @@ int RunParticleFragmentProbe(const std::filesystem::path& fixtureDirectory,
 }
 int RunScreenFilterProbe(const std::filesystem::path& fixtureDirectory,
                          const std::filesystem::path& output) {
+  using UiBlitRenderer=ReferenceGlUiBlitRenderer;
+  using ParticleGlRenderer=ReferenceParticleGlRenderer;
   try {
     if (std::filesystem::exists(output)) throw FormatError("choose a fresh filter probe output");
     const auto bytes = SceneRead(fixtureDirectory / "cases.bin");
@@ -3797,7 +3589,7 @@ int RunScreenFilterProbe(const std::filesystem::path& fixtureDirectory,
         glViewport(0,0,1,1); glDisable(GL_BLEND);
         renderer.SetFilter(1, 1.0f);  // Also exercise a real reset to Normal.
         renderer.SetFilter(int32_t(mode), value);
-        if (kind >= 3) glUniform1i(renderer.AlphaMode, 0);  // Base native GXP family.
+        if (kind >= 3) renderer.SetAlpha(0);  // Base native GXP family.
         renderer.DrawQuad(draw, renderer.Textures.at(key), kind == 2, kind == 1,
                           kind >= 3 ? std::optional<float>(value) : std::nullopt,
                           kind == 4 ? &renderer.Textures.at(maskKey) : nullptr);
@@ -3969,7 +3761,7 @@ int RunOptionsDrawProbe(const std::filesystem::path& usrdir,const std::filesyste
       commands.close();if(!commands || counts.Pages!=1 || counts.HelpRows!=1 || !counts.Sprites || !counts.Texts || counts.Questions!=(frame==3?1u:0u))
         throw FormatError("Options composition fixture missed a layer");
       Capture(out/("frame-"+std::to_string(frame)+".bmp"),width,height);
-      SdlCheck(SDL_GL_SwapWindow(window.Window),"Options capture swap");
+      SdlCheck(window.Present(),"Options capture swap");
       if(frame)report<<',';report<<"{\"page\":"<<state.Pages.Controls.SelectedTab<<",\"sprites\":"<<counts.Sprites<<",\"rectangles\":"<<counts.Rectangles
         <<",\"texts\":"<<counts.Texts<<",\"widgets\":"<<counts.Widgets<<",\"help_rows\":"<<counts.HelpRows<<",\"question\":"<<counts.Questions<<'}';
     }
@@ -4027,7 +3819,7 @@ int RunTitleDrawProbe(const std::filesystem::path& usrdir,const std::filesystem:
     const auto closed=[](const TitleOverlayCommand& c){if(c.Kind!=TitleOverlayKind::SharedDialog)throw UnsupportedCommand("title overlay owner is not bound");};
     int width=0,height=0;SdlCheck(SDL_GetWindowSizeInPixels(window.Window,&width,&height),"title capture extent");
     DrawTitleFrame(renderer,textures,font,env,main,overlay,width,height,drawEffect,closed,&sprites,&glyphs);
-    Capture(output/"frame.bmp",width,height);SdlCheck(SDL_GL_SwapWindow(window.Window),"title capture swap");
+    Capture(output/"frame.bmp",width,height);SdlCheck(window.Present(),"title capture swap");
     sprites.close();glyphs.close();if(!sprites || !glyphs)throw FormatError("cannot save title draw reports");
     std::ofstream report(output/"capture.json");report<<"{\"passed\":true,\"phase\":"<<in.Phase<<",\"main_requests\":"<<main.size()<<",\"overlay_requests\":"<<overlay.size()
       <<",\"textures\":"<<renderer.Textures.size()<<",\"width\":"<<width<<",\"height\":"<<height<<",\"effect_fixture\":"<<(effect?"true":"false")<<",\"closed_modal_fixture\":true,\"pc_title_constructed\":false,\"manual_acceptance\":false}\n";
@@ -4120,7 +3912,7 @@ int RunFontSample(const std::filesystem::path& usrdir,
         if (!glyphReport) throw FormatError("cannot save font glyph report");
         quit = true;
       }
-      SdlCheck(SDL_GL_SwapWindow(window.Window), "font frame swap");
+      SdlCheck(window.Present(), "font frame swap");
       if (!capture) SDL_Delay(16);
     }
     return 0;
@@ -4139,7 +3931,7 @@ int RunModelViewer(const std::filesystem::path& resourceDat,
     GameResources resources(Bytes{std::istreambuf_iterator<char>(input), {}});
     const bool capture = !captureDirectory.empty();
     ViewerWindow window(capture);
-    OpenGL::Cubism2Sdk sdk;
+    Cubism2Sdk sdk;
     if (capture) std::filesystem::create_directories(captureDirectory);
     size_t id = 0;
     bool quit = false;
@@ -4188,7 +3980,7 @@ int RunModelViewer(const std::filesystem::path& resourceDat,
         model.reset();
         if (++id == resources.Live2dCount()) quit = true;
       }
-      SDL_GL_SwapWindow(window.Window);
+      window.Present();
     }
     return 0;
   } catch (const std::exception& error) {
@@ -4274,14 +4066,12 @@ int RunModelScenes(const std::filesystem::path& resourceDat,
         continue;
       }
       scene->Tick(capture ? 500 : SDL_GetTicks() - epoch);
-      glViewport(0, 0, width, height);
-      glClearColor(32.0f / 255, 32.0f / 255, 32.0f / 255, 1);
-      glClear(GL_COLOR_BUFFER_BIT);
+      ViewerWindow::BeginFrame();ViewerWindow::Gpu->SetViewport({0,0,width,height});
+      ViewerWindow::Gpu->Clear({32.f/255,32.f/255,32.f/255,1});
       const auto scale = std::min(float(width) / 960, float(height) / 544);
       const auto viewWidth = int(960 * scale), viewHeight = int(544 * scale);
-      glViewport((width - viewWidth) / 2, (height - viewHeight) / 2, viewWidth,
-                 viewHeight);
-      scene->Driver.Draw(scene->State.Live2d);
+      ViewerWindow::Gpu->SetViewport({(width-viewWidth)/2,(height-viewHeight)/2,viewWidth,viewHeight});
+      ViewerWindow::Gpu->DrawExternal([&]{scene->Driver.Draw(scene->State.Live2d);});
       GlCheck("authored model scene draw");
       if (capture) {
         const auto script = scenes[selected].Script;
@@ -4291,7 +4081,7 @@ int RunModelScenes(const std::filesystem::path& resourceDat,
         scene.reset();
         if (++selected == scenes.size()) quit = true;
       }
-      SDL_GL_SwapWindow(window.Window);
+      window.Present();
     }
     return 0;
   } catch (const std::exception& error) {
@@ -4756,9 +4546,9 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
               slot.Label.Position[1], slot.Label.Size, slot.Label.Color);
         }
         // Native506b6..506de restores alpha/depth enables and stencil mode0.
-        glUniform1i(renderer.AlphaMode, 0);
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_STENCIL_TEST);
+        renderer.SetAlpha(0);
+        ViewerWindow::Gpu->SetDepthTest(5,false);
+        ViewerWindow::Gpu->SetStencil(0);
         arrowDraws = BuildProfileArrows(chromeEnvironment->Arrows, selection,
                                        arrowMotion);
         for (const auto& arrow : arrowDraws)
@@ -4899,9 +4689,9 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
               flowResultVisual, chromeEnvironment->ResultReflection,
               flowMode->Result(), 960, 544);
           renderer.Execute(flowResultCommands);
-          glUniform1i(renderer.AlphaMode, 0);
-          glDisable(GL_DEPTH_TEST);
-          glDisable(GL_STENCIL_TEST);
+          renderer.SetAlpha(0);
+          ViewerWindow::Gpu->SetDepthTest(5,false);
+          ViewerWindow::Gpu->SetStencil(0);
           drawText(flowServices->ResultText(), flowResultLayout, resultLaidOut,
                    flowResultVisual.TextWidth, flowResultVisual.TextScale,
                    flowResultVisual.TextPosition);
@@ -5178,7 +4968,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
       }
       if (capture && ++selected == times.size()) quit = true;
       if (flowDone) quit = true;
-      SdlCheck(SDL_GL_SwapWindow(window.Window), "frame swap");
+      SdlCheck(window.Present(), "frame swap");
       if (captureFlow) SDL_Delay(1);
       if (!capture) SDL_Delay(16);
     }
@@ -5654,7 +5444,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
       if(capture && ((title.State.Phase!=previousPhase && (title.State.Phase==10 || title.State.Phase==21)) ||
           (title.State.Phase==5 && title.State.Fade.Finished() && !pressedStart)))
         if(captureScenarioMenu!=4)Capture(captureDirectory/("phase-"+std::to_string(title.State.Phase)+".bmp"),width,height);
-      previousPhase=title.State.Phase;SdlCheck(SDL_GL_SwapWindow(window.Window),"title frame swap");
+      previousPhase=title.State.Phase;SdlCheck(window.Present(),"title frame swap");
       if(captureExtras && extrasCapture.Finished){++frames;break;}
       if(returnedTitleCapture && title.State.Phase==10){++frames;break;}
       if(captureOptions && title.ConfigReturns==1 && title.State.Phase==10){Capture(captureDirectory/"options-return.bmp",width,height);++frames;break;}

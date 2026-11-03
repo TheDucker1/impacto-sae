@@ -77,17 +77,7 @@
 #include "games/saekano/pcvalidation.h"
 #endif
 
-#ifndef IMPACTO_DISABLE_IMGUI
-#ifndef IMPACTO_DISABLE_OPENGL
-#include <imgui_custom/backends/imgui_impl_opengl3.h>
-#endif
-#ifndef IMPACTO_DISABLE_VULKAN
-#include <imgui_impl_vulkan.h>
-#endif
-#ifndef IMPACTO_DISABLE_DX9
-#include <imgui_impl_dx9.h>
-#endif
-#endif
+#include "renderer/frontend.h"
 
 namespace Impacto {
 
@@ -262,40 +252,8 @@ void Shutdown() {
     Video::VideoShutdown();
   }
 
-#ifndef IMPACTO_DISABLE_IMGUI
-  if (ImGui::GetCurrentContext()) {
-    if (ImGui::GetIO().BackendRendererUserData) {
-      switch (UserConfig::AdvancedSettings.ActiveRenderer) {
-#ifndef IMPACTO_DISABLE_OPENGL
-        case RendererType::OpenGL:
-          ImGui_ImplOpenGL3_Shutdown();
-          break;
-#endif
-#ifndef IMPACTO_DISABLE_VULKAN
-        case RendererType::Vulkan:
-          ImGui_ImplVulkan_Shutdown();
-          break;
-#endif
-#ifndef IMPACTO_DISABLE_DX9
-        case RendererType::DirectX9:
-          ImGui_ImplDX9_Shutdown();
-          break;
-#endif
-        default:
-          break;
-      }
-    }
-    if (ImGui::GetIO().BackendPlatformUserData) ImGui_ImplSDL3_Shutdown();
-    ImGui::DestroyContext();
-  }
-#endif
-  if (Renderer) Renderer->Shutdown();
   WorkQueue::StopWorkQueue();
-  delete Renderer;
-  if (Window) Window->Shutdown(false);
-  delete Window;
-  Renderer = nullptr;
-  Window = nullptr;
+  DestroyRendererFrontend();
 }
 
 void LauncherUpdate(float dt) {
@@ -316,6 +274,8 @@ void LauncherUpdate(float dt) {
 
 void LauncherRender() {
   Window->Update();
+  Renderer->BeginFrame();
+  Renderer->BeginFrame2D();
 
 #ifndef IMPACTO_DISABLE_IMGUI
   Renderer->ImGuiBeginFrame();
@@ -323,7 +283,7 @@ void LauncherRender() {
 #endif
 
   ApplyCursorForFrame();
-
+  Renderer->EndFrame();
   Window->Draw();
 }
 

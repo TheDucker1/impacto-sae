@@ -80,33 +80,87 @@ else()
     target_compile_options(saekano_core PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-set(SAEKANO_CUBISM2_SDK_ROOT "" CACHE PATH "Legacy Cubism2.1 Windows OpenGL SDK subset")
+set(SAEKANO_CUBISM2_SDK_ROOT "" CACHE PATH "Legacy Cubism2.1 SDK subset")
+set(SAEKANO_CUBISM2_BACKEND "OpenGL" CACHE STRING "Cubism2 graphics backend")
+set_property(CACHE SAEKANO_CUBISM2_BACKEND PROPERTY STRINGS OpenGL DirectX9)
+set(IMPACTO_D3DX9_ROOT "" CACHE PATH "Microsoft.DXSDK.D3DX build/native directory")
+set(SAEKANO_CUBISM2_LEGACY_CRT_DLL "$ENV{WINDIR}/SysWOW64/msvcr110.dll" CACHE FILEPATH
+    "Visual C++ 2012 x86 CRT used by the legacy DirectX SDK module")
 if(SAEKANO_CUBISM2_SDK_ROOT)
     if(NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
-        message(FATAL_ERROR "The downloaded Cubism2.1 SDK requires a Windows x86 target")
+        message(FATAL_ERROR "The selected legacy Cubism2 SDK requires Windows x86")
     endif()
-    if(NOT EXISTS "${SAEKANO_CUBISM2_SDK_ROOT}/lib/live2d_opengl.lib")
-        message(FATAL_ERROR "Missing Cubism2.1 OpenGL library; set SAEKANO_CUBISM2_SDK_ROOT to a compatible SDK")
+    if(SAEKANO_CUBISM2_BACKEND STREQUAL "DirectX9")
+        set(cubism_library "${SAEKANO_CUBISM2_SDK_ROOT}/lib/live2d_directX_md.lib")
+        if(NOT EXISTS "${IMPACTO_D3DX9_ROOT}/include/d3dx9.h")
+            message(FATAL_ERROR "DirectX Cubism2 requires IMPACTO_D3DX9_ROOT")
+        endif()
+    elseif(SAEKANO_CUBISM2_BACKEND STREQUAL "OpenGL")
+        set(cubism_library "${SAEKANO_CUBISM2_SDK_ROOT}/lib/live2d_opengl.lib")
+    else()
+        message(FATAL_ERROR "Unsupported Cubism2 backend: ${SAEKANO_CUBISM2_BACKEND}")
+    endif()
+    if(NOT EXISTS "${cubism_library}")
+        message(FATAL_ERROR "Missing ${SAEKANO_CUBISM2_BACKEND} Cubism2 library: ${cubism_library}")
     endif()
     if(NOT EXISTS "${SAEKANO_CUBISM2_SDK_ROOT}/framework/L2DExpressionMotion.cpp")
-        message(FATAL_ERROR "Missing Cubism2 framework; set SAEKANO_CUBISM2_SDK_ROOT to a compatible SDK")
+        message(FATAL_ERROR "Missing Cubism2 framework sources")
     endif()
-    add_library(saekano_cubism2 STATIC ../../renderer/opengl/cubism2.cpp
+    if(SAEKANO_CUBISM2_BACKEND STREQUAL "DirectX9")
+        set(cubism_library_type SHARED)
+    else()
+        set(cubism_library_type STATIC)
+    endif()
+    add_library(saekano_cubism2 ${cubism_library_type} ../../renderer/cubism2.cpp
         "${SAEKANO_CUBISM2_SDK_ROOT}/framework/L2DExpressionMotion.cpp"
         "${SAEKANO_CUBISM2_SDK_ROOT}/framework/L2DPose.cpp")
     target_include_directories(saekano_cubism2 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../.. ${CMAKE_CURRENT_SOURCE_DIR}/..)
-    target_include_directories(saekano_cubism2 SYSTEM PRIVATE "${SAEKANO_CUBISM2_SDK_ROOT}/include")
-    target_include_directories(saekano_cubism2 SYSTEM PRIVATE "${SAEKANO_CUBISM2_SDK_ROOT}/framework")
+    target_include_directories(saekano_cubism2 SYSTEM PRIVATE "${SAEKANO_CUBISM2_SDK_ROOT}/include" "${SAEKANO_CUBISM2_SDK_ROOT}/framework")
     target_compile_features(saekano_cubism2 PUBLIC cxx_std_20)
-    target_compile_definitions(saekano_cubism2 PRIVATE L2D_TARGET_WIN_GL)
     target_compile_options(saekano_cubism2 PRIVATE /utf-8)
-    target_link_libraries(saekano_cubism2 PRIVATE
-        "${SAEKANO_CUBISM2_SDK_ROOT}/lib/live2d_opengl.lib" opengl32)
-    target_link_options(saekano_cubism2 INTERFACE /LTCG)
+    if(SAEKANO_CUBISM2_BACKEND STREQUAL "DirectX9")
+        set_target_properties(saekano_cubism2 PROPERTIES
+            RUNTIME_OUTPUT_NAME impacto_cubism2_d3d9
+            ARCHIVE_OUTPUT_NAME impacto_cubism2_d3d9)
+        add_custom_command(TARGET saekano_cubism2 PRE_LINK
+            COMMAND "${CMAKE_COMMAND}" -E rm -f "$<TARGET_LINKER_FILE:saekano_cubism2>"
+            VERBATIM)
+        if(NOT EXISTS "${SAEKANO_CUBISM2_LEGACY_CRT_DLL}")
+            message(FATAL_ERROR "DirectX Cubism2 requires the x86 Visual C++ 2012 CRT DLL")
+        endif()
+        # Keep the old SDK's FILE ABI inside this module. Application code uses
+        # its normal current CRT; no compatibility FILE structures or stubs.
+        set(legacy_def "${CMAKE_CURRENT_BINARY_DIR}/cubism2_legacy_crt.def")
+        set(legacy_lib "${CMAKE_CURRENT_BINARY_DIR}/cubism2_legacy_crt.lib")
+        file(GENERATE OUTPUT "${legacy_def}" CONTENT "LIBRARY msvcr110.dll\nEXPORTS\n??8type_info@@QBE_NABV0@@Z\n__iob_func\n_snprintf_s\nfclose\nfflush\nfopen_s\nfread\nfseek\nftell\nprintf\nvsnprintf_s\nvsprintf_s\n")
+        add_custom_command(OUTPUT "${legacy_lib}"
+            COMMAND "${CMAKE_COMMAND}" -E rm -f "${legacy_lib}"
+            COMMAND "${CMAKE_AR}" /nologo /machine:x86 "/def:${legacy_def}" "/out:${legacy_lib}"
+            DEPENDS "${legacy_def}" VERBATIM)
+        add_custom_target(cubism2_legacy_crt_import DEPENDS "${legacy_lib}")
+        add_library(cubism2_legacy_crt SHARED IMPORTED GLOBAL)
+        set_target_properties(cubism2_legacy_crt PROPERTIES
+            IMPORTED_IMPLIB "${legacy_lib}"
+            IMPORTED_LOCATION "${SAEKANO_CUBISM2_LEGACY_CRT_DLL}")
+        add_dependencies(saekano_cubism2 cubism2_legacy_crt_import)
+        target_include_directories(saekano_cubism2 SYSTEM PRIVATE "${IMPACTO_D3DX9_ROOT}/include")
+        target_compile_definitions(saekano_cubism2 PRIVATE L2D_TARGET_D3D IMPACTO_CUBISM2_BUILD PUBLIC IMPACTO_CUBISM2_DX9)
+        if(NOT TARGET impacto_d3dx9)
+            add_library(impacto_d3dx9 SHARED IMPORTED GLOBAL)
+            set_target_properties(impacto_d3dx9 PROPERTIES
+                IMPORTED_IMPLIB "${IMPACTO_D3DX9_ROOT}/release/lib/x86/d3dx9.lib"
+                IMPORTED_LOCATION "${IMPACTO_D3DX9_ROOT}/release/bin/x86/D3DX9_43.dll")
+        endif()
+        target_link_libraries(saekano_cubism2 PRIVATE cubism2_legacy_crt "${cubism_library}" d3d9
+            impacto_d3dx9 legacy_stdio_definitions)
+    else()
+        target_compile_definitions(saekano_cubism2 PRIVATE L2D_TARGET_WIN_GL)
+        target_link_libraries(saekano_cubism2 PRIVATE "${cubism_library}" opengl32)
+        target_link_options(saekano_cubism2 INTERFACE /LTCG)
+    endif()
     add_library(saekano_live2d_driver STATIC live2ddriver.cpp modelscene.cpp)
     target_link_libraries(saekano_live2d_driver PUBLIC saekano_core saekano_cubism2)
     target_compile_options(saekano_live2d_driver PRIVATE /W4 /permissive- /utf-8)
-
 endif()
 
 target_sources(saekano_core PRIVATE profilemode.cpp profilearchive.cpp profilemouth.cpp modelmouth.cpp mouthselection.cpp profilevoiceoutput.cpp ordinaryvoiceoutput.cpp uisprite.cpp profilewave.cpp profilearrow.cpp dialog.cpp widgetinput.cpp skipauto.cpp)

@@ -45,7 +45,7 @@ class PcSlotOwner final:public SlotControllerServices {
   }
   ~PcSlotOwner(){
     for(auto it=renderer_.Textures.begin();it!=renderer_.Textures.end();){
-      if(!priorTextures_.contains(it->first)){glDeleteTextures(1,&it->second.Handle);it=renderer_.Textures.erase(it);}else ++it;
+      if(!priorTextures_.contains(it->first)){Impacto::Renderer->FreeTexture(it->second.Handle);it=renderer_.Textures.erase(it);}else ++it;
     }
   }
   void BeginFrame(const SlotBrowserInput& input,const DialogInput& modal,

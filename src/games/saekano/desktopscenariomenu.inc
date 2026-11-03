@@ -225,10 +225,10 @@ const auto updateScenarioModal=[&](uint64_t now) {
   playback.Update(float(now-previous)/1000);previous=now;
   if(capture){std::array<int16_t,1536> samples{};playback.Render(samples);}
   int width=0,height=0;SdlCheck(SDL_GetWindowSizeInPixels(window.Window,&width,&height),"modal viewport");
-  glViewport(0,0,width,height);glClearColor(0,0,0,1);glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT|GL_STENCIL_BUFFER_BIT);
+  ViewerWindow::BeginFrame();ViewerWindow::Gpu->SetViewport({0,0,width,height});ViewerWindow::Gpu->Clear({0,0,0,1});
   const float scale=std::min(float(width)/960,float(height)/544);
   const std::array<GLint,4> viewport{GLint((width-960*scale)/2),GLint((height-544*scale)/2),GLint(960*scale),GLint(544*scale)};
-  glViewport(viewport[0],viewport[1],viewport[2],viewport[3]);sceneThumbnail.Present(viewport);
+  ViewerWindow::Gpu->SetViewport(viewport);sceneThumbnail.Present(viewport);
   if(systemMenu)systemMenu->Draw(vm->State().ChapterId,vm->State().Titles.empty()?u"":vm->State().Titles[0]);
   if(scenarioSlots)scenarioSlots->Draw();if(scenarioOptions)scenarioOptions->Draw();
   if(scenarioBacklog)scenarioBacklog->Draw();
@@ -246,7 +246,7 @@ const auto updateScenarioModal=[&](uint64_t now) {
     fade.Color={0,0,0,uint8_t(titleReturnFade.Value.Current)};
     renderer.Execute(std::span<const UiRenderCommand>(&fade,1));
   }
-  SdlCheck(SDL_GL_SwapWindow(window.Window),"scenario modal swap");
+  SdlCheck(window.Present(),"scenario modal swap");
 };
 
 // One bounded real-service witness: normal New Game, actual menu input, Save,

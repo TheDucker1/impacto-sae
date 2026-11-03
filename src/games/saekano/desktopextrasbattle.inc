@@ -76,10 +76,10 @@ class PcExtrasBattle final:public ExtrasBattleServices {
     return {question_.Visible,question_.Canceled,question_.Result};
   }
   void Draw(){
-    ScopedSdkGlState scope;auto& r=shared_.Renderer;
-    glUseProgram(r.Program);glBindVertexArray(r.Vao);glBindBuffer(GL_ARRAY_BUFFER,r.Buffer);
-    glActiveTexture(GL_TEXTURE0);glDisable(GL_DEPTH_TEST);glDisable(GL_STENCIL_TEST);
-    glDisable(GL_CULL_FACE);glDisable(GL_SCISSOR_TEST);glUniform1i(r.AlphaMode,0);r.SetFilter(0,0);ApplyParticleBlend(1);
+    ScopedSceneRenderState scope;auto& r=shared_.Renderer;
+    r.Bind();
+
+    r.SetAlpha(0);r.SetFilter(0,0);ApplyParticleBlend(1);
     if(screen_.Phase()<=2)return;
     Rectangle(128);
     auto s=env_.Sprites.at(0xdd10);s.Color[3]=uint8_t(Word(0xd8f8));Sprite(40,s);
@@ -166,7 +166,7 @@ class PcExtrasBattle final:public ExtrasBattleServices {
     b.Destination={s.X-(s.Alignment%3==1?size[0]/2:s.Alignment%3==2?size[0]:0),s.Y-(s.Alignment/3==1?size[1]/2:s.Alignment/3==2?size[1]:0),size[0],size[1]};shared_.Sprite(b);}
   void Rectangle(uint8_t alpha){UiSpriteBlit b;b.Destination={0,0,960,544};b.Color={255,255,255,alpha};shared_.Renderer.DrawQuad(b,{0,1,1},true);}
   void RetireTextures(){for(const auto& key:owned_){auto& textures=shared_.Renderer.Textures;const auto it=textures.find(key);
-    if(it!=textures.end()){glDeleteTextures(1,&it->second.Handle);textures.erase(it);}}owned_.clear();}
+    if(it!=textures.end()){Impacto::Renderer->FreeTexture(it->second.Handle);textures.erase(it);}}owned_.clear();}
   SceneDialogLayer& shared_;SemanticState& owner_;PlaybackTitleAudio& audio_;MusicPlayback& playback_;ViewerWindow& window_;
   ArchiveBgmResources& music_;ArchiveSeResources& sounds_;std::filesystem::path root_,saveRoot_;NativeSlotData& slots_;
   std::function<void()> restoreMusic_;uint32_t hold_;uint64_t now_=0;std::filesystem::path replayCapture_;

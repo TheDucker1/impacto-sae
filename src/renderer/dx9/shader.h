@@ -8,16 +8,17 @@ namespace DirectX9 {
 
 class Shader {
  public:
+  ~Shader();
   void Compile(char const* name, IDirect3DDevice9* device,
                IDirect3DVertexDeclaration9* vertexDeclaration,
                D3D_SHADER_MACRO* macros = nullptr);
   void UseShader(IDirect3DDevice9* device);
 
  private:
-  IDirect3DVertexDeclaration9* VertexDeclaration;
+  IDirect3DVertexDeclaration9* VertexDeclaration = nullptr;  // Borrowed.
 
-  IDirect3DVertexShader9* VertexShader;
-  IDirect3DPixelShader9* PixelShader;
+  IDirect3DVertexShader9* VertexShader = nullptr;
+  IDirect3DPixelShader9* PixelShader = nullptr;
 };
 
 }  // namespace DirectX9

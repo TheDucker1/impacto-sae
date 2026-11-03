@@ -280,7 +280,7 @@ class SceneProfilePresenter {
     UiRenderCommand c;c.Kind=UiRenderKind::Rectangle;c.Rectangle=area;c.Color=color;commands_.push_back(c);
   }
   void Text(const UiTextBlit& t){textures_.DrawString(renderer_,font_,t.Text,t.Position[0],t.Position[1],t.Size,t.Color);text_.push_back(t);}
-  void ResetTests(){glUniform1i(renderer_.AlphaMode,0);glDisable(GL_DEPTH_TEST);glDisable(GL_STENCIL_TEST);}
+  void ResetTests(){renderer_.SetAlpha(0);ViewerWindow::Gpu->SetDepthTest(5,false);ViewerWindow::Gpu->SetStencil(0);}
   void Revealing(const VoiceTextReveal& text,PlainTextLayout& layout,bool& laidOut,int32_t width,float scale,std::array<int32_t,2> origin) {
     if(!text.Prepared)return;
     if(!laidOut){layout=LayoutPlainText(text.Text,format_,font_.Cached(),metrics_,width,scale,uint32_t(utility_.Size),font_.NominalSize());laidOut=true;}

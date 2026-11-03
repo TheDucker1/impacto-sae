@@ -27,10 +27,10 @@ class PcExtrasMusic final:public ExtrasMusicServices {
   void RestoreExtrasMusic()override{restoreMusic_();returned_=true;}
   void UiSound(int32_t id)override{audio_.PlayUi(id);}
   void Draw(){
-    ScopedSdkGlState scope;auto& r=shared_.Renderer;
-    glUseProgram(r.Program);glBindVertexArray(r.Vao);glBindBuffer(GL_ARRAY_BUFFER,r.Buffer);
-    glActiveTexture(GL_TEXTURE0);glDisable(GL_DEPTH_TEST);glDisable(GL_STENCIL_TEST);
-    glDisable(GL_CULL_FACE);glDisable(GL_SCISSOR_TEST);glUniform1i(r.AlphaMode,0);r.SetFilter(0,0);ApplyParticleBlend(1);
+    ScopedSceneRenderState scope;auto& r=shared_.Renderer;
+    r.Bind();
+
+    r.SetAlpha(0);r.SetFilter(0,0);ApplyParticleBlend(1);
     const auto rectangle=[&](uint8_t alpha){UiSpriteBlit b;b.Destination={0,0,960,544};b.Color={255,255,255,alpha};r.DrawQuad(b,{0,1,1},true);};
     rectangle(128);
     auto s=env_.Sprites.at(0xd4a4);s.Color[3]=uint8_t(Word(0xd4c8));Sprite(19,s);

@@ -62,7 +62,7 @@ class PcExtrasMovie final:public ExtrasMovieServices {
   void UiSound(int32_t id)override{audio_.PlayUi(id);}
   void RestoreExtrasMusic()override{restoreMusic_();}
   void Draw(){
-    ScopedSdkGlState scope;BindUi();
+    ScopedSceneRenderState scope;BindUi();
     const auto rectangle=[&](std::array<int32_t,4> r,std::array<uint8_t,4> color){UiSpriteBlit b;b.Destination=r;b.Color=color;shared_.Renderer.DrawQuad(b,{0,1,1},true);};
     const auto sprite=[&](uint32_t id,const UiSpriteDefinition& s){shared_.Sprite(ResolveUiSprite({ProfileTextureSection::SystemUi,-1,id},s));};
     const auto text=[&](const UiTextBlit& t){shared_.Textures.DrawString(shared_.Renderer,shared_.Font,t.Text,t.Position[0],t.Position[1],t.Size,t.Color);};
@@ -97,7 +97,7 @@ class PcExtrasMovie final:public ExtrasMovieServices {
         if(screen_.Unlocked(size_t(i))){
           if(screen_.PreviewIndex()==i && !screen_.PreviewHidden()){
             auto r=screen_.MovieRectangle();r[0]=env_.Sprites.at(0xd9e8).X+offset;r[1]=env_.Sprites.at(0xd9e8).Y;
-            ScopedSdkGlState movieState;frame_.Draw(r,{255,255,255,255},true);
+            ScopedSceneRenderState movieState;frame_.Draw(r,{255,255,255,255},true);
           }else {
             auto s=env_.Sprites.at(0xda0c);s.X+=offset;
             shared_.Sprite(ResolveUiSprite({ProfileTextureSection::ExtrasMovieThumbnail,-1,uint32_t(i)},s));
@@ -144,13 +144,13 @@ class PcExtrasMovie final:public ExtrasMovieServices {
     if(!std::isfinite(v) || v<0 || v>1024)throw FormatError("invalid Extras movie font size");return uint32_t(v);
   }
   void BindUi(){
-    auto& r=shared_.Renderer;glUseProgram(r.Program);glBindVertexArray(r.Vao);glBindBuffer(GL_ARRAY_BUFFER,r.Buffer);
-    glActiveTexture(GL_TEXTURE0);glDisable(GL_DEPTH_TEST);glDisable(GL_STENCIL_TEST);
-    glDisable(GL_CULL_FACE);glDisable(GL_SCISSOR_TEST);glUniform1i(r.AlphaMode,0);r.SetFilter(0,0);ApplyParticleBlend(1);
+    auto& r=shared_.Renderer;r.Bind();
+
+    r.SetAlpha(0);r.SetFilter(0,0);ApplyParticleBlend(1);
   }
   void RetireTextures()noexcept{
     auto& textures=shared_.Renderer.Textures;
-    for(auto it=textures.begin();it!=textures.end();){if(!prior_.contains(it->first)){glDeleteTextures(1,&it->second.Handle);it=textures.erase(it);}else ++it;}
+    for(auto it=textures.begin();it!=textures.end();){if(!prior_.contains(it->first)){Impacto::Renderer->FreeTexture(it->second.Handle);it=textures.erase(it);}else ++it;}
   }
   SceneDialogLayer& shared_;SemanticState& owner_;PlaybackTitleAudio& audio_;std::filesystem::path root_;
   std::function<void()> restoreMusic_;ExtrasScreenEnvironment env_;

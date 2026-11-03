@@ -1,7 +1,5 @@
 // CG resources and audio use the same host owners as the scenario and the other
 // Extras children. No extracted image tree or second HCA/texture decoder.
-#pragma push_macro("LoadImage")
-#undef LoadImage
 class PcExtrasCg final:public ExtrasCgServices {
  public:
   PcExtrasCg(SceneDialogLayer& shared,SemanticState& owner,PlaybackTitleAudio& audio,
@@ -40,11 +38,11 @@ class PcExtrasCg final:public ExtrasCgServices {
   }
   void PrepareImage(int32_t image,size_t buffer)override{
     const ProfileTextureKey key{ProfileTextureSection::SceneImage,int32_t(ImageSection::Event),uint32_t(image)};
-    if(!shared_.Renderer.Textures.contains(key))shared_.Renderer.Upload(key,DecodeSceneImage(shared_.Resources.LoadImage(ImageSection::Event,size_t(image)).Data));
+    if(!shared_.Renderer.Textures.contains(key))shared_.Renderer.Upload(key,DecodeSceneImage(shared_.Resources.LoadSceneImage(ImageSection::Event,size_t(image)).Data));
     const auto old=images_.at(buffer);images_[buffer]=key;
     if(old && *old!=key && images_.at(buffer^1)!=old && !prior_.contains(*old)){
       auto& textures=shared_.Renderer.Textures;const auto found=textures.find(*old);
-      if(found!=textures.end()){glDeleteTextures(1,&found->second.Handle);textures.erase(found);}
+      if(found!=textures.end()){Impacto::Renderer->FreeTexture(found->second.Handle);textures.erase(found);}
     }
   }
   bool ImageReady(size_t buffer)const override{return images_.at(buffer) && shared_.Renderer.Textures.contains(*images_[buffer]);}
@@ -60,10 +58,10 @@ class PcExtrasCg final:public ExtrasCgServices {
   void UiSound(int32_t id)override{audio_.PlayUi(id);}
   const ExtrasCgBrowser& State()const{return screen_;}
   void Draw(){
-    ScopedSdkGlState scope;auto& r=shared_.Renderer;
-    glUseProgram(r.Program);glBindVertexArray(r.Vao);glBindBuffer(GL_ARRAY_BUFFER,r.Buffer);
-    glActiveTexture(GL_TEXTURE0);glDisable(GL_DEPTH_TEST);glDisable(GL_STENCIL_TEST);
-    glDisable(GL_CULL_FACE);glDisable(GL_SCISSOR_TEST);glUniform1i(r.AlphaMode,0);r.SetFilter(0,0);ApplyParticleBlend(1);
+    ScopedSceneRenderState scope;auto& r=shared_.Renderer;
+    r.Bind();
+
+    r.SetAlpha(0);r.SetFilter(0,0);ApplyParticleBlend(1);
     const auto rectangle=[&](uint8_t alpha){UiSpriteBlit b;b.Destination={0,0,960,544};b.Color={255,255,255,alpha};r.DrawQuad(b,{0,1,1},true);};
     if(screen_.Phase()<=1)return;
     rectangle(128);
@@ -166,7 +164,7 @@ class PcExtrasCg final:public ExtrasCgServices {
   }
   void RetireTextures()noexcept{
     auto& textures=shared_.Renderer.Textures;
-    for(auto it=textures.begin();it!=textures.end();){if(!prior_.contains(it->first)){glDeleteTextures(1,&it->second.Handle);it=textures.erase(it);}else ++it;}
+    for(auto it=textures.begin();it!=textures.end();){if(!prior_.contains(it->first)){Impacto::Renderer->FreeTexture(it->second.Handle);it=textures.erase(it);}else ++it;}
   }
   SceneDialogLayer& shared_;SemanticState& owner_;PlaybackTitleAudio& audio_;MusicPlayback& playback_;
   ExtrasScreenEnvironment env_;ExtrasChildButtonHelpEnvironment childHelp_;ExtrasButtonHelpEnvironment help_;ButtonHelpStyle style_;
@@ -174,4 +172,3 @@ class PcExtrasCg final:public ExtrasCgServices {
   std::shared_ptr<AwbBank> comments_;std::array<std::optional<ProfileTextureKey>,2> images_;
   ExtrasCgBrowser screen_;ExtrasCgInput input_;std::set<ProfileTextureKey> prior_;bool commentPresent_=false,commentHelp_;
 };
-#pragma pop_macro("LoadImage")

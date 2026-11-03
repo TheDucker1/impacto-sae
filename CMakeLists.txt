@@ -77,6 +77,7 @@ set(Impacto_Src
     src/effects/chlcc/eyecatch.cpp
 
     src/renderer/renderer.cpp
+    src/renderer/frontend.cpp
     src/renderer/window.cpp
 
     src/data/savesystem.cpp
@@ -1086,7 +1087,7 @@ if (NOT DEFINED IMPACTO_DISABLE_LIBASS)
     list(APPEND Impacto_Header src/subtitle/ass/subtitlerenderer.h)
 
     pkg_check_modules(ass REQUIRED IMPORTED_TARGET GLOBAL libass)
-    # Libass links libc++ which overrides the static stllib linkage 
+    # Libass links libc++ which overrides the static stllib linkage
     if(ANDROID)
         get_target_property(ASS_LINK_LIBS PkgConfig::ass INTERFACE_LINK_LIBRARIES)
         set(CLEANED_ASS_LINK_LIBS "")
@@ -1272,6 +1273,7 @@ endif ()
 if (NOT DEFINED IMPACTO_DISABLE_DX9)
     list(APPEND Impacto_Src
         src/renderer/dx9/renderer.cpp
+        src/renderer/dx9/texture.cpp
         src/renderer/dx9/window.cpp
         src/renderer/dx9/shader.cpp
         src/renderer/dx9/yuvframe.cpp
@@ -1313,6 +1315,13 @@ if(IMPACTO_ENABLE_SAEKANO)
         message(FATAL_ERROR "Saekano PC build requires SAEKANO_CUBISM2_SDK_ROOT")
     endif()
     target_link_libraries(impacto PRIVATE saekano_live2d_driver)
+    target_sources(impacto PRIVATE src/renderer/scene2d.cpp)
+    if(NOT DEFINED IMPACTO_DISABLE_OPENGL)
+        target_sources(impacto PRIVATE src/renderer/opengl/scene2d.cpp)
+    endif()
+    if(NOT DEFINED IMPACTO_DISABLE_DX9)
+        target_sources(impacto PRIVATE src/renderer/dx9/scene2d.cpp)
+    endif()
     target_sources(impacto PRIVATE src/profile/games/saekano/game.cpp src/profile/games/saekano/titlemenu.cpp)
     target_sources(impacto PRIVATE src/games/saekano/desktop.cpp src/games/saekano/musicplayback.cpp src/games/saekano/movieplayback.cpp src/games/saekano/scriptmovieplayback.cpp src/games/saekano/fontface.cpp src/games/saekano/pcconfig.cpp src/games/saekano/pcinput.cpp src/games/saekano/pcvalidation.cpp src/games/saekano/pclauncher.cpp src/games/saekano/pcdiagnostics.cpp)
     if(DEFINED IMPACTO_DISABLE_IMGUI)
@@ -1323,7 +1332,7 @@ if(IMPACTO_ENABLE_SAEKANO)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_RUNTIME_DLLS:impacto> $<TARGET_FILE_DIR:impacto>
         COMMAND_EXPAND_LISTS VERBATIM)
-    add_custom_command(TARGET impacto POST_BUILD
+    add_custom_target(saekano_runtime_assets
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             ${CMAKE_CURRENT_SOURCE_DIR}/src/shaders $<TARGET_FILE_DIR:impacto>/shaders
         COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -1339,6 +1348,7 @@ if(IMPACTO_ENABLE_SAEKANO)
             -DOUTPUT_DIR=$<TARGET_FILE_DIR:impacto>
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_basepaths.cmake
         VERBATIM)
+    add_dependencies(impacto saekano_runtime_assets)
 endif()
 
 if (APPLE)
@@ -1545,5 +1555,3 @@ else()
     install(DIRECTORY resources DESTINATION ${CMAKE_SOURCE_DIR}/android/app/src/main/assets PATTERN "*/gamedata/*" EXCLUDE)
     install(FILES gamedefinitions.lua DESTINATION ${CMAKE_SOURCE_DIR}/android/app/src/main/assets)
 endif()
-
-

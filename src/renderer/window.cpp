@@ -296,6 +296,7 @@ void BaseWindow::SetWindowedSizing() {
 }
 
 RectF BaseWindow::GetViewport() {
+  if(FullFramebuffer)return RectF(0,0,float(WindowWidth),float(WindowHeight));
   RectF viewport;
 
   const float designWidth =

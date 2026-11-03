@@ -33,7 +33,7 @@ class PcBacklogOwner final:public BacklogScreenServices {
   }
   ~PcBacklogOwner(){
     for(auto it=renderer_.Textures.begin();it!=renderer_.Textures.end();){
-      if(!priorTextures_.contains(it->first)){glDeleteTextures(1,&it->second.Handle);it=renderer_.Textures.erase(it);}else ++it;
+      if(!priorTextures_.contains(it->first)){Impacto::Renderer->FreeTexture(it->second.Handle);it=renderer_.Textures.erase(it);}else ++it;
     }
   }
   int32_t Phase()const{return screen_.Phase();}
@@ -74,9 +74,9 @@ class PcBacklogOwner final:public BacklogScreenServices {
   void RetireRewindQuestion()override{question_={};}
   void Draw(){
     const auto& e=screen_.Environment();
-    glUseProgram(renderer_.Program);glBindVertexArray(renderer_.Vao);glBindBuffer(GL_ARRAY_BUFFER,renderer_.Buffer);
-    glActiveTexture(GL_TEXTURE0);glDisable(GL_DEPTH_TEST);glDisable(GL_STENCIL_TEST);glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);glUniform1i(renderer_.AlphaMode,0);renderer_.SetFilter(0,0);
+    renderer_.Bind();
+    ViewerWindow::Gpu->SetBlend({});
+    ViewerWindow::Gpu->SetBlend({true,4,5,4,5});renderer_.SetAlpha(0);renderer_.SetFilter(0,0);
     auto shade=e.Colors.at(0xc1a4);shade[3]=uint8_t(int64_t(shade[3])*screen_.Fade()/e.Word(0xc19c));
     Rectangle({0,0,960,544},shade);
     Sprite(0xbe28,ProfileTextureSection::MainUi,33);Sprite(0xc11c,ProfileTextureSection::SharedUi,6);

@@ -57,7 +57,7 @@ class SdkLive2dDriver final : public Live2dDriver,public OrdinaryModelMouthServi
   bool MouthResourceReady(int32_t resource) const override { return ResourceReady(resource); }
   void BeginMouthEnvelope(int32_t resource,const ProfileMouthAnimation& envelope,uint64_t now) override;
   void EndMouthEnvelope(int32_t resource) override;
-  OpenGL::Cubism2Model& Model(int32_t resource);
+  Cubism2Model& Model(int32_t resource);
   const Live2dModelAssets& Assets(int32_t resource) const;
   Live2dDriverObservation Observe(int32_t resource) const;
   std::array<float, 16> Matrix(int32_t resource, float width = 960,
@@ -73,7 +73,7 @@ class SdkLive2dDriver final : public Live2dDriver,public OrdinaryModelMouthServi
   Item& Get(const Live2dRecord& record);
   GameResources& resources_;
   Live2dEnvironment environment_;
-  OpenGL::Cubism2Sdk sdk_;
+  Cubism2Sdk sdk_;
   std::map<int32_t, std::unique_ptr<Item>> items_;
   bool gateReady_ = true;
 };

@@ -15,6 +15,10 @@ void GLYUVFrame::Init(float width, float height) {
   LumaId = yuv[0];
   CbId = yuv[1];
   CrId = yuv[2];
+  for(auto id:yuv){glBindTexture(GL_TEXTURE_2D,id);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+  }
 }
 
 void GLYUVFrame::Submit(const void* luma, const void* cb, const void* cr) {
@@ -40,6 +44,7 @@ void GLYUVFrame::Release() {
   yuv[1] = CbId;
   yuv[2] = CrId;
   glDeleteTextures(3, yuv);
+  LumaId=CbId=CrId=0;
 }
 
 void GLYUVFrame::SubmitStrided(const void* luma,int lumaStride,const void* cb,int cbStride,const void* cr,int crStride){

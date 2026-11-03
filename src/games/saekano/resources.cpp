@@ -385,7 +385,7 @@ size_t GameResources::ImageCount(ImageSection section) const {
   const auto found = images_.find(section);
   return found == images_.end() ? 0 : found->second.Entries().size();
 }
-ResourceAsset GameResources::LoadImage(ImageSection section, size_t imageId) const {
+ResourceAsset GameResources::LoadSceneImage(ImageSection section, size_t imageId) const {
   if (imageId >= ImageCount(section)) throw FormatError("scene image ID outside original archive");
   const auto& archive = images_.at(section);
   return {archive.Entries()[imageId].Name, CompressedEntry(archive, imageId, 1)};

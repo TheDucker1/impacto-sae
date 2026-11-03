@@ -88,7 +88,7 @@ ImagePixels DecodeSceneImage(std::span<const uint8_t> bytes) {
 void ArchiveSceneImages::Prepare(ImageSlot slot, ImageKey key) {
   auto image = cache_[key].lock();
   if (!image) {
-    auto asset = resources_.LoadImage(key.Section, key.Id);
+    auto asset = resources_.LoadSceneImage(key.Section, key.Id);
     image = std::make_shared<ImagePixels>(DecodeSceneImage(asset.Data));
     cache_[key] = image;
   }
@@ -112,7 +112,7 @@ void ArchiveSceneImages::RequestAsset(ImageKey key) {
   if (assets_.contains(key)) return;
   auto image = cache_[key].lock();
   if (!image) {
-    auto asset = resources_.LoadImage(key.Section, key.Id);
+    auto asset = resources_.LoadSceneImage(key.Section, key.Id);
     image = std::make_shared<ImagePixels>(DecodeSceneImage(asset.Data));
     cache_[key] = image;
   }

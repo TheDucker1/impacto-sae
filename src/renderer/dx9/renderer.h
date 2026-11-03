@@ -11,8 +11,17 @@
 namespace Impacto {
 namespace DirectX9 {
 
+class DeviceResource {
+ public:
+  virtual ~DeviceResource() = default;
+  virtual void BeforeDeviceReset() = 0;
+  virtual void AfterDeviceReset() = 0;
+};
+
 class Renderer : public BaseRenderer {
  public:
+  Renderer();
+  ~Renderer() override;
   void Init() override;
   void Shutdown() override;
 
@@ -31,12 +40,28 @@ class Renderer : public BaseRenderer {
   void UnloadSurf(int surfId) override {};
   uint32_t SubmitTexture(TexFmt format, uint8_t* buffer, int width,
                          int height) override;
+  void ConfigureTextureSampling(uint32_t id, TextureSampling sampling) override;
+  void UpdateTexture(uint32_t id, TexFmt format, const uint8_t* pixels,
+                     int width, int height, size_t stride) override;
+  uintptr_t NativeDeviceHandle() const override {
+    return reinterpret_cast<uintptr_t>(Device);
+  }
+  uintptr_t NativeTextureHandle(uint32_t id) const override;
+  uint32_t CreateRenderTexture(int width, int height) override;
+  void InvalidateState() override {
+    CurrentShader = nullptr;
+    CurrentTexture = UINT32_MAX;
+  }
+  void RegisterResource(DeviceResource* resource) {
+    DeviceResources.push_back(resource);
+  }
+  void UnregisterResource(DeviceResource* resource) {
+    std::erase(DeviceResources, resource);
+  }
+  bool IsFrameActive() const { return Drawing; }
 
   int GetSpriteSheetImage(SpriteSheet const& sheet,
-                          std::span<uint8_t> outBuffer) override {
-    // TODO implement
-    return 0;
-  }
+                          std::span<uint8_t> outBuffer) override;
   void FreeTexture(uint32_t id) override;
   YUVFrame* CreateYUVFrame(float width, float height) override;
   NV12Frame* CreateNV12Frame(float width, float height) override;
@@ -138,27 +163,34 @@ class Renderer : public BaseRenderer {
 
   glm::vec2 DesignToNDC(glm::vec2 designCoord) const override;
 
-  DirectX9Window* DXWindow;
+  DirectX9Window* DXWindow = nullptr;
 
-  IDirect3D9* Interface;
-  IDirect3DDevice9* Device;
+  IDirect3D9* Interface = nullptr;
+  D3DPRESENT_PARAMETERS PresentParameters{};
+  std::vector<DeviceResource*> DeviceResources;
+  struct RenderTexture {
+    int Width, Height;
+    std::vector<uint8_t> Pixels;
+  };
+  ankerl::unordered_dense::map<uint32_t, RenderTexture> RenderTextures;
+  void ResetDevice(int width, int height, bool preserve);
+  IDirect3DDevice9* Device = nullptr;
+  IDirect3DVertexDeclaration9* VertexDeclaration = nullptr;
 
-  Shader* CurrentShader;
+  Shader* CurrentShader = nullptr;
 
-  Shader* ShaderSprite;
-  Shader* ShaderSpriteInverted;
-  Shader* ShaderMaskedSprite;
-  Shader* ShaderMaskedSpriteNoAlpha;
-  Shader* ShaderYUVFrame;
-  Shader* ShaderNV12Frame;
-  Shader* ShaderCCMessageBox;
-  Shader* ShaderCHLCCMenuBackground;
+  Shader* ShaderSprite = nullptr;
+  Shader* ShaderSpriteInverted = nullptr;
+  Shader* ShaderMaskedSprite = nullptr;
+  Shader* ShaderMaskedSpriteNoAlpha = nullptr;
+  Shader* ShaderYUVFrame = nullptr;
+  Shader* ShaderNV12Frame = nullptr;
+  Shader* ShaderCCMessageBox = nullptr;
+  Shader* ShaderCHLCCMenuBackground = nullptr;
 
   uint32_t CurrentTexture = 0;
   uint32_t NextTextureId = 1;
-
-  DX9YUVFrame* VideoFrameInternalYUV;
-  DX9NV12Frame* VideoFrameInternalNV12;
+  ankerl::unordered_dense::map<uint32_t, TextureSampling> TextureSamplers;
 
   bool Drawing = false;
 
@@ -167,11 +199,11 @@ class Renderer : public BaseRenderer {
       VertexBufferSize / (4 * sizeof(VertexBufferSprites)) * 6;
 
   uint8_t VertexBuffer[VertexBufferSize];
-  IDirect3DVertexBuffer9* VertexBufferDevice;
+  IDirect3DVertexBuffer9* VertexBufferDevice = nullptr;
   size_t VertexBufferFill = 0;
   uint16_t IndexBuffer[IndexBufferCount];
-  IDirect3DIndexBuffer9* IndexBufferDevice;
-  IDirect3DIndexBuffer9* IndexBufferMvl;
+  IDirect3DIndexBuffer9* IndexBufferDevice = nullptr;
+  IDirect3DIndexBuffer9* IndexBufferMvl = nullptr;
   size_t IndexBufferFill = 0;
 };
 

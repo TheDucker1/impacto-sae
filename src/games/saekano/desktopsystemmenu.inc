@@ -28,7 +28,7 @@ class PcSystemMenuOwner final : public SystemMenuServices {
   ~PcSystemMenuOwner() {
     for(auto it=shared_.Renderer.Textures.begin();it!=shared_.Renderer.Textures.end();) {
       if(!priorTextures_.contains(it->first)) {
-        glDeleteTextures(1,&it->second.Handle);it=shared_.Renderer.Textures.erase(it);
+        Impacto::Renderer->FreeTexture(it->second.Handle);it=shared_.Renderer.Textures.erase(it);
       }else ++it;
     }
   }
@@ -43,9 +43,9 @@ class PcSystemMenuOwner final : public SystemMenuServices {
   const DialogState& Question()const{return question_;}
   void Draw(int32_t chapterId,const std::u16string& chapterText) {
     auto& renderer=shared_.Renderer;
-    glUseProgram(renderer.Program);glBindVertexArray(renderer.Vao);glBindBuffer(GL_ARRAY_BUFFER,renderer.Buffer);
-    glActiveTexture(GL_TEXTURE0);glDisable(GL_DEPTH_TEST);glDisable(GL_STENCIL_TEST);glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);glUniform1i(renderer.AlphaMode,0);renderer.SetFilter(0,0);
+    renderer.Bind();
+    ViewerWindow::Gpu->SetBlend({});
+    ViewerWindow::Gpu->SetBlend({true,4,5,4,5});renderer.SetAlpha(0);renderer.SetFilter(0,0);
     for(const auto& draw:menu_.Draw(chapterId,chapterText,uint32_t(shared_.FontSize))) {
       if(const auto* c=std::get_if<UiRenderCommand>(&draw)) {
         if(c->Kind==UiRenderKind::Sprite)shared_.Sprite(c->Sprite);

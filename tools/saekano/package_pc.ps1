@@ -1,8 +1,10 @@
 param([Parameter(Mandatory=$true)][string]$OutputDirectory,
+      [ValidateSet('OpenGL','DirectX9')][string]$Renderer = 'OpenGL',
       [string]$Usrdir, [switch]$SkipBuild)
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $buildRoot = Join-Path $repoRoot 'impacto-build/SaekanoPC-x86-Release'
+if ($Renderer -eq 'DirectX9') { $buildRoot = Join-Path $repoRoot 'impacto-build/SaekanoPC-DX9-x86-Release' }
 $output = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory).TrimEnd([IO.Path]::DirectorySeparatorChar)
 if (Test-Path -LiteralPath $output) { throw 'Choose a fresh package directory.' }
 $data = $null
@@ -21,7 +23,7 @@ if ($Usrdir) {
     }
   }
 }
-if (!$SkipBuild) { & (Join-Path $PSScriptRoot 'build_pc.ps1') }
+if (!$SkipBuild) { & (Join-Path $PSScriptRoot 'build_pc.ps1') -Renderer $Renderer }
 $vsRoot = 'C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools'
 $compiler = Get-ChildItem -LiteralPath (Join-Path $vsRoot 'VC/Tools/MSVC') -Directory |
   Sort-Object Name -Descending | Select-Object -First 1
@@ -34,8 +36,14 @@ foreach ($required in @($dumpbin, (Join-Path $buildRoot 'impacto.exe'))) {
   if (!(Test-Path -LiteralPath $required -PathType Leaf)) { throw "Missing build artifact/tool: $required" }
 }
 if (!$crt) { throw 'The x86 Microsoft VC143 redistributable directory is missing.' }
-$shareRoot = Join-Path $buildRoot 'vcpkg_installed/x86-windows-saekano/share'
-$sdkRoot = Join-Path $repoRoot 'impacto-build/deps/live2d-2.1-opengl-x86'
+function Cache-Path([string]$name, [string]$fallback) {
+  $line = Select-String -LiteralPath (Join-Path $buildRoot 'CMakeCache.txt') -Pattern "^${name}:[^=]+=" | Select-Object -First 1
+  if ($line) { return ($line.Line -split '=',2)[1] }
+  return $fallback
+}
+$installed = Cache-Path 'VCPKG_INSTALLED_DIR' (Join-Path $buildRoot 'vcpkg_installed')
+$shareRoot = Join-Path $installed 'x86-windows-saekano/share'
+$sdkRoot = Cache-Path 'SAEKANO_CUBISM2_SDK_ROOT' (Join-Path $repoRoot "impacto-build/deps/live2d-2.1-$($Renderer.ToLowerInvariant())-x86")
 foreach ($required in @($shareRoot, (Join-Path $sdkRoot 'SOURCE.json'))) {
   if (!(Test-Path -LiteralPath $required)) { throw "Missing dependency provenance: $required" }
 }
@@ -110,6 +118,14 @@ foreach ($notice in Get-ChildItem -LiteralPath $sdkRoot -File -Recurse |
 foreach ($notice in Get-ChildItem -LiteralPath (Join-Path $sdkRoot 'include') -File -Recurse -Filter '*.h') {
   Copy-Notice $notice.FullName ("live2d/include/" + $notice.FullName.Substring($sdkRoot.Length + 9))
 }
+if ($Renderer -eq 'DirectX9') {
+  $native = Cache-Path 'IMPACTO_D3DX9_ROOT' ''
+  $d3dx = Split-Path -Parent (Split-Path -Parent $native)
+  foreach ($name in @('LICENSE.txt','NOTICE.md','SOURCE.json')) {
+    $notice = Join-Path $d3dx $name
+    if (Test-Path -LiteralPath $notice) { Copy-Notice $notice "d3dx/$name" }
+  }
+}
 $revision = & git -C $repoRoot rev-parse HEAD
 if ($LASTEXITCODE -ne 0) { throw 'Cannot record source revision.' }
 $dirty = @(& git -C $repoRoot diff --name-only HEAD)
@@ -118,7 +134,7 @@ $files = @(Get-ChildItem -LiteralPath $output -File -Recurse | ForEach-Object {
   [ordered]@{path=$_.FullName.Substring($output.Length + 1).Replace('\','/');
     bytes=$_.Length; sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
 } | Sort-Object { $_.path })
-$manifest = [ordered]@{format=1; architecture='x86'; platform='Windows 10 or newer';
+$manifest = [ordered]@{format=1; architecture='x86'; renderer=$Renderer; platform='Windows 10 or newer';
   source_revision=$revision; modified_tracked_paths=$dirty;
   original_game_data_included=$false; dependency_imports_verified=$true;
   system_imports=@($system | Sort-Object); files=$files}

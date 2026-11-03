@@ -47,7 +47,7 @@ bool RunStartupPresentation(ViewerWindow& window,
     logoRenderer.Draw({},width,height);
   };
   const auto finish=[&] {
-    SdlCheck(SDL_GL_SwapWindow(window.Window),"startup swap");++frame;
+    SdlCheck(window.Present(),"startup swap");++frame;
     if(capture && frame>=16000)throw FormatError("startup capture exhausted its bounded frame budget");
     // The visible window already uses swap interval1. A second16ms wait here
     // would halve the frame-counter logo animation's speed.
@@ -103,7 +103,7 @@ bool RunStartupPresentation(ViewerWindow& window,
           fade.Tick(now());movie.SetVolume(volume*(100-fade.Value.Current)/100);
           // Movie drawing restores its previous program; select the UI owner
           // explicitly before the startup fade, just as the native draw does.
-          glUseProgram(logoRenderer.Program);glBindVertexArray(logoRenderer.Vao);glBindBuffer(GL_ARRAY_BUFFER,logoRenderer.Buffer);
+          logoRenderer.Bind();
           UiSpriteBlit white;white.Destination={0,0,960,544};white.Color={255,255,255,uint8_t(fade.Value.Current*255/100)};
           logoRenderer.DrawQuad(white,{0,1,1},true);
           if(fade.Finished())movie.Stop();

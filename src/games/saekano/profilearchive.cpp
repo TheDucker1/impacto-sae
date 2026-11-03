@@ -75,7 +75,7 @@ void ArchiveProfileServices::Act(ProfileResponseAction action,
       if (response.Background != -1)
         background_ =
             DecodeSceneImage(resources_
-                                 .LoadImage(ImageSection::Background,
+                                 .LoadSceneImage(ImageSection::Background,
                                             size_t(response.Background))
                                  .Data);
       responseAssets_ = resources_.LoadProfileVoice(

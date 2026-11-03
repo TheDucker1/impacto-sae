@@ -48,4 +48,6 @@ void SavePcSettings(const std::filesystem::path& path,const PcSettings& settings
 PcSettings& RuntimePcSettings();
 void SetRuntimePcSettings(PcSettings settings);
 void InitializePcSettings();
+// Match the frontend to the SDK selected for this product build.
+void ConfigurePcRenderer();
 } // namespace Impacto::Saekano

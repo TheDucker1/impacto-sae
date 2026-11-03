@@ -72,9 +72,12 @@ void GLWindow::TryCreateGL(GraphicsApi api) {
       SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
       SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
       SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,
-                          SDL_GL_CONTEXT_PROFILE_CORE);
+                          Profile::Game::OpenGLCompatibility
+                              ? SDL_GL_CONTEXT_PROFILE_COMPATIBILITY
+                              : SDL_GL_CONTEXT_PROFILE_CORE);
 
-      contextFlags |= SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG;
+      if (!Profile::Game::OpenGLCompatibility)
+        contextFlags |= SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG;
       break;
 
     case GfxApi_ForceDesktopGLES:
@@ -286,13 +289,13 @@ void GLWindow::Update() {
 
       glFramebufferTexture2D(bufferType, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                              texture, 0);
-      glFramebufferRenderbuffer(bufferType, GL_STENCIL_ATTACHMENT,
+      glFramebufferRenderbuffer(bufferType, GL_DEPTH_STENCIL_ATTACHMENT,
                                 GL_RENDERBUFFER, StencilBuffer);
     };
 
     glGenRenderbuffers(1, &StencilBuffer);
     glBindRenderbuffer(GL_RENDERBUFFER, StencilBuffer);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_STENCIL_INDEX8, viewport.Width,
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, viewport.Width,
                           viewport.Height);
     createFBO(ReadRT, ReadRenderTexture, GL_READ_FRAMEBUFFER);
     createFBO(DrawRT, DrawRenderTexture, GL_DRAW_FRAMEBUFFER);
@@ -304,6 +307,7 @@ void GLWindow::Update() {
       glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
       glClear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
       SDL_GL_SwapWindow(SDLWindow);
+  if(FullFramebuffer)GLC::BindFramebuffer(GL_DRAW_FRAMEBUFFER,DrawRT);
     }
   }
 
@@ -350,6 +354,7 @@ void GLWindow::Draw() {
 #endif
 
   SDL_GL_SwapWindow(SDLWindow);
+  if(FullFramebuffer)GLC::BindFramebuffer(GL_DRAW_FRAMEBUFFER,DrawRT);
 }
 
 void GLWindow::Shutdown(bool exitProcess) {

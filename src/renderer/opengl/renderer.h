@@ -38,6 +38,12 @@ class Renderer : public BaseRenderer {
   void UnloadSurf(int surfId) override;
   uint32_t SubmitTexture(TexFmt format, uint8_t* buffer, int width,
                          int height) override;
+  void ConfigureTextureSampling(uint32_t id, TextureSampling sampling) override;
+  void UpdateTexture(uint32_t id, TexFmt format, const uint8_t* pixels,
+                     int width, int height, size_t stride) override;
+  uintptr_t NativeTextureHandle(uint32_t id) const override { return id; }
+  uint32_t CreateRenderTexture(int width, int height) override;
+  void InvalidateState() override { CurrentShaderProgram = nullptr; }
   int GetSpriteSheetImage(SpriteSheet const& sheet,
                           std::span<uint8_t> outBuffer) override;
   void FreeTexture(uint32_t id) override;

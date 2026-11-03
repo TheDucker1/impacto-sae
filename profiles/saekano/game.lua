@@ -3,6 +3,7 @@ root.GameFeatures = GameFeature.Renderer2D | GameFeature.Input | GameFeature.Aud
 root.DesignWidth = 960;
 root.DesignHeight = 544;
 root.WindowName = "Saekano";
+root.OpenGLCompatibility = true;
 
 root.Saekano = {
     GameDataPath = root.BasePaths.RootGamedataDir .. "/saekano",

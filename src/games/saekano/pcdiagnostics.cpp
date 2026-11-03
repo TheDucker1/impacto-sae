@@ -11,6 +11,16 @@ namespace Impacto::Saekano {
 std::optional<int> RunPcDiagnostics(int argc, char* argv[]) {
   if (argc < 2 || !std::string_view(argv[1]).starts_with("--saekano-"))
     return std::nullopt;
+#ifdef IMPACTO_CUBISM2_DX9
+  // These retained developer comparisons inspect OpenGL registers or compare
+  // original GLSL programs. Normal gameplay and portable captures use Scene2D.
+  const std::string_view command(argv[1]);
+  for(const std::string_view glOnly:{"--saekano-result-render-state","--saekano-particle-group",
+      "--saekano-particle-raster","--saekano-particle-fragment","--saekano-particle-projection",
+      "--saekano-filter-check","--saekano-slot-thumbnail-check","--saekano-scene-thumbnail-check",
+      "--saekano-movie-session","--saekano-profile-item-frames","--saekano-profile-menu-frame","--saekano-profile-backdrop"})
+    if(command==glOnly){SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"This developer comparison requires the OpenGL build");return 1;}
+#endif
   // Development entries use the same profile and file mappings as normal play.
   Profile::Init();
   Profile::ConfigureDefinitions();

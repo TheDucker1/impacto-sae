@@ -60,6 +60,7 @@ enum class ShaderProgramType : int {
 
 enum class RendererBlendMode { Normal, Additive, Premultiplied };
 enum class RendererBlurDirection { Horizontal, Vertical };
+enum class TextureSampling { LinearClamp, LinearRepeat, NearestClamp };
 
 class BaseRenderer {
  public:
@@ -87,6 +88,23 @@ class BaseRenderer {
   virtual void UnloadSurf(int surfId) = 0;
   virtual uint32_t SubmitTexture(TexFmt format, uint8_t* buffer, int width,
                                  int height) = 0;
+  virtual void ConfigureTextureSampling(uint32_t id, TextureSampling sampling) {
+    throw std::runtime_error("texture sampling configuration is unavailable");
+  }
+  virtual void UpdateTexture(uint32_t id, TexFmt format, const uint8_t* pixels,
+                             int width, int height, size_t stride) {
+    throw std::runtime_error("texture updates are unavailable");
+  }
+  // Used only by a renderer adapter that interoperates with a native SDK.
+  virtual uintptr_t NativeDeviceHandle() const { return 0; }
+  virtual uintptr_t NativeTextureHandle(uint32_t id) const {
+    throw std::runtime_error("native texture interoperation is unavailable");
+  }
+  virtual uint32_t CreateRenderTexture(int width, int height) {
+    throw std::runtime_error("render textures are unavailable");
+  }
+  virtual void InvalidateState() {}
+  void FlushDraws() { Flush(); }
 
   std::vector<uint8_t> GetSpriteSheetImage(SpriteSheet const& sheet) {
     std::vector<uint8_t> result(

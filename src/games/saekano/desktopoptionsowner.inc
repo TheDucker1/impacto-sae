@@ -78,7 +78,7 @@ class PcOptionsOwner final:public OptionsOwnerOutput {
   ~PcOptionsOwner(){
     try{playback_.StopOrdinaryVoice(7);}catch(...){}
     for(auto i=renderer_.Textures.begin();i!=renderer_.Textures.end();){
-      if(!priorTextures_.contains(i->first)){glDeleteTextures(1,&i->second.Handle);i=renderer_.Textures.erase(i);}else ++i;
+      if(!priorTextures_.contains(i->first)){Impacto::Renderer->FreeTexture(i->second.Handle);i=renderer_.Textures.erase(i);}else ++i;
     }
   }
   void BeginFrame(const OptionsPageInput& input,const DialogInput& modal,const WidgetInputHistory::Snapshot& snapshot,uint64_t now){

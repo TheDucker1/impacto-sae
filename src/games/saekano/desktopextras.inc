@@ -26,24 +26,8 @@ class PcExtrasPresentation {
     if(groups.size()<=1 || groups[1].empty() || groups[1].size()>3)
       throw FormatError("Extras save-question button group is unavailable");
     for(const auto& [key,texture]:renderer.Textures){(void)texture;priorTextures_.insert(key);}
-    ScopedSdkGlState scope;TargetBinding binding;
-    try {
-      glGenTextures(1,&target_.Handle);glBindTexture(GL_TEXTURE_2D,target_.Handle);
-      // Native format9 -> color format0 / texture0x0c000000; final flag1
-      // requests LINEAR min/mag. The newly allocated native surface is zeroed.
-      glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
-      glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
-      glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
-      glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
-      const std::vector<uint8_t> zero(size_t(target_.Width)*target_.Height*4);
-      glPixelStorei(GL_UNPACK_ALIGNMENT,4);
-      glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,target_.Width,target_.Height,0,GL_RGBA,GL_UNSIGNED_BYTE,zero.data());
-      glGenFramebuffers(1,&framebuffer_);glBindFramebuffer(GL_FRAMEBUFFER,framebuffer_);
-      glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,target_.Handle,0);
-      if(glCheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE)
-        throw FormatError("Extras render target is incomplete");
-      GlCheck("Extras render target allocation");
-    }catch(...){ReleaseTarget();throw;}
+    targetSurface_=ViewerWindow::Gpu->CreateTarget(960,544);target_=targetSurface_->Texture;
+
   }
   PcExtrasPresentation(const PcExtrasPresentation&)=delete;
   PcExtrasPresentation& operator=(const PcExtrasPresentation&)=delete;
@@ -51,7 +35,7 @@ class PcExtrasPresentation {
     ReleaseTarget();
     for(auto i=shared_.Renderer.Textures.begin();i!=shared_.Renderer.Textures.end();){
       if(!priorTextures_.contains(i->first)){
-        glDeleteTextures(1,&i->second.Handle);i=shared_.Renderer.Textures.erase(i);
+        Impacto::Renderer->FreeTexture(i->second.Handle);i=shared_.Renderer.Textures.erase(i);
       }else ++i;
     }
   }
@@ -92,7 +76,7 @@ class PcExtrasPresentation {
   }
   void Draw(const ExtrasRoot& root,const std::function<void()>& drawChild){
     if(root.ChildPresent() && !drawChild)throw FormatError("Extras child renderer is missing");
-    ScopedSdkGlState scope;TargetBinding binding;BindUi();
+    ScopedSceneRenderState scope;TargetBinding binding;BindUi();
     const auto text=[this](const UiTextBlit& t){
       shared_.Textures.DrawString(shared_.Renderer,shared_.Font,t.Text,t.Position[0],t.Position[1],t.Size,t.Color);
     };
@@ -101,17 +85,12 @@ class PcExtrasPresentation {
     };
     for(const auto& command:BuildExtrasRootDraw(root,uint32_t(shared_.FontSize),measure))switch(command.Kind){
       case ExtrasDrawKind::BeginMask:
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER,framebuffer_);glViewport(0,0,target_.Width,target_.Height);
-        glClearColor(0,0,0,1);glClear(GL_COLOR_BUFFER_BIT);ApplyParticleBlend(1);break;
+        ViewerWindow::Gpu->SetTarget(*targetSurface_);ViewerWindow::Gpu->Clear({0,0,0,1});ApplyParticleBlend(1);break;
       case ExtrasDrawKind::Multiply:ApplyParticleBlend(3);break;
       case ExtrasDrawKind::EndMask:binding.Restore();ApplyParticleBlend(1);break;
       case ExtrasDrawKind::Sprite:shared_.Sprite(command.Sprite);break;
       case ExtrasDrawKind::Mask:{
-        // UI coordinates start at the top; the GL target's texture starts at
-        // the bottom. Flip only its sampling, retaining authored destination.
         auto blit=command.Sprite;
-        blit.Source[1]=std::bit_cast<int32_t>(target_.Height-uint32_t(blit.Source[1]));
-        blit.Source[3]=std::bit_cast<int32_t>(0u-uint32_t(blit.Source[3]));
         shared_.Renderer.DrawQuad(blit,target_,false);break;
       }
       case ExtrasDrawKind::Child:drawChild();binding.Restore();BindUi();break;
@@ -132,30 +111,18 @@ class PcExtrasPresentation {
  private:
   // Compatibility attribute stacks do not preserve framebuffer bindings.
   struct TargetBinding {
-    GLint Draw=0,Read=0;std::array<GLint,4> Viewport{};
-    TargetBinding(){
-      glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&Draw);glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&Read);
-      glGetIntegerv(GL_VIEWPORT,Viewport.data());
-    }
-    void Restore()const{
-      glBindFramebuffer(GL_DRAW_FRAMEBUFFER,GLuint(Draw));glBindFramebuffer(GL_READ_FRAMEBUFFER,GLuint(Read));
-      glViewport(Viewport[0],Viewport[1],Viewport[2],Viewport[3]);
-    }
-    ~TargetBinding(){Restore();}
+    mutable std::unique_ptr<SceneRenderState> State=ViewerWindow::Gpu->SaveState();
+    void Restore()const{State.reset();State=ViewerWindow::Gpu->SaveState();}
   };
   void BindUi(){
     auto& renderer=shared_.Renderer;
-    glUseProgram(renderer.Program);glBindVertexArray(renderer.Vao);glBindBuffer(GL_ARRAY_BUFFER,renderer.Buffer);
-    glActiveTexture(GL_TEXTURE0);glDisable(GL_DEPTH_TEST);glDisable(GL_STENCIL_TEST);
-    glDisable(GL_CULL_FACE);glDisable(GL_SCISSOR_TEST);glDisable(GL_FRAMEBUFFER_SRGB);
-    glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
-    glUniform1i(renderer.AlphaMode,0);renderer.SetFilter(0,0);ApplyParticleBlend(1);
+    renderer.Bind();
+
+
+
+    renderer.SetAlpha(0);renderer.SetFilter(0,0);ApplyParticleBlend(1);
   }
-  void ReleaseTarget()noexcept{
-    if(framebuffer_)glDeleteFramebuffers(1,&framebuffer_);
-    if(target_.Handle)glDeleteTextures(1,&target_.Handle);
-    framebuffer_=target_.Handle=0;
-  }
+  void ReleaseTarget()noexcept{targetSurface_.reset();target_.Handle=0;}
   SemanticState& owner_;PlaybackTitleAudio& audio_;uint32_t hold_;
   std::function<void(bool)> switchAudio_;TextFormatEnvironment format_;SceneDialogLayer shared_;
   ExtrasButtonHelpEnvironment help_;ButtonHelpStyle style_;
@@ -163,6 +130,6 @@ class PcExtrasPresentation {
   DialogState question_;std::u16string prompt_;DialogContentLayout layout_;
   PcDialogContacts questionContacts_,saveContacts_;DialogInput input_;uint64_t now_=0;
   bool questionOwned_=false;
-  UiBlitRenderer::BoundTexture target_{0,960,544};GLuint framebuffer_=0;
+  UiBlitRenderer::BoundTexture target_{0,960,544};std::unique_ptr<SceneRenderTarget> targetSurface_;
   std::set<ProfileTextureKey> priorTextures_;
 };

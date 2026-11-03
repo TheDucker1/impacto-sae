@@ -1,5 +1,6 @@
 int RunSceneThumbnailProbe(const std::filesystem::path& output) {
   bool created=false;
+  using PcSceneThumbnail=ReferencePcSceneThumbnail;
   try {
     if(std::filesystem::exists(output))throw FormatError("choose a fresh scene thumbnail output");
     std::filesystem::create_directories(output);created=true;

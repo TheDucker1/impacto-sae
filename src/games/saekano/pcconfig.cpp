@@ -1,6 +1,7 @@
 #include "pcconfig.h"
 #include "pcvalidation.h"
 #include "../../profile/game.h"
+#include "../../userconfig.h"
 #include "../../profile/games/saekano/game.h"
 #include <toml.hpp>
 #include <algorithm>
@@ -138,4 +139,11 @@ void SavePcSettings(const std::filesystem::path& path,const PcSettings& s){
 PcSettings& RuntimePcSettings(){static auto settings=PcSettings::Defaults();return settings;}
 void SetRuntimePcSettings(PcSettings s){s.Validate();RuntimePcSettings()=std::move(s);RuntimeInitialized=true;}
 void InitializePcSettings(){if(!RuntimeInitialized)SetRuntimePcSettings(LoadPcSettings(DefaultPcConfigPath()));}
+void ConfigurePcRenderer() {
+#ifdef IMPACTO_CUBISM2_DX9
+  UserConfig::AdvancedSettings.ActiveRenderer=RendererType::DirectX9;
+#else
+  UserConfig::AdvancedSettings.ActiveRenderer=RendererType::OpenGL;
+#endif
+}
 } // namespace Impacto::Saekano

@@ -4,7 +4,11 @@
 #define NOMINMAX
 #endif
 #include <Live2D.h>
+#ifdef IMPACTO_CUBISM2_DX9
+#include <Live2DModelD3D.h>
+#else
 #include <Live2DModelWinGL.h>
+#endif
 #include <motion/Live2DMotion.h>
 #include <motion/EyeBlinkMotion.h>
 #include <motion/MotionQueueManager.h>
@@ -21,8 +25,14 @@
 #include <thread>
 #include <string>
 #include <vector>
+#include <algorithm>
 
-namespace Impacto::OpenGL {
+namespace Impacto {
+#ifdef IMPACTO_CUBISM2_DX9
+using NativeCubism2Model = live2d::Live2DModelD3D;
+#else
+using NativeCubism2Model = live2d::Live2DModelWinGL;
+#endif
 struct Cubism2Context {
   std::thread::id Owner = std::this_thread::get_id();
   Cubism2Context() { live2d::Live2D::init(); }
@@ -41,6 +51,7 @@ struct Cubism2Context {
 };
 
 namespace {
+std::vector<NativeCubism2Model*> DeviceModels;
 int InputSize(std::span<const uint8_t> bytes) {
   if (bytes.empty() || bytes.size() > size_t(std::numeric_limits<int>::max()))
     throw FormatError("invalid Cubism2 input size");
@@ -73,6 +84,7 @@ std::string_view Cubism2Sdk::Version() const {
   context_->CheckThread();
   return live2d::Live2D::getVersionStr();
 }
+Cubism2Sdk::~Cubism2Sdk() = default;
 void Cubism2Sdk::SetTime(uint64_t milliseconds) {
   context_->CheckThread();
   if (milliseconds > uint64_t(std::numeric_limits<int64_t>::max()))
@@ -84,7 +96,10 @@ struct Cubism2Model::Impl {
   // Shared lifetime keeps SDK initialized until every parsed object is
   // released.
   std::shared_ptr<Cubism2Context> Context;
-  std::unique_ptr<live2d::Live2DModelWinGL> Model;
+  std::unique_ptr<NativeCubism2Model> Model;
+#ifdef IMPACTO_CUBISM2_DX9
+  IDirect3DDevice9* Device = nullptr;  // Borrowed from the renderer.
+#endif
   std::vector<std::unique_ptr<live2d::Live2DMotion>> Motions;
   std::vector<std::unique_ptr<live2d::framework::L2DExpressionMotion>>
       Expressions;
@@ -103,17 +118,25 @@ struct Cubism2Model::Impl {
     if (textures > size_t(std::numeric_limits<int>::max()))
       throw FormatError("too many Cubism2 textures");
     TexturesBound.resize(textures);
-    Model.reset(
-        live2d::Live2DModelWinGL::loadModel(moc.data(), InputSize(moc)));
+    Model.reset(NativeCubism2Model::loadModel(moc.data(), InputSize(moc)));
     Context->CheckError();
     if (!Model) throw FormatError("Cubism2 failed to load model");
     // Impacto's decoded GXT pixels retain straight RGB/alpha channels.
     Model->setPremultipliedAlpha(false);
-    Model->setMatrix(Matrix.data());
+    Model->getDrawParam()->setMatrix(Matrix.data());
     Model->saveParam();
+    DeviceModels.push_back(Model.get());
   }
-  ~Impl() { assert(Context->Owner == std::this_thread::get_id()); }
+  ~Impl() {
+    assert(Context->Owner == std::this_thread::get_id());
+    std::erase(DeviceModels, Model.get());
+  }
 };
+void Cubism2Model::BeforeDeviceReset() {
+#ifdef IMPACTO_CUBISM2_DX9
+  for (auto* model : DeviceModels) model->deviceLostD3D();
+#endif
+}
 
 Cubism2Model::Cubism2Model(std::shared_ptr<Cubism2Context> context,
                            std::span<const uint8_t> moc, size_t textureCount)
@@ -292,11 +315,25 @@ void Cubism2Model::ApplyBlink() {
   impl_->Blink.setParam(impl_->Model.get());
   impl_->Context->CheckError();
 }
-void Cubism2Model::BindTexture(size_t index, uint32_t openGlTexture) {
+void Cubism2Model::SetDevice(uintptr_t nativeDevice) {
   impl_->Context->CheckThread();
-  if (!openGlTexture || index >= impl_->TexturesBound.size())
+#ifdef IMPACTO_CUBISM2_DX9
+  if (!nativeDevice) throw FormatError("Cubism2 requires a Direct3D9 device");
+  impl_->Device = reinterpret_cast<IDirect3DDevice9*>(nativeDevice);
+  impl_->Model->setDevice(impl_->Device);
+#endif
+}
+void Cubism2Model::BindTexture(size_t index, uintptr_t nativeTexture) {
+  impl_->Context->CheckThread();
+  if (!nativeTexture || index >= impl_->TexturesBound.size())
     throw FormatError("invalid Cubism2 texture binding");
-  impl_->Model->setTexture(static_cast<int>(index), openGlTexture);
+#ifdef IMPACTO_CUBISM2_DX9
+  impl_->Model->setTexture(static_cast<int>(index),
+                           reinterpret_cast<IDirect3DTexture9*>(nativeTexture));
+#else
+  impl_->Model->setTexture(static_cast<int>(index),
+                           static_cast<uint32_t>(nativeTexture));
+#endif
   impl_->Context->CheckError();
   impl_->TexturesBound[index] = true;
 }
@@ -304,7 +341,7 @@ void Cubism2Model::SetMatrix(const std::array<float, 16>& matrix) {
   impl_->Context->CheckThread();
   for (float value : matrix) Finite(value);
   impl_->Matrix = matrix;
-  impl_->Model->setMatrix(impl_->Matrix.data());
+  impl_->Model->getDrawParam()->setMatrix(impl_->Matrix.data());
 }
 void Cubism2Model::SetColor(float red, float green, float blue, float alpha) {
   impl_->Context->CheckThread();
@@ -320,12 +357,41 @@ void Cubism2Model::Draw() {
     throw FormatError("Cubism2 draw has no textures");
   for (bool bound : impl_->TexturesBound)
     if (!bound) throw FormatError("Cubism2 draw before textures are bound");
+#ifdef IMPACTO_CUBISM2_DX9
+  if (!impl_->Device)
+    throw FormatError("Cubism2 draw before its device is bound");
+  // This legacy SDK uses the D3D9 fixed-function device transforms rather than
+  // DrawParam's GL matrix. Preserve the game's canonical clip transform here.
+  D3DVIEWPORT9 viewport{};
+  if (FAILED(impl_->Device->GetViewport(&viewport)))
+    throw FormatError("Cubism2 cannot read the Direct3D viewport");
+  auto matrix = impl_->Matrix;
+  for (size_t row = 0; row < 4; ++row) {
+    matrix[row * 4] -= matrix[row * 4 + 3] / float(viewport.Width);
+    matrix[row * 4 + 1] += matrix[row * 4 + 3] / float(viewport.Height);
+    matrix[row * 4 + 2] = (matrix[row * 4 + 2] + matrix[row * 4 + 3]) * .5f;
+  }
+  D3DMATRIX projection{}, identity{};
+  std::copy(matrix.begin(), matrix.end(), &projection.m[0][0]);
+  identity._11 = identity._22 = identity._33 = identity._44 = 1.f;
+  if (FAILED(impl_->Device->SetTransform(D3DTS_WORLD, &identity)) ||
+      FAILED(impl_->Device->SetTransform(D3DTS_VIEW, &identity)) ||
+      FAILED(impl_->Device->SetTransform(D3DTS_PROJECTION, &projection)))
+    throw FormatError("Cubism2 Direct3D transform upload failed");
+#endif
+#ifndef IMPACTO_CUBISM2_DX9
   if (!live2d::DrawParam_OpenGLES2::initGLFuncSuccess)
     live2d::DrawParam_OpenGLES2::initGLFunc();
   if (!live2d::DrawParam_OpenGLES2::initGLFuncSuccess)
     throw std::runtime_error("Cubism2 OpenGL functions are unavailable");
+#endif
   impl_->Model->draw();
+#ifdef IMPACTO_CUBISM2_DX9
+  const auto error = impl_->Model->getErrorD3D_tmp();
+  if (error)
+    throw FormatError("Cubism2 Direct3D error " + std::to_string(error));
+#endif
   impl_->Context->CheckError();
 }
 
-}  // namespace Impacto::OpenGL
+}  // namespace Impacto

@@ -1,5 +1,7 @@
 param([switch]$ConfigureOnly, [switch]$FreshConfigure, [switch]$Configure,
       [switch]$AllowDownloads,
+      [ValidateSet('OpenGL','DirectX9')][string]$Renderer = 'OpenGL',
+      [string]$SdkRoot, [string]$D3dxRoot,
       [string[]]$Targets = @('impacto'))
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
@@ -11,6 +13,22 @@ $ninja = Join-Path $cmakeRoot 'Ninja/ninja.exe'
 $vcpkgRoot = Join-Path $repoRoot 'impacto-build/deps/vcpkg'
 $expectedVcpkg = '62159a45e18f3a9ac0548628dcaf74fcb60c6ff9'
 $buildRoot = Join-Path $repoRoot 'impacto-build/SaekanoPC-x86-Release'
+if ($Renderer -eq 'DirectX9') { $buildRoot = Join-Path $repoRoot 'impacto-build/SaekanoPC-DX9-x86-Release' }
+if (!$SdkRoot) { $SdkRoot = Join-Path $repoRoot "impacto-build/deps/live2d-2.1-$($Renderer.ToLowerInvariant())-x86" }
+if (!$D3dxRoot) { $D3dxRoot = Join-Path $repoRoot 'impacto-build/deps/d3dx-9.29.952.8/build/native' }
+$sourceCache = $buildRoot
+$installedRoot = Join-Path $buildRoot 'vcpkg_installed'
+$cacheFile = Join-Path $buildRoot 'CMakeCache.txt'
+if (Test-Path -LiteralPath $cacheFile) {
+  $entry = Select-String -LiteralPath $cacheFile -Pattern '^VCPKG_INSTALLED_DIR:[^=]+=' | Select-Object -First 1
+  if ($entry) { $installedRoot = ($entry.Line -split '=',2)[1] }
+} elseif ($Renderer -eq 'DirectX9') {
+  $shared = Join-Path $repoRoot 'impacto-build/SaekanoPC-x86-Release'
+  if (Test-Path -LiteralPath (Join-Path $shared 'vcpkg_installed')) {
+    $installedRoot = Join-Path $shared 'vcpkg_installed'
+    $sourceCache = $shared
+  }
+}
 foreach ($tool in @($vcvars, $cmake, $ninja, (Join-Path $vcpkgRoot 'vcpkg.exe'))) {
   if (!(Test-Path -LiteralPath $tool)) { throw "Missing PC build tool: $tool" }
 }
@@ -32,6 +50,8 @@ $env:VCPKG_MAX_CONCURRENCY = '4'
 if ($ConfigureOnly -or $FreshConfigure -or $Configure -or
     !(Test-Path -LiteralPath (Join-Path $buildRoot 'CMakeCache.txt'))) {
   function Find-PkgConfig {
+    $native = Join-Path $installedRoot 'x64-windows/tools/pkgconf/pkgconf.exe'
+    if (Test-Path -LiteralPath $native) { return $native }
     Get-ChildItem -LiteralPath (Join-Path $vcpkgRoot 'downloads/tools/msys2') `
       -Filter 'pkg-config.exe' -Recurse -ErrorAction SilentlyContinue | `
       Where-Object { $_.FullName -like '*\mingw64\bin\*' } | `
@@ -48,30 +68,42 @@ if ($ConfigureOnly -or $FreshConfigure -or $Configure -or
     Push-Location $repoRoot
     try {
       & (Join-Path $vcpkgRoot 'vcpkg.exe') install '--triplet=x86-windows-saekano' `
-        "--x-install-root=$buildRoot/vcpkg_installed"
+        "--overlay-triplets=$repoRoot/triplets" "--x-install-root=$installedRoot"
       if ($LASTEXITCODE -ne 0) { throw 'PC dependencies failed to install' }
     } finally { Pop-Location }
     $pkgConfig = Find-PkgConfig
     if (!$pkgConfig) { throw 'The dependency installation did not provide native pkg-config' }
   }
-  $env:PKG_CONFIG_PATH = "$buildRoot/vcpkg_installed/x86-windows-saekano/lib/pkgconfig;$buildRoot/vcpkg_installed/x86-windows-saekano/share/pkgconfig"
+  $env:PKG_CONFIG_PATH = "$installedRoot/x86-windows-saekano/lib/pkgconfig;$installedRoot/x86-windows-saekano/share/pkgconfig"
   [string[]]$freshArgs = @()
   if ($FreshConfigure) { $freshArgs += '--fresh' }
   $manifestInstall = if ($AllowDownloads) { 'ON' } else { 'OFF' }
   $disconnected = if ($AllowDownloads) { 'OFF' } else { 'ON' }
+  $graphicsArgs = @('-DIMPACTO_DISABLE_DX9=ON')
+  if ($Renderer -eq 'DirectX9') {
+    $graphicsArgs = @('-UIMPACTO_DISABLE_DX9', "-DIMPACTO_D3DX9_ROOT=$D3dxRoot")
+  }
+  $sourceHints = @()
+  foreach ($name in @('libatrac9','magic_enum','imgui')) {
+    $source = Join-Path $sourceCache "_deps/$name-src"
+    if (Test-Path -LiteralPath $source) {
+      $sourceHints += "-DFETCHCONTENT_SOURCE_DIR_$($name.ToUpperInvariant())=$source"
+    }
+  }
   & $cmake @freshArgs -S $repoRoot -B $buildRoot -G Ninja "-DCMAKE_MAKE_PROGRAM=$ninja" `
     "-DCMAKE_C_COMPILER=$((Get-Command cl.exe).Source)" `
     "-DCMAKE_CXX_COMPILER=$((Get-Command cl.exe).Source)" `
     '-DCMAKE_TRY_COMPILE_CONFIGURATION=Release' "-DPKG_CONFIG_EXECUTABLE=$pkgConfig" `
     "-DCMAKE_TOOLCHAIN_FILE=$vcpkgRoot/scripts/buildsystems/vcpkg.cmake" `
+    "-DVCPKG_INSTALLED_DIR=$installedRoot" @sourceHints `
     '-DVCPKG_TARGET_TRIPLET=x86-windows-saekano' `
     "-DVCPKG_MANIFEST_INSTALL=$manifestInstall" `
     "-DFETCHCONTENT_FULLY_DISCONNECTED=$disconnected" `
     "-DVCPKG_OVERLAY_TRIPLETS=$repoRoot/triplets" `
     '-DIMPACTO_ENABLE_SAEKANO=ON' `
-    "-DSAEKANO_CUBISM2_SDK_ROOT=$repoRoot/impacto-build/deps/live2d-2.1-opengl-x86" `
+    "-DSAEKANO_CUBISM2_SDK_ROOT=$SdkRoot" "-DSAEKANO_CUBISM2_BACKEND=$Renderer" `
     '-DCMAKE_BUILD_TYPE=Release' '-DIMPACTO_DISABLE_VULKAN=ON' `
-    '-DIMPACTO_DISABLE_DX9=ON' '-DIMPACTO_WARNINGS=ON'
+    @graphicsArgs '-DIMPACTO_WARNINGS=ON'
   if ($LASTEXITCODE -ne 0) { throw 'PC frontend configuration failed' }
 }
 if (!$ConfigureOnly) {
