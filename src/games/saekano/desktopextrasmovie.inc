@@ -64,7 +64,7 @@ class PcExtrasMovie final:public ExtrasMovieServices {
   void Draw(){
     ScopedSceneRenderState scope;BindUi();
     const auto rectangle=[&](std::array<int32_t,4> r,std::array<uint8_t,4> color){UiSpriteBlit b;b.Destination=r;b.Color=color;shared_.Renderer.DrawQuad(b,{0,1,1},true);};
-    const auto sprite=[&](uint32_t id,const UiSpriteDefinition& s){shared_.Sprite(ResolveUiSprite({ProfileTextureSection::SystemUi,-1,id},s));};
+    const auto sprite=[&](uint32_t id,const UiSpriteDefinition& s){shared_.Sprite(ResolveUiSprite({ProfileTextureSection::TitleUi,-1,id},s));};
     const auto text=[&](const UiTextBlit& t){shared_.Textures.DrawString(shared_.Renderer,shared_.Font,t.Text,t.Position[0],t.Position[1],t.Size,t.Color);};
     const auto centered=[&](std::u16string_view value,int32_t x,int32_t y,uint32_t size){
       const auto width=MeasurePvfText(shared_.Font.Cached(),value,size,shared_.Font.NominalSize());
@@ -76,7 +76,7 @@ class PcExtrasMovie final:public ExtrasMovieServices {
     rectangle({0,0,960,544},{255,255,255,128});
     auto background=env_.Sprites.at(0xd8d4);background.Color[3]=uint8_t(env_.Scalars.at(0xd8f8));sprite(19,background);
     background=env_.Sprites.at(0xd8fc);background.Color[3]=uint8_t(env_.Scalars.at(0xd8f8));sprite(20,background);
-    auto fill=ResolveUiSprite({ProfileTextureSection::SystemUi,-1,60},env_.Common.SharedSprites[1]);
+    auto fill=ResolveUiSprite({ProfileTextureSection::TitleUi,-1,60},env_.Common.SharedSprites[1]);
     fill.Destination[2]=env_.Common.StretchSize[0];fill.Destination[3]=env_.Common.StretchSize[1];shared_.Sprite(fill);
     sprite(60,env_.Common.SharedSprites[0]);
     // The established list viewport lowers the native stencil/alpha/depth
@@ -113,7 +113,7 @@ class PcExtrasMovie final:public ExtrasMovieServices {
     for(size_t i=0;i<2;++i){
       auto s=env_.Sprites.at(i?0xd944:0xd920);s.X+=i?int32_t(arrows.Current):-int32_t(arrows.Current);
       if((i==0 && screen_.Selected()!=list.Rows.Minimum) || (i==1 && screen_.Selected()!=list.Rows.Maximum)){
-        auto b=ResolveUiSprite({ProfileTextureSection::SystemUi,-1,56},s);
+        auto b=ResolveUiSprite({ProfileTextureSection::TitleUi,-1,56},s);
         if(i)b.Source[2]=-b.Source[2];shared_.Sprite(b);
       }
     }

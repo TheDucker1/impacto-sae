@@ -65,9 +65,9 @@ class PcExtrasCg final:public ExtrasCgServices {
     const auto rectangle=[&](uint8_t alpha){UiSpriteBlit b;b.Destination={0,0,960,544};b.Color={255,255,255,alpha};r.DrawQuad(b,{0,1,1},true);};
     if(screen_.Phase()<=1)return;
     rectangle(128);
-    auto fill=ResolveUiSprite({ProfileTextureSection::SystemUi,-1,60},env_.Common.SharedSprites[1]);
+    auto fill=ResolveUiSprite({ProfileTextureSection::TitleUi,-1,58},env_.Common.SharedSprites[1]);
     fill.Destination[2]=env_.Common.StretchSize[0];fill.Destination[3]=env_.Common.StretchSize[1];shared_.Sprite(fill);
-    Sprite(60,env_.Common.SharedSprites[0]);Sprite(14,env_.Sprites.at(0xd24c));
+    Sprite(58,env_.Common.SharedSprites[0]);Sprite(14,env_.Sprites.at(0xd24c));
     const auto& list=screen_.List();
     for(size_t i=0;i<screen_.Catalogue().PageCardCounts.size();++i){
       if(int32_t(i)==list.Rows.Selected){auto s=env_.Sprites.at(0xd2d0);const auto& base=env_.Sprites.at(0xd24c);
@@ -77,7 +77,7 @@ class PcExtrasCg final:public ExtrasCgServices {
       Text(Number((i+1)/10),{x,y},size,{0,0,0,255},true);
       Text(Number((i+1)%10),{x+Word(0xd2c8),y},size,{0,0,0,255},true);
     }
-    Sprite(1,env_.Sprites.at(0xd270));auto arrow=ResolveUiSprite({ProfileTextureSection::SystemUi,-1,1},env_.Sprites.at(0xd294));
+    Sprite(1,env_.Sprites.at(0xd270));auto arrow=ResolveUiSprite({ProfileTextureSection::TitleUi,-1,1},env_.Sprites.at(0xd294));
     arrow.Source[2]=-arrow.Source[2];shared_.Sprite(arrow);
     static constexpr std::array<uint32_t,6> labels{4,13,8,6,7,11};
     const auto& tabs=env_.SpriteTables.at(0xd228);
@@ -151,7 +151,7 @@ class PcExtrasCg final:public ExtrasCgServices {
     if(center)p[0]-=int32_t(MeasurePvfText(shared_.Font.Cached(),text,size,shared_.Font.NominalSize())/2);
     shared_.Textures.DrawString(shared_.Renderer,shared_.Font,text,p[0],p[1],size,color);
   }
-  void Sprite(uint32_t id,const UiSpriteDefinition& sprite){shared_.Sprite(ResolveUiSprite({ProfileTextureSection::SystemUi,-1,id},sprite));}
+  void Sprite(uint32_t id,const UiSpriteDefinition& sprite){shared_.Sprite(ResolveUiSprite({ProfileTextureSection::TitleUi,-1,id},sprite));}
   void Counter(size_t value,std::array<int32_t,2> p,uint32_t size){
     // Native19a7fc, alignment2: two least-significant digits, each right-aligned
     // at the authored pitch. This is not proportional whole-string centering.

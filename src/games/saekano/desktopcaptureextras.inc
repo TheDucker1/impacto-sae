@@ -7,6 +7,24 @@ struct ExtrasInteractionCapture {
   Bytes ExpectedSystem;bool Finished=false;
   bool OpenReady=false;uint64_t MovieVideo=0,MovieAudio=0;
   std::filesystem::path ReplayOutput;
+  bool RootImage=false,CategoryImage=false,BrowserImage=false;
+  template<class Capture>void CaptureScreens(const PcTitleOwner& title,Capture capture){
+    const auto* extras=title.Extras();if(!extras)return;
+    if(!RootImage && extras->State().Phase()==2 && extras->State().Fade()==0){
+      capture("extras-root.bmp");RootImage=true;
+    }
+    const auto* cg=extras->CgChild();
+    if(!CategoryImage && cg && cg->State().Phase()==4){
+      capture("extras-cg-categories.bmp");CategoryImage=true;
+    }
+    const auto* movie=extras->MovieChild();const auto* music=extras->MusicChild();
+    const auto* battle=extras->BattleChild();
+    const bool ready=(cg && cg->State().Phase()==5 && !cg->State().List().Scrolling) ||
+        (movie && movie->State().Phase()==5 && movie->PlaybackState().VideoPresented) ||
+        (music && music->State().Phase()==3) ||
+        (battle && battle->State().Phase()==5 && !battle->State().List().Scrolling);
+    if(!BrowserImage && ready){capture("extras-browser.bmp");BrowserImage=true;}
+  }
   template<class Key>void Tick(PcTitleOwner& title,SemanticState& owner,MusicPlayback& playback,
       const ExtrasScreenEnvironment& env,uint64_t now,Key key){
     if(Stage==0 && title.State.Phase==10 && !title.Extras()){
@@ -136,6 +154,8 @@ struct ExtrasInteractionCapture {
   }
   void Verify(const std::filesystem::path& root,const std::filesystem::path& output,
       const ProgressPair& initial,const SemanticState& owner,size_t frames)const{
+    if(!RootImage || !BrowserImage || (Mode==2 && !CategoryImage))
+      throw FormatError("Extras capture missed its root or browser image");
     const auto saved=ReadProgressStore(root);
     if(Mode==2 || Mode==3 || Mode==4){
       if(!Finished || !saved || saved->Generation!=initial.Generation || saved->System.Encode()!=initial.System.Encode() || saved->Slots.Encode()!=initial.Slots.Encode())

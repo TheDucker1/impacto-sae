@@ -24,9 +24,9 @@ ExtrasRoot::ExtrasRoot(AlbumEnvironment environment,std::span<const int32_t> rep
       // Native rectangle faces use raw X/Y/width/height, independent of the
       // aligned sprite that the draw routine submits later.
       buttons_.emplace_back(Contact({sprite.X,sprite.Y,sprite.Width,sprite.Height}),
-          ProfileTextureKey{ProfileTextureSection::SystemUi,-1,0},1.f,true,hold);
+          ProfileTextureKey{ProfileTextureSection::TitleUi,-1,0},1.f,true,hold);
       for(const auto& rect:env_.ButtonRectangles[i])
-        regions_[i].emplace_back(Contact(rect),ProfileTextureKey{ProfileTextureSection::SystemUi,-1,0},1.f,true,hold);
+        regions_[i].emplace_back(Contact(rect),ProfileTextureKey{ProfileTextureSection::TitleUi,-1,0},1.f,true,hold);
     }
   }
   StartOptionsNavigation(navigation_,rows_,4,4,1,repeats);
@@ -120,23 +120,23 @@ std::vector<ExtrasDrawCommand> BuildExtrasRootDraw(const ExtrasRoot& root,uint32
   };
   if(root.Phase()!=4) {
     operation(ExtrasDrawKind::BeginMask);
-    sprite(ProfileTextureSection::SystemUi,46,e.Backdrop);
+    sprite(ProfileTextureSection::TitleUi,46,e.Backdrop);
     operation(ExtrasDrawKind::Multiply);
     constexpr std::array<uint32_t,4> headers{47,48,49,55};
-    sprite(ProfileTextureSection::SystemUi,headers[size_t(selected)],e.SectionHeaders[size_t(selected)]);
+    sprite(ProfileTextureSection::TitleUi,headers[size_t(selected)],e.SectionHeaders[size_t(selected)]);
     operation(ExtrasDrawKind::EndMask);
   }
-  sprite(ProfileTextureSection::SystemUi,46,e.Backdrop);
+  sprite(ProfileTextureSection::TitleUi,46,e.Backdrop);
   // The target uses the same authored geometry/UV/tint as the backdrop.
   ExtrasDrawCommand mask;mask.Kind=ExtrasDrawKind::Mask;
   mask.Sprite=ResolveUiSprite({},e.Backdrop);out.push_back(std::move(mask));
   if(root.ChildPresent())operation(ExtrasDrawKind::Child);
   else {
     auto stretch=e.SharedSprites[1];stretch.Width=e.StretchSize[0];stretch.Height=e.StretchSize[1];
-    auto fill=ResolveUiSprite({ProfileTextureSection::SystemUi,-1,59},stretch);
+    auto fill=ResolveUiSprite({ProfileTextureSection::TitleUi,-1,59},stretch);
     fill.Source[2]=e.SharedSprites[1].Width;fill.Source[3]=e.SharedSprites[1].Height;
     ExtrasDrawCommand c;c.Sprite=fill;out.push_back(std::move(c));
-    sprite(ProfileTextureSection::SystemUi,59,e.SharedSprites[0]);
+    sprite(ProfileTextureSection::TitleUi,59,e.SharedSprites[0]);
     auto shared=e.SharedSprites[2];shared.Alignment=0;
     sprite(ProfileTextureSection::SharedUi,8,shared);
     shared=e.SharedSprites[3];shared.Alignment=0;
@@ -148,11 +148,11 @@ std::vector<ExtrasDrawCommand> BuildExtrasRootDraw(const ExtrasRoot& root,uint32
       auto button=e.Buttons[i];const bool current=int32_t(i)==selected;
       button.Color=current?std::array<uint8_t,4>{255,255,255,255}:std::array<uint8_t,4>{128,128,128,255};
       if(current)button.X=std::bit_cast<int32_t>(uint32_t(button.X)+uint32_t(e.SelectedOffset));
-      sprite(ProfileTextureSection::SystemUi,textures[i],button);
+      sprite(ProfileTextureSection::TitleUi,textures[i],button);
       if(current) {
         auto marker=e.SelectedMarker;marker.Alignment=0;
         marker.Y=std::bit_cast<int32_t>(uint32_t(e.Buttons[i].Y)+uint32_t(marker.Y));
-        sprite(ProfileTextureSection::SystemUi,51,marker);
+        sprite(ProfileTextureSection::TitleUi,51,marker);
         const float scaled=float(utilitySize)*e.MenuTextScale;
         if(!std::isfinite(scaled) || scaled<0 || scaled>1024 || !measure)
           throw FormatError("Extras description font configuration is unavailable");

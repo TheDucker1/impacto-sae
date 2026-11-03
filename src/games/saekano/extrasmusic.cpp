@@ -10,8 +10,8 @@ bool Released(const BattleCardSprite& w){return w.Input.Enabled && (w.Input.Flag
 ExtrasMusicBrowser::ExtrasMusicBrowser(const ExtrasScreenEnvironment& e,SemanticState& owner,
     ExtrasMusicServices& services,std::span<const int32_t> repeats,uint32_t hold,bool all,uint64_t now)
     :env_(e),owner_(owner),services_(services),
-     play_(e.SpriteTables.at(0xd648).at(0),{ProfileTextureSection::SystemUi,-1,32},1,true,hold),
-     stop_(e.SpriteTables.at(0xd658).at(0),{ProfileTextureSection::SystemUi,-1,37},1,true,hold),
+     play_(e.SpriteTables.at(0xd648).at(0),{ProfileTextureSection::TitleUi,-1,32},1,true,hold),
+     stop_(e.SpriteTables.at(0xd658).at(0),{ProfileTextureSection::TitleUi,-1,37},1,true,hold),
      modeButton_(Hit(e.Rectangles.at(0xd678)),{},1,true,hold),
      back_(Hit(e.Common.CancelRectangle),{},1,true,hold),
      flick_(Hit(e.Rectangles.at(0xd688)),{},1,true,hold){

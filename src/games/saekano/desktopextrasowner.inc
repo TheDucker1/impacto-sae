@@ -3,7 +3,7 @@ struct PcExtrasInput {
   bool Accept=false,Cancel=false,Comment=false,ToggleHelp=false,Stop=false,Mode=false;
 };
 // Owns actual children and the shared target/modal/save presentation. Title
-// lends its committed SystemUi atlas, persistent owner and physical services.
+// lends its committed title/Extras atlas, persistent owner and physical services.
 class PcExtrasOwner final:public ExtrasServices {
  public:
   PcExtrasOwner(SemanticState& owner,GameResources& resources,UiBlitRenderer& renderer,

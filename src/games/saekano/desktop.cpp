@@ -5431,6 +5431,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
       attenuation.Update(audioClock());
       int width=0,height=0;SdlCheck(SDL_GetWindowSizeInPixels(window.Window,&width,&height),"title display extent");
       title.Draw(textures,font,uint32_t(utility.OpaqueWord),width,height);
+      if(captureExtras)extrasCapture.CaptureScreens(title,[&](const char* name){Capture(captureDirectory/name,width,height);});
       if(captureContinue && title.Continue() && title.Continue()->State.Phase==4 && !continueOpenImage){
         Capture(captureDirectory/"continue-open.bmp",width,height);continueOpenImage=true;
       }

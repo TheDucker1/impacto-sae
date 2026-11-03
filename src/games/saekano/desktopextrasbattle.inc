@@ -84,7 +84,7 @@ class PcExtrasBattle final:public ExtrasBattleServices {
     Rectangle(128);
     auto s=env_.Sprites.at(0xdd10);s.Color[3]=uint8_t(Word(0xd8f8));Sprite(40,s);
     s=env_.Sprites.at(0xdd38);s.Color[3]=uint8_t(Word(0xdd34));Sprite(41,s);
-    Stretch({ProfileTextureSection::SystemUi,-1,62},env_.Common.SharedSprites[1],env_.Common.StretchSize);
+    Stretch({ProfileTextureSection::TitleUi,-1,62},env_.Common.SharedSprites[1],env_.Common.StretchSize);
     Sprite(62,env_.Common.SharedSprites[0]);
     const auto shared10=ProfileTextureKey{ProfileTextureSection::SharedUi,-1,10};
     shared_.Sprite(ResolveUiSprite(shared10,env_.Sprites.at(0xdafc)));
@@ -102,7 +102,7 @@ class PcExtrasBattle final:public ExtrasBattleServices {
     s=bottom;s.Y+=thumb+env_.Sprites.at(0xdb94).Y+middle;Stretch(shared11,s,{width,top.Height});
     s=env_.Sprites.at(0xddc8);s.Y-=int32_t(screen_.Arrows().Current);Sprite(57,s);
     s=env_.Sprites.at(0xde10);s.Y+=int32_t(screen_.Arrows().Current);
-    auto arrow=ResolveUiSprite({ProfileTextureSection::SystemUi,-1,57},s);arrow.Source[3]=-arrow.Source[3];shared_.Sprite(arrow);
+    auto arrow=ResolveUiSprite({ProfileTextureSection::TitleUi,-1,57},s);arrow.Source[3]=-arrow.Source[3];shared_.Sprite(arrow);
     const auto& list=screen_.List();SlotViewportInputs viewport;
     viewport.Visible=true;viewport.Animated=true;viewport.Scrolling=list.Scrolling;viewport.Rows=list.Rows;
     viewport.Rectangle=env_.Rectangles.at(0xdbe4);viewport.Pitch=list.Settings.Pitch;
@@ -161,7 +161,7 @@ class PcExtrasBattle final:public ExtrasBattleServices {
   }
   void Counter(size_t value,std::array<int32_t,2> p,uint32_t size){for(size_t i=0;i<2;++i){const auto digit=Digit(value);
     const auto width=MeasurePvfText(shared_.Font.Cached(),digit,size,shared_.Font.NominalSize());Text(digit,{p[0]-int32_t(width),p[1]},size);p[0]-=env_.Common.SharedValue;value/=10;}}
-  void Sprite(uint32_t id,const UiSpriteDefinition& s){shared_.Sprite(ResolveUiSprite({ProfileTextureSection::SystemUi,-1,id},s));}
+  void Sprite(uint32_t id,const UiSpriteDefinition& s){shared_.Sprite(ResolveUiSprite({ProfileTextureSection::TitleUi,-1,id},s));}
   void Stretch(ProfileTextureKey key,const UiSpriteDefinition& s,std::array<int32_t,2> size){auto b=ResolveUiSprite(key,s);
     b.Destination={s.X-(s.Alignment%3==1?size[0]/2:s.Alignment%3==2?size[0]:0),s.Y-(s.Alignment/3==1?size[1]/2:s.Alignment/3==2?size[1]:0),size[0],size[1]};shared_.Sprite(b);}
   void Rectangle(uint8_t alpha){UiSpriteBlit b;b.Destination={0,0,960,544};b.Color={255,255,255,alpha};shared_.Renderer.DrawQuad(b,{0,1,1},true);}

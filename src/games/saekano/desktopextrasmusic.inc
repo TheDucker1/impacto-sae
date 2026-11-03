@@ -35,7 +35,7 @@ class PcExtrasMusic final:public ExtrasMusicServices {
     rectangle(128);
     auto s=env_.Sprites.at(0xd4a4);s.Color[3]=uint8_t(Word(0xd4c8));Sprite(19,s);
     s=env_.Sprites.at(0xd4cc);s.Color[3]=uint8_t(Word(0xd4c8));Sprite(23,s);
-    Stretch({ProfileTextureSection::SystemUi,-1,61},env_.Common.SharedSprites[1],env_.Common.StretchSize);
+    Stretch({ProfileTextureSection::TitleUi,-1,61},env_.Common.SharedSprites[1],env_.Common.StretchSize);
     Sprite(61,env_.Common.SharedSprites[0]);Sprite(26,env_.Sprites.at(0xd4f0));
     const auto playing=screen_.PlayingRow();
     Text(playing<0?env_.Strings.at(0xd80c):env_.MusicTracks.at(size_t(playing)).Title,
@@ -47,7 +47,7 @@ class PcExtrasMusic final:public ExtrasMusicServices {
     Text(Time(duration,playing<0),env_.Points.at(0xd780),FontSize(0xd788));
     if(playing>=0){
       const auto& definition=env_.Sprites.at(0xd514);
-      auto fill=ResolveUiSprite({ProfileTextureSection::SystemUi,-1,27},definition);
+      auto fill=ResolveUiSprite({ProfileTextureSection::TitleUi,-1,27},definition);
       fill.Destination={definition.X,definition.Y,int32_t(float(Word(0xd538))*(float(position)/float(duration*1000))),definition.Height};
       fill.Color={255,255,255,255};shared_.Sprite(fill);
     }
@@ -127,7 +127,7 @@ class PcExtrasMusic final:public ExtrasMusicServices {
   void Counter(size_t value,std::array<int32_t,2> p,uint32_t size){for(size_t i=0;i<2;++i){
     const auto digit=Digit(value);const auto width=MeasurePvfText(shared_.Font.Cached(),digit,size,shared_.Font.NominalSize());
     Text(digit,{p[0]-int32_t(width),p[1]},size);p[0]-=env_.Common.SharedValue;value/=10;}}
-  void Sprite(uint32_t id,const UiSpriteDefinition& s){shared_.Sprite(ResolveUiSprite({ProfileTextureSection::SystemUi,-1,id},s));}
+  void Sprite(uint32_t id,const UiSpriteDefinition& s){shared_.Sprite(ResolveUiSprite({ProfileTextureSection::TitleUi,-1,id},s));}
   void Stretch(ProfileTextureKey key,const UiSpriteDefinition& s,std::array<int32_t,2> size){
     auto b=ResolveUiSprite(key,s);b.Destination={s.X-(s.Alignment%3==1?size[0]/2:s.Alignment%3==2?size[0]:0),
         s.Y-(s.Alignment/3==1?size[1]/2:s.Alignment/3==2?size[1]:0),size[0],size[1]};shared_.Sprite(b);
