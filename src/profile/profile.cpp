@@ -158,6 +158,7 @@ static void DefineEnums() {
   DefineEnum<AudioBackendType>(LuaState);
   DefineEnum<TextAlignment>(LuaState);
   DefineEnum<GameFeature>(LuaState);
+  DefineEnum<GameRuntimeType>(LuaState);
   DefineEnum<CharacterTypeFlags>(LuaState);
   DefineEnum<Impacto::Vm::InstructionSet>(LuaState);
   DefineEnum<Impacto::Game::DrawComponentType>(LuaState);
@@ -231,7 +232,7 @@ void Init() {
   DefineEnums();
 }
 
-void Configure() {
+void ConfigureDefinitions() {
   const auto setupScriptPath = [](std::string const& fileName,
                                   std::string& path) {
     // Override
@@ -279,6 +280,10 @@ void Configure() {
 
   BasePaths::Configure();
   GameDefinition::Configure();
+}
+
+void Configure() {
+  ConfigureDefinitions();
   UserConfig::Configure();
 }
 

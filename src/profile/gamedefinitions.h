@@ -4,7 +4,11 @@
 #include <ankerl/unordered_dense.h>
 #include "../util.h"
 
-namespace Impacto::Profile {
+namespace Impacto {
+
+enum class GameRuntimeType { Impacto, Saekano };
+
+namespace Profile {
 
 struct GameDefinition {
   std::string GameProfile;
@@ -15,6 +19,7 @@ struct GameDefinition {
   bool Hidden = false;
   int LauncherOrderId = 99;
   uint32_t LauncherTheme = 0xFFFFFF;
+  GameRuntimeType Runtime = GameRuntimeType::Impacto;
 
   static void Configure();
 };
@@ -22,4 +27,5 @@ struct GameDefinition {
 inline ankerl::unordered_dense::map<std::string, GameDefinition, string_hash,
                                     std::equal_to<>>
     GameDefinitions;
-}  // namespace Impacto::Profile
+}  // namespace Profile
+}  // namespace Impacto

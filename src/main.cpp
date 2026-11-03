@@ -19,18 +19,16 @@
 #include "io/filemeta.h"
 
 #ifdef IMPACTO_HAS_SAEKANO
-#include "saekano/desktop.h"
-#include "saekano/musicplayback.h"
-#include "saekano/pcvalidation.h"
-#include "saekano/pcdiagnostics.h"
-#include <charconv>
+#include "games/saekano/pcdiagnostics.h"
 #endif
 
 using namespace Impacto;
 
-#ifdef IMPACTO_HAS_SAEKANO
-static std::filesystem::path UsrdirOverride,SaveDataOverride;
-#endif
+static Game::LaunchOptions LaunchOptions;
+
+static std::filesystem::path PathFromUtf8(std::string_view text) {
+  return std::filesystem::path(std::u8string(text.begin(), text.end()));
+}
 
 static uint64_t t;
 static float TickDeltaTime() {
@@ -67,7 +65,7 @@ concept is_arg_handler =
 static void HandleArguments(std::vector<std::string_view> args) {
   for (size_t i = 0; i < args.size(); ++i) {
     std::string_view arg = args[i];
-    if(arg.empty())continue;
+    if (arg.empty()) continue;
 
     auto handleArgInput = [&](std::ranges::range auto supportedArgs,
                               is_arg_handler auto action) {
@@ -101,24 +99,34 @@ static void HandleArguments(std::vector<std::string_view> args) {
         };
 
     const auto argHandlers = std::tuple{
-        make_handler([] {
-          std::fputs("Usage: impacto [options]\n"
-              "  -g,  --game GAME                  Select a game (saekano opens its launcher)\n"
-              "  -uc, --userconfigpath FILE        User configuration file\n"
-              "  -lf, --logfile FILE               Log file\n"
-              "  -ll, --loglevel LEVEL             Logging level\n"
-              "  -lc, --logchannel CHANNEL         Logging channel\n"
-              "  -bp, --basepathspath FILE         Game base-path definitions\n"
-              "  -gc, --gamedefinitionspath FILE   Game definitions\n"
-              "  -p,  --patch PROFILE              Patch profile\n"
+        make_handler(
+            [] {
+              std::fputs(
+                  "Usage: impacto [options]\n"
+                  "  -g,  --game GAME                  Select a game (saekano "
+                  "opens its launcher)\n"
+                  "  -uc, --userconfigpath FILE        User configuration "
+                  "file\n"
+                  "  -lf, --logfile FILE               Log file\n"
+                  "  -ll, --loglevel LEVEL             Logging level\n"
+                  "  -lc, --logchannel CHANNEL         Logging channel\n"
+                  "  -bp, --basepathspath FILE         Game base-path "
+                  "definitions\n"
+                  "  -gc, --gamedefinitionspath FILE   Game definitions\n"
+                  "  -p,  --patch PROFILE              Patch profile\n"
 #ifdef IMPACTO_HAS_SAEKANO
-              "  -ud, --usrdir DIRECTORY           Saekano data-path override\n"
-              "  -sd, --savedatapath DIRECTORY     Saekano save-path override\n"
-              "Select saekano with -g saekano to open its launcher.\n"
-              "Example: impacto -g saekano -uc launcher.toml\n"
+                  "  -ud, --usrdir DIRECTORY           Saekano data-path "
+                  "override\n"
+                  "  -sd, --savedatapath DIRECTORY     Saekano save-path "
+                  "override\n"
+                  "Select saekano with -g saekano to open its launcher.\n"
+                  "Example: impacto -g saekano -uc launcher.toml\n"
 #endif
-              "  -h,  --help                       Show this help\n",stdout);std::exit(0);
-        },"-h","--help"),
+                  "  -h,  --help                       Show this help\n",
+                  stdout);
+              std::exit(0);
+            },
+            "-h", "--help"),
         make_handler(
             [&](std::string_view input) {
               Impacto::UserConfig::CommonSettings.LogFile = std::string(input);
@@ -184,38 +192,55 @@ static void HandleArguments(std::vector<std::string_view> args) {
             },
             "-gc", "--gamedefinitionspath"),
         make_handler(
-            [&](std::string_view input) { UserConfig::UserConfigPath = input; },
+            [&](std::string_view input) {
+              UserConfig::UserConfigPath = input;
+              LaunchOptions.UserConfigPath = PathFromUtf8(input);
+            },
             "-uc", "--userconfigpath"),
 #ifdef IMPACTO_HAS_SAEKANO
-        make_handler([&](std::string_view input){UsrdirOverride=Saekano::PcPathFromUtf8(std::string(input));},"-ud","--usrdir"),
-        make_handler([&](std::string_view input){SaveDataOverride=Saekano::PcPathFromUtf8(std::string(input));},"-sd","--savedatapath"),
+        make_handler(
+            [&](std::string_view input) {
+              LaunchOptions.GameDataPath = PathFromUtf8(input);
+            },
+            "-ud", "--usrdir"),
+        make_handler(
+            [&](std::string_view input) {
+              LaunchOptions.SaveDataPath = PathFromUtf8(input);
+            },
+            "-sd", "--savedatapath"),
 #endif
     };
 
-    const bool handled=std::apply(
+    const bool handled = std::apply(
         [&](auto&&... h) {
           return ((handleArgInput(h.first, h.second)) || ...);
         },
         argHandlers);
-    if(!handled){ImpLog(LogLevel::Fatal,LogChannel::General,"Unknown option: {} (use --help)\n",arg);std::exit(1);}
+    if (!handled) {
+      ImpLog(LogLevel::Fatal, LogChannel::General,
+             "Unknown option: {} (use --help)\n", arg);
+      std::exit(1);
+    }
   }
 };
 
 int main(int argc, char* argv[]) {
-  if (argc == 5 && std::string_view(argv[1]) == "--saekano-ui-sounds" &&
-      std::string_view(argv[3]) == "--capture")
-    return Saekano::RunUiSoundSession(argv[2], argv[4]);
 #ifdef EMSCRIPTEN
   EM_ASM(OnGameLoadStart(););
 #endif
 #ifdef _WIN32
-  const auto redirected=[](DWORD id){const auto type=GetFileType(GetStdHandle(id));return type==FILE_TYPE_PIPE || type==FILE_TYPE_DISK;};
-  const bool stdoutRedirected=redirected(STD_OUTPUT_HANDLE),stderrRedirected=redirected(STD_ERROR_HANDLE),stdinRedirected=redirected(STD_INPUT_HANDLE);
+  const auto redirected = [](DWORD id) {
+    const auto type = GetFileType(GetStdHandle(id));
+    return type == FILE_TYPE_PIPE || type == FILE_TYPE_DISK;
+  };
+  const bool stdoutRedirected = redirected(STD_OUTPUT_HANDLE),
+             stderrRedirected = redirected(STD_ERROR_HANDLE),
+             stdinRedirected = redirected(STD_INPUT_HANDLE);
   if (AttachConsole(ATTACH_PARENT_PROCESS)) {
     FILE* fDummy;
-    if(!stdoutRedirected)freopen_s(&fDummy, "CONOUT$", "w", stdout);
-    if(!stderrRedirected)freopen_s(&fDummy, "CONOUT$", "w", stderr);
-    if(!stdinRedirected)freopen_s(&fDummy, "CONIN$", "r", stdin);
+    if (!stdoutRedirected) freopen_s(&fDummy, "CONOUT$", "w", stdout);
+    if (!stderrRedirected) freopen_s(&fDummy, "CONOUT$", "w", stderr);
+    if (!stdinRedirected) freopen_s(&fDummy, "CONIN$", "r", stdin);
   }
 #endif
 
@@ -234,7 +259,7 @@ int main(int argc, char* argv[]) {
   LogInit();
 
 #ifdef IMPACTO_HAS_SAEKANO
-  if(const auto result=Saekano::RunPcDiagnostics(argc,argv))return *result;
+  if (const auto result = Saekano::RunPcDiagnostics(argc, argv)) return *result;
 #endif
   std::vector<std::string_view> arguments;
   for (int i = 1; i < argc; ++i) {
@@ -258,12 +283,6 @@ int main(int argc, char* argv[]) {
     }
   }
 
-#ifdef IMPACTO_HAS_SAEKANO
-  const auto config=Saekano::PcPathFromUtf8(UserConfig::UserConfigPath);
-  if(UserConfig::GetActiveGame()=="saekano")return Saekano::RunPcLauncher(config,UsrdirOverride,SaveDataOverride);
-  if(!UsrdirOverride.empty() || !SaveDataOverride.empty()){ImpLog(LogLevel::Fatal,LogChannel::General,"Saekano data overrides do not apply to the selected game.\n");return 1;}
-#endif
-
 #ifdef EMSCRIPTEN
   // Emscripten's EGL requests a window framebuffer with antialiasing by default
   // (as WebGL does)
@@ -273,7 +292,9 @@ int main(int argc, char* argv[]) {
 #endif
   try {
     Profile::Init();
-    Profile::Configure();
+    Profile::ConfigureDefinitions();
+    if (const auto result = Game::RunGameProfile(LaunchOptions)) return *result;
+    UserConfig::Configure();
     Game::Init();
 
 #ifdef EMSCRIPTEN
@@ -286,6 +307,8 @@ int main(int argc, char* argv[]) {
     }
 
     if (!Game::ShouldQuit) {
+      if (const auto result = Game::RunGameProfile(LaunchOptions, true))
+        return *result;
       Game::InitGameProfile();
     }
     t = SDL_GetPerformanceCounter();

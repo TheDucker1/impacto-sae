@@ -8,7 +8,7 @@ if(IMPACTO_SAEKANO_CORE_ONLY)
     # running mspdbsrv when using a standalone Build Tools installation.
     set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT Embedded)
     project(impacto_saekano_core LANGUAGES C CXX)
-    add_subdirectory(src/saekano)
+    add_subdirectory(src/games/saekano)
     return()
 endif()
 
@@ -802,6 +802,8 @@ if (WIN32)
     )
 endif ()
 
+add_subdirectory(src/io)
+
 add_library(clHCA STATIC vendor/clHCA/clHCA.c)
 target_include_directories(clHCA PUBLIC vendor/clHCA)
 
@@ -1306,12 +1308,13 @@ else()
 endif()
 
 if(IMPACTO_ENABLE_SAEKANO)
-    add_subdirectory(src/saekano)
+    add_subdirectory(src/games/saekano)
     if(NOT TARGET saekano_cubism2)
         message(FATAL_ERROR "Saekano PC build requires SAEKANO_CUBISM2_SDK_ROOT")
     endif()
     target_link_libraries(impacto PRIVATE saekano_live2d_driver)
-    target_sources(impacto PRIVATE src/saekano/desktop.cpp src/saekano/musicplayback.cpp src/saekano/movieplayback.cpp src/saekano/scriptmovieplayback.cpp src/saekano/fontface.cpp src/saekano/pcconfig.cpp src/saekano/pcinput.cpp src/saekano/pcvalidation.cpp src/saekano/pclauncher.cpp src/saekano/pcdiagnostics.cpp)
+    target_sources(impacto PRIVATE src/profile/games/saekano/game.cpp src/profile/games/saekano/titlemenu.cpp)
+    target_sources(impacto PRIVATE src/games/saekano/desktop.cpp src/games/saekano/musicplayback.cpp src/games/saekano/movieplayback.cpp src/games/saekano/scriptmovieplayback.cpp src/games/saekano/fontface.cpp src/games/saekano/pcconfig.cpp src/games/saekano/pcinput.cpp src/games/saekano/pcvalidation.cpp src/games/saekano/pclauncher.cpp src/games/saekano/pcdiagnostics.cpp)
     if(DEFINED IMPACTO_DISABLE_IMGUI)
         message(FATAL_ERROR "The Saekano launcher requires the existing ImGui frontend")
     endif()
@@ -1322,7 +1325,19 @@ if(IMPACTO_ENABLE_SAEKANO)
         COMMAND_EXPAND_LISTS VERBATIM)
     add_custom_command(TARGET impacto POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/shaders $<TARGET_FILE_DIR:impacto>/shaders
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources $<TARGET_FILE_DIR:impacto>/resources
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
             ${CMAKE_CURRENT_SOURCE_DIR}/resources/saekano/launcher $<TARGET_FILE_DIR:impacto>/saekano-launcher
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/profiles $<TARGET_FILE_DIR:impacto>/profiles
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_CURRENT_SOURCE_DIR}/gamedefinitions.lua $<TARGET_FILE_DIR:impacto>/gamedefinitions.lua
+        COMMAND ${CMAKE_COMMAND}
+            -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DOUTPUT_DIR=$<TARGET_FILE_DIR:impacto>
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_basepaths.cmake
         VERBATIM)
 endif()
 
@@ -1355,7 +1370,7 @@ if(MSVC)
 endIf()
 
 list(APPEND Impacto_Libs ${Impacto_Lib_Targets})
-target_link_libraries(impacto PRIVATE ${Impacto_Libs})
+target_link_libraries(impacto PRIVATE ${Impacto_Libs} impacto_gpda)
 
 target_compile_options(impacto PRIVATE "$<$<C_COMPILER_ID:MSVC>:/utf-8>")
 target_compile_options(impacto PRIVATE "$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")

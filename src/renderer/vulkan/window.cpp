@@ -70,11 +70,10 @@ void VulkanWindow::Draw() {
 #endif
 }
 
-void VulkanWindow::Shutdown() {
+void VulkanWindow::Shutdown(bool exitProcess) {
   SDL_DestroyWindow(SDLWindow);
   SDL_Quit();
-  // TODO move exit to users
-  exit(0);
+  if (exitProcess) exit(0);
 }
 
 }  // namespace Vulkan

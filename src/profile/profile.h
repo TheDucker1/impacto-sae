@@ -7,6 +7,7 @@ inline std::string BasePathsPath;
 inline std::string GameDefinitionsPath;
 
 void Init();
+void ConfigureDefinitions();
 void Configure();
 void ConfigureGameProfile();
 void ClearProfile();

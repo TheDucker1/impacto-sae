@@ -182,6 +182,7 @@ void GLWindow::Init() {
     ImpLog(LogLevel::Fatal, LogChannel::General,
            "GLAD initialisation failed\n");
     Shutdown();
+    return;
   }
 
   // At the time of writing, this is on by default on Intel on Windows until we
@@ -351,13 +352,12 @@ void GLWindow::Draw() {
   SDL_GL_SwapWindow(SDLWindow);
 }
 
-void GLWindow::Shutdown() {
+void GLWindow::Shutdown(bool exitProcess) {
   CleanFBOs();
   SDL_GL_DestroyContext(GLContext);
   SDL_DestroyWindow(SDLWindow);
   SDL_Quit();
-  // TODO move exit to users
-  exit(0);
+  if (exitProcess) exit(0);
 }
 
 }  // namespace OpenGL

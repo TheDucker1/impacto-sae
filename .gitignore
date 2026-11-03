@@ -306,6 +306,6 @@ patches
 /saekano_vm_adapter.py
 /saekano-model-scenes.cmd
 /saekano-model-viewer.cmd
-/src/saekano/headless.cpp
-/src/saekano/inspect.cpp
+/src/games/saekano/headless.cpp
+/src/games/saekano/inspect.cpp
 /saekano-local/

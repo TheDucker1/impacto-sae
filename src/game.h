@@ -7,6 +7,8 @@
 #include <magic_enum/magic_enum.hpp>
 
 #include <string>
+#include <filesystem>
+#include <optional>
 
 namespace Impacto {
 
@@ -27,6 +29,18 @@ enum class GameFeature : int {
 };
 
 namespace Game {
+
+struct LaunchOptions {
+  std::filesystem::path UserConfigPath;
+  std::filesystem::path GameDataPath;
+  std::filesystem::path SaveDataPath;
+};
+
+// A game-owned runtime keeps its existing loop while using the shared profile
+// selection and configuration lifecycle. The default runtime uses
+// Init/Update/Render.
+std::optional<int> RunGameProfile(const LaunchOptions& options,
+                                  bool launcherInitialized = false);
 
 enum class DrawComponentType : uint8_t {
   Text = 0x0,

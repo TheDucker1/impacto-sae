@@ -29,8 +29,10 @@ To create a distribution from a prepared build:
 ./tools/saekano/package_pc.ps1 -OutputDirectory 'C:/Builds/Saekano PC' -SkipBuild
 ```
 
-The package contains the executable, runtime libraries, launcher SVG icons and
-license notices. Original game data and personal saves remain external.
+The package contains the executable, runtime libraries, shaders, shared UI
+resources, Lua profiles, base-path and game definitions, launcher SVG icons and
+license notices. Original game data
+and personal saves remain external.
 
 ## Launcher and configuration
 
@@ -42,6 +44,21 @@ license notices. Original game data and personal saves remain external.
 Select this launcher with -g saekano (or --game saekano). Running without a
 selected game follows the original Impacto startup path. The packaged
 Play-Saekano.cmd supplies the game-selection flag for convenience.
+In a Saekano-enabled build, the shared game picker lists Saekano even before a
+default data directory exists. Selecting it and choosing Start Game opens the
+Saekano launcher; Save and Play enters the game after validation.
+The game is registered in gamedefinitions.lua. Its Runtime selects the existing
+Saekano implementation; profiles/saekano/game.lua defines the game and
+profiles/saekano/files.lua supplies original archive, font and environment paths.
+The shared -bp, -gc and -p options apply to profile loading. Environment files
+continue to supply their authored UI and game settings through the existing
+binary readers. Lua profiles do not replace the game's bytecode or logic.
+The title portrait mapping is declared in `profiles/saekano/hud/titlemenu.lua`.
+The GPDA archive reader lives in `src/io/gpdaarchive.*`; the existing Cubism 2.1
+SDK adapter lives in `src/renderer/opengl/cubism2.*`. The existing script reader,
+command decoding, control flow and execution loop live in `src/vm/saekano/`;
+presentation and game-mode behavior live in `src/games/saekano/`.
+
 Use Game Data to select USRDIR and
 validate required files, configure display and input, then choose Save and Play.
 Normal validation checks filenames/readability and permits modified contents.
@@ -53,6 +70,9 @@ a file. Default saves are in a saves directory beside that configuration.
 --usrdir preselects the launcher's editable data path; explicit Save/Play persists
 it. --savedatapath selects a save directory for that run. Keep writable config and
 saves outside original data. --help lists the shared Impacto command-line options.
+The default gamedata/saekano directory is offered when it exists; a saved launcher
+path or --usrdir takes precedence. Launcher configuration keeps its existing TOML
+schema and per-user location, including when selected from the shared game picker.
 
 ## Input and presentation
 

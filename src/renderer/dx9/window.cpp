@@ -73,11 +73,10 @@ void DirectX9Window::Draw() {
 #endif
 }
 
-void DirectX9Window::Shutdown() {
+void DirectX9Window::Shutdown(bool exitProcess) {
   SDL_DestroyWindow(SDLWindow);
   SDL_Quit();
-  // TODO move exit to users
-  exit(0);
+  if (exitProcess) exit(0);
 }
 
 }  // namespace DirectX9

@@ -73,6 +73,11 @@ while ($queue.Count) {
   }
 }
 Copy-Item -LiteralPath (Join-Path $buildRoot 'saekano-launcher') -Destination $output -Recurse
+Copy-Item -LiteralPath (Join-Path $repoRoot 'src/shaders') -Destination $output -Recurse
+Copy-Item -LiteralPath (Join-Path $repoRoot 'resources') -Destination $output -Recurse
+Copy-Item -LiteralPath (Join-Path $repoRoot 'profiles') -Destination $output -Recurse
+Copy-Item -LiteralPath (Join-Path $repoRoot 'gamedefinitions.lua') -Destination $output
+Copy-Item -LiteralPath (Join-Path $repoRoot 'basepaths.lua.sample') -Destination (Join-Path $output 'basepaths.lua')
 foreach ($name in @('Launch-PC.ps1', 'Play-Saekano.cmd')) {
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $output
 }
