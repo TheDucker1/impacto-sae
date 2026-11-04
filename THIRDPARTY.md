@@ -42,8 +42,13 @@ All third-party code mentioned above is mandatory, included in the build process
 * [toml11](https://toruniina.github.io/toml11/)
 * [imgui](https://github.com/ocornut/imgui)
 
-Optional Saekano builds also use a separately supplied legacy Live2D Cubism SDK
-and its framework sources. DirectX9 builds additionally use Microsoft's
+Optional Saekano builds use the
+[FreeType 2.4.12 grayscale scan converter](https://github.com/freetype/freetype/tree/VER-2-4-12/src/smooth)
+in `vendor/freetype-legacy-raster`, under its included FreeType License. This
+software is based in part on the work of the FreeType Team. Only this standalone
+scan converter is compiled alongside the normal FreeType font-loading dependency.
+These builds also use a separately supplied legacy Live2D Cubism SDK and its
+framework sources. DirectX9 builds additionally use Microsoft's
 [D3DX package](https://www.nuget.org/packages/Microsoft.DXSDK.D3DX/9.29.952.8)
 and the x86 Visual C++2012 runtime required by that SDK. These components retain
 their own licenses. The Saekano packager copies the supplied SDK provenance,

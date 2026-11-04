@@ -338,6 +338,8 @@ void Renderer::ConfigureTextureSampling(uint32_t id, TextureSampling sampling) {
   glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,wrap);
   glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,wrap);
   glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAX_LEVEL,0);
+  // Explicit nearest/linear modes must not retain SubmitTexture's anisotropy.
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAX_ANISOTROPY_EXT,1);
   glBindTexture(GL_TEXTURE_2D,GLuint(previous));
 }
 

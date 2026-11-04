@@ -770,11 +770,12 @@ struct FontTextures {
         pixels = &font.Atlas(id);
         blit.Destination = cached->Destination;
         blit.Source = cached->Source;
-      } else if ((pixels = font.Glyph(character))) {
+      } else if (const auto* glyph = font.Glyph(character)) {
         id = uint16_t(character);
+        pixels = &glyph->Pixels;
         blit.Destination = {x, y, int32_t(PvfGlyphAdvance(character, size)),
                             int32_t(size)};
-        blit.Source = {0, 0, int32_t(pixels->Width), int32_t(pixels->Height)};
+        blit.Source = glyph->Source;
       }
       if (pixels) {
         renderer.DrawQuad(blit, Get(bitmap, id, *pixels), false, true, {},
@@ -3878,7 +3879,7 @@ int RunFontSample(const std::filesystem::path& usrdir,
                << std::bit_cast<uint32_t>(font.PointSize())
                << ",\"baseline\":" << font.Baseline()
                << ",\"ui_size\":" << utility.Size
-               << ",\"pvf_pixel_parity\":false,\"full_profile_ui\":false}\n";
+               << ",\"rasterizer\":\"FreeType-2.4.12\",\"full_profile_ui\":false}\n";
       metadata.close();
       if (!metadata) throw FormatError("cannot save font metadata report");
     }
@@ -3905,11 +3906,37 @@ int RunFontSample(const std::filesystem::path& usrdir,
       for (size_t i = 0; i < 10; ++i)
         textures.DrawString(renderer, font, catalog.front().Rows[i].Name, 36,
                             90 + int32_t(i) * 38, uint32_t(utility.Size),
-                            {240, 240, 240, 255}, report);
+                            {0, 0, 0, 255}, report);
+      textures.DrawString(renderer, font,
+                          u"Megumi: They're both on schedule so far. You don't have to look",
+                          36, 476, 24, {0, 0, 0, 255}, report);
+      textures.DrawString(renderer, font,
+                          u"so disappointed. 0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+                          36, 510, 24, {0, 0, 0, 255}, report);
       if (capture) {
         Capture(captureDirectory / "0.bmp", width, height);
         glyphReport.close();
         if (!glyphReport) throw FormatError("cannot save font glyph report");
+        std::ofstream cells(captureDirectory / "raster-cells.jsonl");
+        std::ofstream pixels(captureDirectory / "raster-cells.rgba",
+                             std::ios::binary);
+        size_t offset = 0;
+        for (const auto character : font.Cached().Characters) {
+          const auto* glyph = font.Glyph(character);
+          if (!glyph) continue;
+          const auto& image = glyph->Pixels;
+          cells << "{\"character\":" << uint16_t(character)
+                << ",\"width\":" << image.Width << ",\"height\":" << image.Height
+                << ",\"source_width\":" << glyph->Source[2]
+                << ",\"source_height\":" << glyph->Source[3]
+                << ",\"offset\":" << offset << ",\"bytes\":" << image.Rgba.size()
+                << "}\n";
+          pixels.write(reinterpret_cast<const char*>(image.Rgba.data()),
+                        image.Rgba.size());
+          offset += image.Rgba.size();
+        }
+        cells.close();pixels.close();
+        if (!cells || !pixels) throw FormatError("cannot save font raster cells");
         quit = true;
       }
       SdlCheck(window.Present(), "font frame swap");

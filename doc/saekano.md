@@ -104,4 +104,6 @@ Display settings select the initial resolution; SDL scales the rendered scene.
 Skip logos skips only the startup logos and continues with the opening movie.
 Dialogue uses authored read/unread colors and reveal behavior. Read dialogue keeps
 its shadow; unread dialogue disables it, including ruby and keyword text.
-The portable font rasterizer is not claimed pixel-identical to the original.
+Text preserves the original PVF cache-cell widths, cropping and half/full-width
+draw scaling, including Latin letters. Font outlines use the shared FreeType
+loader and a pinned legacy grayscale scan converter for stable coverage.

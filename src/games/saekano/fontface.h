@@ -3,6 +3,11 @@
 #include "font.h"
 
 namespace Impacto::Saekano {
+struct PvfGlyphImage {
+  ImagePixels Pixels;
+  std::array<int32_t, 4> Source{};
+};
+
 // PC rasterization of the game's third-party PVF font through FreeType.
 // Text advances and bitmap overrides remain the shared native layout rules.
 class PcFontFace {
@@ -15,7 +20,7 @@ class PcFontFace {
   const ImagePixels& Atlas(size_t index) const;
   // Only authored precache characters exist in native PVF mode. A missing
   // entry returns null, while the caller still advances its text cursor.
-  const ImagePixels* Glyph(char16_t character);
+  const PvfGlyphImage* Glyph(char16_t character);
   uint32_t Baseline() const;
   uint32_t NominalSize() const;
   float PointSize() const;
