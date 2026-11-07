@@ -13,7 +13,7 @@ class VulkanWindow : public BaseWindow {
   void SwapRTs() override;
   void Update() override;
   void Draw() override;
-  void Shutdown() override;
+  void Shutdown(bool exitProcess = true) override;
 
  private:
   void UpdateDimensions() override;

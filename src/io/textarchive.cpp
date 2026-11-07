@@ -58,7 +58,7 @@ IoError TextArchive::Create(Stream* stream, VfsArchive** outArchive) {
   TextArchiveType type;
 
   int64_t size;
-  int64_t maxFileCount;
+  size_t maxFileCount;
   TextArchive* result;
   uint32_t lineId;
 
@@ -83,17 +83,17 @@ IoError TextArchive::Create(Stream* stream, VfsArchive** outArchive) {
   if (Io::ReadU8(stream) == 0xEF && Io::ReadU8(stream) == 0xBB &&
       Io::ReadU8(stream) == 0xBF) {
     // UTF-8 BOM
-    content.resize(stream->Meta.Size - 3);
+    content.resize(MemorySize(stream->Meta.Size - 3));
     size = stream->Read(&content[0], stream->Meta.Size - 3);
-    content.resize(size);
+    content.resize(MemorySize(size));
   } else {
     stream->Seek(0, IoSeek::Set);
-    content.resize(stream->Meta.Size);
+    content.resize(MemorySize(stream->Meta.Size));
     size = stream->Read(&content[0], stream->Meta.Size);
-    content.resize(size);
+    content.resize(MemorySize(size));
   }
 
-  maxFileCount = std::count(content.begin(), content.end(), '\n') + 1;
+  maxFileCount = MemorySize(std::count(content.begin(), content.end(), '\n'), 1);
 
   result = new TextArchive;
   result->BaseStream = stream;

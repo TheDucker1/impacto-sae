@@ -1,0 +1,47 @@
+#pragma once
+
+#include "image.h"
+
+namespace Impacto::Saekano {
+struct TextLayoutMetrics {
+  uint32_t Height = 0;
+  int32_t Leading = 0;
+  size_t GlobalPrefixBytes = 0, MessagePrefixBytes = 0;
+  static TextLayoutMetrics Decode(std::span<const uint8_t> global,
+                                  std::span<const uint8_t> message);
+  // Native177f4..17844 line advance; glyph widths/wrapping remain separate.
+  int32_t LineAdvance(float scale) const;
+};
+struct GameUtilityFont {
+  std::array<uint8_t, 3> Flags{};
+  int32_t Size = 0;
+  // Proven prefix of env_game_utility; later fields belong to other services.
+  static GameUtilityFont Decode(std::span<const uint8_t> bytes);
+};
+struct GsfGlyph {
+  uint16_t Atlas = 0, X = 0, Y = 0;
+  uint8_t Width = 0, Height = 0;
+};
+struct GsfFont {
+  std::vector<Bytes> Atlases;
+  std::map<char16_t, GsfGlyph> Glyphs;
+  std::u16string Characters;
+  uint8_t BitmapHeight = 0;
+  // The game initializes PVF first and loads the GSF variant with a final
+  // UTF16 character-list section, in addition to atlas and metric sections.
+  static GsfFont Decode(std::span<const uint8_t> bytes);
+};
+// Native800b2ba0's PVF advance is fixed half/full width, not the TTF hmtx.
+uint32_t PvfGlyphAdvance(char16_t character, uint32_t pixelSize);
+// Native800b2c96 PVF-mode string measurement (distinct from draw advance).
+uint32_t MeasurePvfText(const GsfFont& font, std::u16string_view text,
+                        uint32_t pixelSize, uint32_t nominalSize);
+struct GsfGlyphDraw {
+  uint16_t Atlas = 0;
+  std::array<int32_t, 4> Destination{}, Source{};
+};
+// Native800b2f30 cached bitmap override; a missing glyph falls through to PVF.
+std::optional<GsfGlyphDraw> ResolveGsfGlyph(const GsfFont& font,
+                                            char16_t character, int32_t x,
+                                            int32_t y, uint32_t pixelSize);
+}  // namespace Impacto::Saekano

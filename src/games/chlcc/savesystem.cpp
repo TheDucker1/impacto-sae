@@ -124,7 +124,7 @@ std::pair<uint16_t, uint16_t> CalculateSystemChecksum(
     checksumXor ^= dataShort;
   }
 
-  return {checksumSum & 0xFFFF, checksumXor};
+  return {static_cast<uint16_t>(checksumSum & 0xFFFF), checksumXor};
 }
 
 void SaveSystem::InitializeSystemData() {

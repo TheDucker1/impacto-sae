@@ -1,6 +1,7 @@
 #include "renderer.h"
 
 #include <array>
+#include <wrl/client.h>
 
 #include "../../profile/game.h"
 #include "../../game.h"
@@ -15,129 +16,233 @@
 namespace Impacto {
 namespace DirectX9 {
 
+Renderer::Renderer() {
+  try {
+    ImpLog(LogLevel::Info, LogChannel::Render,
+           "Initializing Renderer2D DirectX 9 system\n");
+    DXWindow = static_cast<DirectX9Window*>(Window);
+
+    Interface = Direct3DCreate9(D3D_SDK_VERSION);
+    if (!Interface) throw FormatError("Direct3D9 initialization failed");
+
+    HWND hWnd =
+        (HWND)SDL_GetPointerProperty(SDL_GetWindowProperties(Window->SDLWindow),
+                                     SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL);
+
+    auto& d3dpp = PresentParameters;
+    d3dpp.Windowed = TRUE;
+    d3dpp.PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
+    d3dpp.SwapEffect =
+        Window->FullFramebuffer ? D3DSWAPEFFECT_COPY : D3DSWAPEFFECT_DISCARD;
+    d3dpp.hDeviceWindow = hWnd;
+    d3dpp.EnableAutoDepthStencil = TRUE;
+    d3dpp.AutoDepthStencilFormat = D3DFMT_D24S8;
+    int width = 0, height = 0;
+    if (!SDL_GetWindowSizeInPixels(Window->SDLWindow, &width, &height))
+      throw FormatError(SDL_GetError());
+    d3dpp.BackBufferWidth = width;
+    d3dpp.BackBufferHeight = height;
+    d3dpp.BackBufferFormat = D3DFMT_X8R8G8B8;
+
+    Check(Interface->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hWnd,
+                                  D3DCREATE_HARDWARE_VERTEXPROCESSING, &d3dpp,
+                                  &Device),
+          "Create Direct3D9 device");
+    Check(Device->CreateVertexBuffer(VertexBufferSize, 0, 0, D3DPOOL_MANAGED,
+                                     &VertexBufferDevice, NULL),
+          "Create sprite vertex buffer");
+    Check(Device->CreateIndexBuffer(IndexBufferCount * sizeof(uint16_t), 0,
+                                    D3DFMT_INDEX16, D3DPOOL_MANAGED,
+                                    &IndexBufferDevice, NULL),
+          "Create sprite index buffer");
+
+    Device->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
+    Device->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
+    Device->SetRenderState(D3DRS_ALPHABLENDENABLE, true);
+    Device->SetRenderState(D3DRS_BLENDOPALPHA, D3DBLENDOP_ADD);
+    Device->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+    Device->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+    Device->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_SRCALPHA);
+    Device->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_INVSRCALPHA);
+    Device->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+
+    std::vector<D3DVERTEXELEMENT9> vertexDeclDesc{
+        {0, offsetof(VertexBufferSprites, Position), D3DDECLTYPE_FLOAT2,
+         D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0},
+        {0, offsetof(VertexBufferSprites, UV), D3DDECLTYPE_FLOAT2,
+         D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 0},
+        {0, offsetof(VertexBufferSprites, Tint), D3DDECLTYPE_FLOAT4,
+         D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_COLOR, 0},
+        {0, offsetof(VertexBufferSprites, MaskUV), D3DDECLTYPE_FLOAT2,
+         D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 1},
+        D3DDECL_END()};
+    Check(Device->CreateVertexDeclaration(vertexDeclDesc.data(),
+                                          &VertexDeclaration),
+          "Create sprite vertex declaration");
+
+    ShaderSprite = new Shader();
+    ShaderSprite->Compile("Sprite", Device, VertexDeclaration);
+    ShaderSpriteInverted = new Shader();
+    ShaderSpriteInverted->Compile("Sprite_inverted", Device, VertexDeclaration);
+    ShaderMaskedSprite = new Shader();
+    ShaderMaskedSprite->Compile("MaskedSprite", Device, VertexDeclaration);
+    ShaderMaskedSpriteNoAlpha = new Shader();
+    ShaderMaskedSpriteNoAlpha->Compile("MaskedSpriteNoAlpha", Device,
+                                       VertexDeclaration);
+    ShaderYUVFrame = new Shader();
+    ShaderYUVFrame->Compile("YUVFrame", Device, VertexDeclaration);
+    ShaderNV12Frame = new Shader();
+    ShaderNV12Frame->Compile("NV12Frame", Device, VertexDeclaration);
+    ShaderCCMessageBox = new Shader();
+    ShaderCCMessageBox->Compile("CCMessageBoxSprite", Device,
+                                VertexDeclaration);
+    ShaderCHLCCMenuBackground = new Shader();
+    ShaderCHLCCMenuBackground->Compile("CHLCCMenuBackground", Device,
+                                       VertexDeclaration);
+
+    CurrentShader = ShaderSprite;
+    CurrentShader->UseShader(Device);
+
+    // Fill index buffer with quads
+    size_t index = 0;
+    uint16_t vertex = 0;
+    while (index + 6 <= IndexBufferCount) {
+      // bottom-left -> top-left -> top-right
+      IndexBuffer[index] = vertex + 0;
+      IndexBuffer[index + 1] = vertex + 1;
+      IndexBuffer[index + 2] = vertex + 2;
+      // bottom-left -> top-right -> bottom-right
+      IndexBuffer[index + 3] = vertex + 0;
+      IndexBuffer[index + 4] = vertex + 2;
+      IndexBuffer[index + 5] = vertex + 3;
+      index += 6;
+      vertex += 4;
+    }
+
+    // Make 1x1 white pixel for colored rectangles
+    Texture rectTexture;
+    rectTexture.Load1x1(0xFF, 0xFF, 0xFF, 0xFF);
+    SpriteSheet rectSheet(1.0f, 1.0f);
+    rectSheet.Texture = rectTexture.Submit(this);
+    RectSprite = Sprite(rectSheet, 0.0f, 0.0f, 1.0f, 1.0f);
+
+#ifndef IMPACTO_DISABLE_IMGUI
+    // Setup Platform/Renderer backends
+    ImGui_ImplSDL3_InitForD3D(DXWindow->SDLWindow);
+    ImGui_ImplDX9_Init(Device);
+#endif
+  } catch (...) {
+    Shutdown();
+    throw;
+  }
+}
+
+Renderer::~Renderer() { Shutdown(); }
+void Renderer::ResetDevice(int width, int height, bool preserve) {
+  using Microsoft::WRL::ComPtr;
+  for (auto* resource : DeviceResources) resource->BeforeDeviceReset();
+#ifndef IMPACTO_DISABLE_IMGUI
+  ImGui_ImplDX9_InvalidateDeviceObjects();
+#endif
+  for (auto& [id, storage] : RenderTextures) {
+    auto* texture = Textures.at(id);
+    if (preserve && texture) {
+      ComPtr<IDirect3DSurface9> surface, staging;
+      Check(texture->GetSurfaceLevel(0, &surface),
+            "Get target before device reset");
+      Check(Device->CreateOffscreenPlainSurface(
+                storage.Width, storage.Height, D3DFMT_A8R8G8B8,
+                D3DPOOL_SYSTEMMEM, &staging, nullptr),
+            "Create target backup");
+      Check(Device->GetRenderTargetData(surface.Get(), staging.Get()),
+            "Back up render target");
+      D3DLOCKED_RECT lock{};
+      Check(staging->LockRect(&lock, nullptr, D3DLOCK_READONLY),
+            "Lock target backup");
+      storage.Pixels.resize(size_t(storage.Width) * storage.Height * 4);
+      for (int y = 0; y < storage.Height; ++y)
+        std::memcpy(
+            storage.Pixels.data() + size_t(y) * storage.Width * 4,
+            static_cast<const uint8_t*>(lock.pBits) + size_t(y) * lock.Pitch,
+            size_t(storage.Width) * 4);
+      Check(staging->UnlockRect(), "Unlock target backup");
+    }
+    if (texture) texture->Release();
+    Textures.at(id) = nullptr;
+  }
+  PresentParameters.BackBufferWidth = width;
+  PresentParameters.BackBufferHeight = height;
+  Check(Device->Reset(&PresentParameters), "Reset Direct3D9 device");
+  for (auto& [id, storage] : RenderTextures) {
+    IDirect3DTexture9* texture = nullptr;
+    Check(Device->CreateTexture(storage.Width, storage.Height, 1,
+                                D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8,
+                                D3DPOOL_DEFAULT, &texture, nullptr),
+          "Restore render texture");
+    Textures.at(id) = texture;
+    ComPtr<IDirect3DSurface9> surface;
+    Check(texture->GetSurfaceLevel(0, &surface), "Restore render surface");
+    if (!storage.Pixels.empty()) {
+      ComPtr<IDirect3DSurface9> staging;
+      Check(Device->CreateOffscreenPlainSurface(
+                storage.Width, storage.Height, D3DFMT_A8R8G8B8,
+                D3DPOOL_SYSTEMMEM, &staging, nullptr),
+            "Create target restore surface");
+      D3DLOCKED_RECT lock{};
+      Check(staging->LockRect(&lock, nullptr, 0), "Lock target restore");
+      for (int y = 0; y < storage.Height; ++y)
+        std::memcpy(static_cast<uint8_t*>(lock.pBits) + size_t(y) * lock.Pitch,
+                    storage.Pixels.data() + size_t(y) * storage.Width * 4,
+                    size_t(storage.Width) * 4);
+      Check(staging->UnlockRect(), "Unlock target restore");
+      Check(
+          Device->UpdateSurface(staging.Get(), nullptr, surface.Get(), nullptr),
+          "Restore target pixels");
+    } else
+      Check(Device->ColorFill(surface.Get(), nullptr, 0),
+            "Clear restored target");
+  }
+  for (auto* resource : DeviceResources) resource->AfterDeviceReset();
+  InvalidateState();
+}
 void Renderer::Init() {
   if (IsInit) return;
-  ImpLog(LogLevel::Info, LogChannel::Render,
-         "Initializing Renderer2D DirectX 9 system\n");
   IsInit = true;
-
-  DXWindow = new DirectX9Window();
-  DXWindow->Init();
-  Window = (BaseWindow*)DXWindow;
-
-  Interface = Direct3DCreate9(D3D_SDK_VERSION);
-
-  HWND hWnd =
-      (HWND)SDL_GetPointerProperty(SDL_GetWindowProperties(Window->SDLWindow),
-                                   SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL);
-
-  D3DPRESENT_PARAMETERS d3dpp{};
-  d3dpp.Windowed = TRUE;
-  d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
-  d3dpp.hDeviceWindow = hWnd;
-  d3dpp.EnableAutoDepthStencil = TRUE;
-  d3dpp.AutoDepthStencilFormat = D3DFMT_D16;
-
-  Interface->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hWnd,
-                          D3DCREATE_HARDWARE_VERTEXPROCESSING, &d3dpp, &Device);
-  Device->CreateVertexBuffer(VertexBufferSize, 0, 0, D3DPOOL_MANAGED,
-                             &VertexBufferDevice, NULL);
-  Device->CreateIndexBuffer(IndexBufferCount * sizeof(uint16_t), 0,
-                            D3DFMT_INDEX16, D3DPOOL_MANAGED, &IndexBufferDevice,
-                            NULL);
-
-  Device->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
-  Device->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
-  Device->SetRenderState(D3DRS_ALPHABLENDENABLE, true);
-  Device->SetRenderState(D3DRS_BLENDOPALPHA, D3DBLENDOP_ADD);
-  Device->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
-  Device->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
-  Device->SetRenderState(D3DRS_SRCBLENDALPHA, D3DBLEND_SRCALPHA);
-  Device->SetRenderState(D3DRS_DESTBLENDALPHA, D3DBLEND_INVSRCALPHA);
-  Device->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
-
-  IDirect3DVertexDeclaration9* vertexDeclaration;
-  std::vector<D3DVERTEXELEMENT9> vertexDeclDesc{
-      {0, offsetof(VertexBufferSprites, Position), D3DDECLTYPE_FLOAT2,
-       D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0},
-      {0, offsetof(VertexBufferSprites, UV), D3DDECLTYPE_FLOAT2,
-       D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 0},
-      {0, offsetof(VertexBufferSprites, Tint), D3DDECLTYPE_FLOAT4,
-       D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_COLOR, 0},
-      {0, offsetof(VertexBufferSprites, MaskUV), D3DDECLTYPE_FLOAT2,
-       D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 1},
-      D3DDECL_END()};
-  Device->CreateVertexDeclaration(vertexDeclDesc.data(), &vertexDeclaration);
-
-  ShaderSprite = new Shader();
-  ShaderSprite->Compile("Sprite", Device, vertexDeclaration);
-  ShaderSpriteInverted = new Shader();
-  ShaderSpriteInverted->Compile("Sprite_inverted", Device, vertexDeclaration);
-  ShaderMaskedSprite = new Shader();
-  ShaderMaskedSprite->Compile("MaskedSprite", Device, vertexDeclaration);
-  ShaderMaskedSpriteNoAlpha = new Shader();
-  ShaderMaskedSpriteNoAlpha->Compile("MaskedSpriteNoAlpha", Device,
-                                     vertexDeclaration);
-  ShaderYUVFrame = new Shader();
-  ShaderYUVFrame->Compile("YUVFrame", Device, vertexDeclaration);
-  ShaderNV12Frame = new Shader();
-  ShaderNV12Frame->Compile("NV12Frame", Device, vertexDeclaration);
-  ShaderCCMessageBox = new Shader();
-  ShaderCCMessageBox->Compile("CCMessageBoxSprite", Device, vertexDeclaration);
-  ShaderCHLCCMenuBackground = new Shader();
-  ShaderCHLCCMenuBackground->Compile("CHLCCMenuBackground", Device,
-                                     vertexDeclaration);
-
-  CurrentShader = ShaderSprite;
-  CurrentShader->UseShader(Device);
-
   if (+Profile::Game::GameFeatures & +GameFeature::Scene3D) {
     Scene = new Scene3D(DXWindow, Device);
     Scene->Init();
   }
-
-  // Fill index buffer with quads
-  size_t index = 0;
-  uint16_t vertex = 0;
-  while (index + 6 <= IndexBufferCount) {
-    // bottom-left -> top-left -> top-right
-    IndexBuffer[index] = vertex + 0;
-    IndexBuffer[index + 1] = vertex + 1;
-    IndexBuffer[index + 2] = vertex + 2;
-    // bottom-left -> top-right -> bottom-right
-    IndexBuffer[index + 3] = vertex + 0;
-    IndexBuffer[index + 4] = vertex + 2;
-    IndexBuffer[index + 5] = vertex + 3;
-    index += 6;
-    vertex += 4;
-  }
-
-  // Make 1x1 white pixel for colored rectangles
-  Texture rectTexture;
-  rectTexture.Load1x1(0xFF, 0xFF, 0xFF, 0xFF);
-  SpriteSheet rectSheet(1.0f, 1.0f);
-  rectSheet.Texture = rectTexture.Submit();
-  RectSprite = Sprite(rectSheet, 0.0f, 0.0f, 1.0f, 1.0f);
-
-#ifndef IMPACTO_DISABLE_IMGUI
-  // Setup Platform/Renderer backends
-  ImGui_ImplSDL3_InitForD3D(DXWindow->SDLWindow);
-  ImGui_ImplDX9_Init(Device);
-#endif
 }
 
 void Renderer::Shutdown() {
-  if (!IsInit) return;
+  if (IsInit && Scene) Scene->Shutdown();
   IsInit = false;
-
-  if (+Profile::Game::GameFeatures & +GameFeature::Scene3D) {
-    Scene->Shutdown();
-  }
-
-  VertexBufferDevice->Release();
-  IndexBufferDevice->Release();
-  Device->Release();
-  Interface->Release();
+  for (auto& [id, texture] : Textures)
+    if (texture) texture->Release();
+  Textures.clear();
+  RenderTextures.clear();
+  TextureSamplers.clear();
+  for (auto* shader :
+       {ShaderSprite, ShaderSpriteInverted, ShaderMaskedSprite,
+        ShaderMaskedSpriteNoAlpha, ShaderYUVFrame, ShaderNV12Frame,
+        ShaderCCMessageBox, ShaderCHLCCMenuBackground})
+    delete shader;
+  ShaderSprite = ShaderSpriteInverted = ShaderMaskedSprite =
+      ShaderMaskedSpriteNoAlpha = nullptr;
+  ShaderYUVFrame = ShaderNV12Frame = ShaderCCMessageBox =
+      ShaderCHLCCMenuBackground = nullptr;
+  CurrentShader = nullptr;
+  if (VertexDeclaration) VertexDeclaration->Release();
+  if (VertexBufferDevice) VertexBufferDevice->Release();
+  if (IndexBufferDevice) IndexBufferDevice->Release();
+  if (IndexBufferMvl) IndexBufferMvl->Release();
+  VertexDeclaration = nullptr;
+  VertexBufferDevice = nullptr;
+  IndexBufferDevice = IndexBufferMvl = nullptr;
+  if (Device) Device->Release();
+  if (Interface) Interface->Release();
+  Device = nullptr;
+  Interface = nullptr;
 }
 
 #ifndef IMPACTO_DISABLE_IMGUI
@@ -155,13 +260,29 @@ void Renderer::BeginFrame() {
     return;
   }
 
+  int width = 0, height = 0;
+  if (!SDL_GetWindowSizeInPixels(Window->SDLWindow, &width, &height))
+    throw FormatError(SDL_GetError());
+  const auto cooperative = Device->TestCooperativeLevel();
+  if (cooperative == D3DERR_DEVICELOST) {
+    // A fullscreen application may temporarily own the adapter. Pump native
+    // window messages while waiting for D3D9 to allow its normal reset.
+    while (Device->TestCooperativeLevel() == D3DERR_DEVICELOST) {
+      SDL_PumpEvents();
+      SDL_Delay(20);
+    }
+  }
+  if (Device->TestCooperativeLevel() == D3DERR_DEVICENOTRESET ||
+      UINT(width) != PresentParameters.BackBufferWidth ||
+      UINT(height) != PresentParameters.BackBufferHeight)
+    ResetDevice(std::max(width, 1), std::max(height, 1), cooperative == D3D_OK);
   Drawing = true;
   VertexBufferFill = 0;
   IndexBufferFill = 0;
 
   Device->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER,
                 D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
-  Device->BeginScene();
+  Check(Device->BeginScene(), "Begin Direct3D9 frame");
 }
 
 void Renderer::BeginFrame2D() {
@@ -180,79 +301,33 @@ void Renderer::EndFrame() {
   ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
 #endif
 
-  Device->EndScene();
-  Device->Present(NULL, NULL, NULL, NULL);
+  Check(Device->EndScene(), "End Direct3D9 frame");
+  const auto present = Device->Present(NULL, NULL, NULL, NULL);
+  if (present != D3DERR_DEVICELOST) Check(present, "Present Direct3D9 frame");
   CurrentShader = 0;
   CurrentTexture = std::numeric_limits<uint32_t>::max();
 }
 
-uint32_t Renderer::SubmitTexture(TexFmt format, uint8_t* buffer, int width,
-                                 int height) {
-  int imageSize = 0;
-  D3DFORMAT imageFormat = D3DFMT_A1;
-  uint8_t* newBuffer = nullptr;
-
-  switch (format) {
-    case TexFmt_RGBA: {
-      imageSize = width * height * 4;
-      imageFormat = D3DFMT_A8R8G8B8;
-      newBuffer = (uint8_t*)malloc(imageSize);
-      int num = width * height;
-      for (int i = 0; i < num; i++) {
-        newBuffer[4 * i] = buffer[4 * i + 2];
-        newBuffer[4 * i + 1] = buffer[4 * i + 1];
-        newBuffer[4 * i + 2] = buffer[4 * i];
-        newBuffer[4 * i + 3] = buffer[4 * i + 3];
-      }
-    } break;
-    case TexFmt_RGB: {
-      imageSize = width * height * 4;
-      imageFormat = D3DFMT_A8R8G8B8;
-      newBuffer = (uint8_t*)malloc(imageSize);
-      int num = width * height;
-      for (int i = 0; i < num; i++) {
-        newBuffer[4 * i] = buffer[3 * i + 2];
-        newBuffer[4 * i + 1] = buffer[3 * i + 1];
-        newBuffer[4 * i + 2] = buffer[3 * i];
-        newBuffer[4 * i + 3] = 0xff;
-      }
-    } break;
-    case TexFmt_U8:
-      imageSize = width * height;
-      imageFormat = D3DFMT_A8;
-    default: {
-    }
-  }
-
-  IDirect3DTexture9* texture;
-  auto err = Device->CreateTexture(width, height, 1, 0, imageFormat,
-                                   D3DPOOL_MANAGED, &texture, nullptr);
-  D3DLOCKED_RECT lockRect;
-  err = texture->LockRect(0, &lockRect, NULL, 0);
-
-  if (format == TexFmt_RGBA || format == TexFmt_RGB) {
-    memcpy(lockRect.pBits, newBuffer, imageSize);
-    free(newBuffer);
-  } else {
-    memcpy(lockRect.pBits, buffer, imageSize);
-  }
-
-  if (FAILED(texture->UnlockRect(0))) {
-    ImpLog(LogLevel::Error, LogChannel::Render, "Failed to load texture!\n");
-    Window->Shutdown();
-  }
-
-  auto id = NextTextureId;
-  NextTextureId += 1;
-  Textures[id] = texture;
-
-  return id;
-}
-
 void Renderer::FreeTexture(uint32_t id) {
+  if (Drawing) Flush();
+  TextureSamplers.erase(id);
+  RenderTextures.erase(id);
+  if (CurrentTexture == id) {
+    Device->SetTexture(0, nullptr);
+    CurrentTexture = UINT32_MAX;
+  }
   auto textureItr = Textures.find(id);
   if (textureItr != Textures.end()) {
     if (textureItr->second != nullptr) {
+      // Immediate scene/SDK passes also bind these resources. Release their
+      // device references before dropping the renderer's ownership.
+      for (DWORD stage = 0; stage < 16; ++stage) {
+        IDirect3DBaseTexture9* bound = nullptr;
+        if (SUCCEEDED(Device->GetTexture(stage, &bound)) && bound) {
+          if (bound == textureItr->second) Device->SetTexture(stage, nullptr);
+          bound->Release();
+        }
+      }
       textureItr->second->Release();
     }
     Textures.erase(textureItr);
@@ -260,15 +335,15 @@ void Renderer::FreeTexture(uint32_t id) {
 }
 
 YUVFrame* Renderer::CreateYUVFrame(float width, float height) {
-  VideoFrameInternalYUV = new DX9YUVFrame(Device);
-  VideoFrameInternalYUV->Init(width, height);
-  return (YUVFrame*)VideoFrameInternalYUV;
+  auto frame = std::make_unique<DX9YUVFrame>(Device);
+  frame->Init(width, height);
+  return frame.release();
 }
 
 NV12Frame* Renderer::CreateNV12Frame(float width, float height) {
-  VideoFrameInternalNV12 = new DX9NV12Frame(Device);
-  VideoFrameInternalNV12->Init(width, height);
-  return (NV12Frame*)VideoFrameInternalNV12;
+  auto frame = std::make_unique<DX9NV12Frame>(Device);
+  frame->Init(width, height);
+  return frame.release();
 }
 
 void Renderer::DrawSprite(const Sprite& sprite, const CornersQuad& dest,
@@ -621,6 +696,20 @@ void Renderer::EnsureTextureBound(uint32_t texture) {
                CurrentTexture, texture);
     Flush();
     Device->SetTexture(0, Textures[texture]);
+    const auto found = TextureSamplers.find(texture);
+    const auto sampling = found == TextureSamplers.end()
+                              ? TextureSampling::LinearClamp
+                              : found->second;
+    const auto filter = sampling == TextureSampling::NearestClamp
+                            ? D3DTEXF_POINT
+                            : D3DTEXF_LINEAR;
+    const auto wrap = sampling == TextureSampling::LinearRepeat
+                          ? D3DTADDRESS_WRAP
+                          : D3DTADDRESS_CLAMP;
+    Device->SetSamplerState(0, D3DSAMP_MINFILTER, filter);
+    Device->SetSamplerState(0, D3DSAMP_MAGFILTER, filter);
+    Device->SetSamplerState(0, D3DSAMP_ADDRESSU, wrap);
+    Device->SetSamplerState(0, D3DSAMP_ADDRESSV, wrap);
     CurrentTexture = texture;
   }
 }
@@ -688,15 +777,23 @@ void Renderer::DrawVideoTexture(const YUVFrame& frame, const RectF& dest,
     return;
   }
 
+  Flush();
   EnsureShader(ShaderYUVFrame);
+  for (DWORD plane = 0; plane < 3; ++plane) {
+    Device->SetSamplerState(plane, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
+    Device->SetSamplerState(plane, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
+    Device->SetSamplerState(plane, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+    Device->SetSamplerState(plane, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+    Device->SetSamplerState(plane, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+  }
   CurrentTexture = std::numeric_limits<uint32_t>::max();
 
   // Do we have space for one more sprite quad?
   EnsureSpaceAvailable(4, sizeof(VertexBufferSprites), 6);
 
-  auto err = Device->SetTexture(0, VideoFrameInternalYUV->Luma);
-  err = Device->SetTexture(1, VideoFrameInternalYUV->Cb);
-  err = Device->SetTexture(2, VideoFrameInternalYUV->Cr);
+  auto err = Device->SetTexture(0, static_cast<const DX9YUVFrame&>(frame).Luma);
+  err = Device->SetTexture(1, static_cast<const DX9YUVFrame&>(frame).Cb);
+  err = Device->SetTexture(2, static_cast<const DX9YUVFrame&>(frame).Cr);
 
   // This is cursed man, idk
   BOOL alphaVideoB = (BOOL)alphaVideo;
@@ -726,14 +823,22 @@ void Renderer::DrawVideoTexture(const NV12Frame& frame, const RectF& dest,
     return;
   }
 
+  Flush();
   EnsureShader(ShaderNV12Frame);
+  for (DWORD plane = 0; plane < 2; ++plane) {
+    Device->SetSamplerState(plane, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
+    Device->SetSamplerState(plane, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
+    Device->SetSamplerState(plane, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+    Device->SetSamplerState(plane, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+    Device->SetSamplerState(plane, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+  }
   CurrentTexture = std::numeric_limits<uint32_t>::max();
 
   // Do we have space for one more sprite quad?
   EnsureSpaceAvailable(4, sizeof(VertexBufferSprites), 6);
 
-  auto err = Device->SetTexture(0, VideoFrameInternalNV12->Luma);
-  err = Device->SetTexture(1, VideoFrameInternalNV12->CbCr);
+  auto err = Device->SetTexture(0, static_cast<const DX9NV12Frame&>(frame).Luma);
+  err = Device->SetTexture(1, static_cast<const DX9NV12Frame&>(frame).CbCr);
 
   // This is cursed man, idk
   BOOL alphaVideoB = (BOOL)alphaVideo;
@@ -776,13 +881,9 @@ void Renderer::CaptureScreencap(Sprite& sprite) {
   sprite.BaseScale = {Profile::Game::DesignWidth / backBufferDesc.Width,
                       Profile::Game::DesignHeight / backBufferDesc.Height};
 
-  IDirect3DTexture9* texture;
-  Device->CreateTexture(backBufferDesc.Width, backBufferDesc.Height, 1,
-                        D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT,
-                        &texture, nullptr);
-  auto id = NextTextureId;
-  NextTextureId += 1;
-  Textures[id] = texture;
+  const auto id =
+      CreateRenderTexture(backBufferDesc.Width, backBufferDesc.Height);
+  auto* texture = reinterpret_cast<IDirect3DTexture9*>(NativeTextureHandle(id));
   sprite.Sheet.Texture = id;
 
   IDirect3DSurface9* destSurface = nullptr;
@@ -825,6 +926,10 @@ glm::vec2 Renderer::DesignToNDC(glm::vec2 designCoord) const {
   glm::vec2 result;
   result.x = (designCoord.x / (Profile::Game::DesignWidth * 0.5f)) - 1.0f;
   result.y = 1.0f - (designCoord.y / (Profile::Game::DesignHeight * 0.5f));
+  D3DVIEWPORT9 viewport{};
+  Check(Device->GetViewport(&viewport), "Read sprite viewport");
+  result.x -= 1.0f / viewport.Width;
+  result.y += 1.0f / viewport.Height;
   return result;
 }
 

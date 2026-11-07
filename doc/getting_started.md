@@ -23,6 +23,13 @@ root.GameDefinitions = {
 };
 ```
 
+Definitions may also select a `Runtime`. The default, `GameRuntimeType.Impacto`,
+uses the shared engine loop. `GameRuntimeType.Saekano` selects Saekano's existing
+game-owned runtime through the same profile loader. Its game configuration lives
+in `/profiles/saekano/`, with C++ configuration readers in
+`/src/profile/games/saekano/` and game behavior in `/src/games/saekano/`.
+Its existing bytecode reader and instruction loop live in `/src/vm/saekano/`.
+
 In a release environment, the above files will be placed in a platform specific preferences directory.
 For development purposes it will prioritize looking for these files in the same directory as the Impacto executable first.
 
@@ -123,6 +130,7 @@ The following profiles are currently available:
 * **dash** - Robotics;Notes DaSH
 * **mo6tw** - Memories Off 6 ~T-Wave~
 * **rne** - Robotics;Notes Elite (PS Vita)
+* **saekano** - Saekano (requires the optional Windows x86 OpenGL backend)
 * **characterviewer** - A viewer for 2D characters
 * **modelviewer** - A viewer for 3D models from Robotics;Notes Elite
 * **modelviewer-dash** - A viewer for 3D models from Robotics;Notes DaSH

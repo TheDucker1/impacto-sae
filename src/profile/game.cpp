@@ -13,6 +13,7 @@ void Configure() {
   LayerCount = EnsureGetMember<int>("LayerCount");
   GameFeatures = EnsureGetMember<GameFeature>("GameFeatures");
   WindowName = EnsureGetMember<std::string>("WindowName");
+  OpenGLCompatibility = TryGetMember<bool>("OpenGLCompatibility").value_or(false);
   WindowIconPath = TryGetMember<std::string>("WindowIconPath");
   CursorArrowPath = TryGetMember<std::string>("CursorArrowPath");
   CursorPointerPath = TryGetMember<std::string>("CursorPointerPath");

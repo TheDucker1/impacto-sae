@@ -5,6 +5,7 @@
 #include "modelviewer.h"
 #include "characterviewer.h"
 #include "log.h"
+#include "userconfig.h"
 #include "inputsystem.h"
 #include "debugmenu.h"
 #include "renderer/opengl/glc.h"
@@ -70,6 +71,14 @@
 #include "profile/ui/gamespecific.h"
 #include "profile/ui/buttonprompticons.h"
 #include "profile/subtitle.h"
+#include "profile/gamedefinitions.h"
+
+#ifdef IMPACTO_HAS_SAEKANO
+#include "profile/games/saekano/game.h"
+#include "games/saekano/pcvalidation.h"
+#endif
+
+#include "renderer/frontend.h"
 
 namespace Impacto {
 
@@ -82,6 +91,37 @@ static bool UsesCCRenderingRules() {
           UI::GameSpecificType::CC) ||
          (Profile::GameSpecific::GameSpecificType ==
           UI::GameSpecificType::CCLCC);
+}
+
+std::optional<int> RunGameProfile(const LaunchOptions& options,
+                                  bool launcherInitialized) {
+  const auto& activeGame = UserConfig::GetActiveGame();
+  const auto runtime = activeGame.empty()
+                           ? GameRuntimeType::Impacto
+                           : Profile::GameDefinitions.at(activeGame).Runtime;
+  switch (runtime) {
+    case GameRuntimeType::Impacto:
+      if (!activeGame.empty() &&
+          (!options.GameDataPath.empty() || !options.SaveDataPath.empty())) {
+        throw std::runtime_error(
+            "Game data/save overrides do not apply to the selected runtime");
+      }
+      return std::nullopt;
+    case GameRuntimeType::Saekano:
+#ifdef IMPACTO_HAS_SAEKANO
+      if (launcherInitialized) Shutdown();
+      Profile::ConfigureGameProfile();
+      Profile::Game::Configure();
+      Profile::Saekano::Configure();
+      Profile::ClearProfile();
+      return Saekano::RunPcLauncher(options.UserConfigPath,
+                                    options.GameDataPath, options.SaveDataPath);
+#else
+      throw std::runtime_error(
+          "This build does not include the Saekano runtime");
+#endif
+  }
+  throw std::runtime_error("Unknown game runtime in game definition");
 }
 
 void Init() {
@@ -221,11 +261,8 @@ void Shutdown() {
     Video::VideoShutdown();
   }
 
-  if (+Profile::Game::GameFeatures & +GameFeature::Renderer2D) {
-    Renderer->Shutdown();
-  }
   WorkQueue::StopWorkQueue();
-  Window->Shutdown();
+  DestroyRendererFrontend();
 }
 
 void LauncherUpdate(float dt) {
@@ -246,6 +283,8 @@ void LauncherUpdate(float dt) {
 
 void LauncherRender() {
   Window->Update();
+  Renderer->BeginFrame();
+  Renderer->BeginFrame2D();
 
 #ifndef IMPACTO_DISABLE_IMGUI
   Renderer->ImGuiBeginFrame();
@@ -253,7 +292,7 @@ void LauncherRender() {
 #endif
 
   ApplyCursorForFrame();
-
+  Renderer->EndFrame();
   Window->Draw();
 }
 

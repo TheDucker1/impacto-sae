@@ -10,7 +10,7 @@ namespace TexLoad {
 
 bool TextureLoadWebP(Io::Stream* stream, Texture* outTexture) {
   stream->Seek(0, IoSeek::End);
-  size_t dataSize = stream->Position;
+  size_t dataSize = MemorySize(stream->Position);
   stream->Seek(0, IoSeek::Set);
   uint8_t* rawData = (uint8_t*)malloc(dataSize);
   stream->Read(rawData, dataSize);

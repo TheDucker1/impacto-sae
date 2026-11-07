@@ -19,14 +19,14 @@ class Buffering {
 
   Buffering(int64_t bufferSize) {
     BufferSize = bufferSize;
-    Buffer = (uint8_t*)malloc(bufferSize);
+    Buffer = (uint8_t*)malloc(MemorySize(bufferSize));
   }
   Buffering(const Buffering& other)
       : BufferSize(other.BufferSize),
         BufferFill(other.BufferFill),
         BufferConsumed(other.BufferConsumed) {
-    Buffer = (uint8_t*)malloc(BufferSize);
-    memcpy(Buffer, other.Buffer, BufferSize);
+    Buffer = (uint8_t*)malloc(MemorySize(BufferSize));
+    memcpy(Buffer, other.Buffer, MemorySize(BufferSize));
   }
   ~Buffering() { free(Buffer); }
 
@@ -41,7 +41,8 @@ class Buffering {
       if (BufferConsumed < BufferFill) {
         int64_t toCopy = std::min(sz, BufferFill - BufferConsumed);
         if (buffer) {
-          memcpy((uint8_t*)buffer + read, Buffer + BufferConsumed, toCopy);
+          memcpy((uint8_t*)buffer + read, Buffer + BufferConsumed,
+                 MemorySize(toCopy));
         }
         sz -= toCopy;
         stream->Position += toCopy;

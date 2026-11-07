@@ -1,0 +1,154 @@
+#pragma once
+
+#include "vm.h"
+#include "skipauto.h"
+#include "texttiming.h"
+#include "textreveal.h"
+
+namespace Impacto::Saekano {
+
+// A deterministic text backend, sharing the VM's lifecycle with a graphical
+// frontend. Presentation commands need a separate implemented backend; this
+// class does not claim to draw, decode media or complete unknown opcodes.
+class HeadlessBackend : public VmBackend {
+ public:
+  RegisteredReadHistory* RegisteredHistory=nullptr;
+  HistoryEnvironment HistorySettings;
+  std::optional<bool> MessageWasRead(int32_t script,uint32_t command,std::span<const ScriptRecord> records) const override {
+    if(HistorySettings.SuppressReadHistory)return false;
+    if(!RegisteredHistory || script<0 || size_t(script)>=RegisteredHistory->Files.size())return std::nullopt;
+    return SkipHistoryEligible(HistorySettings,records,command,&RegisteredHistory->Files[size_t(script)]);
+  }
+  void RecordReadHistory(int32_t script,uint32_t command) override {
+    if(!RegisteredHistory || HistorySettings.SuppressReadHistory)return;
+    if(script<0 || size_t(script)>=RegisteredHistory->Files.size())
+      throw FormatError("completed command outside registered history scripts");
+    MarkHistoryRead(HistorySettings,RegisteredHistory->Files[size_t(script)],command);
+  }
+  void RecordChoiceHistory(int32_t script,uint32_t command,std::span<const size_t> flags) override {
+    if(RegisteredHistory)MarkChoiceHistory(HistorySettings,*RegisteredHistory,script,command,flags);
+  }
+  bool AutoReveal = true;
+  bool AutoAdvance = true;
+  bool AutoAdvanceEnabled() const { return ScenePolicy?ScenePolicy->Auto:AutoAdvance; }
+  std::function<void(bool)> ParticleReset;
+  std::function<void(const NativeContextSave&)> ParticleRestore;
+  void RestoreSavedParticles(const NativeContextSave& saved) override {
+    if (!ParticleRestore) throw UnsupportedCommand("saved particle restoration is unbound");
+    ParticleRestore(saved);
+  }
+  std::function<void(const GameEvent&)> ParticleRequest;
+  ScriptParticleHost* ScriptParticleConsumer=nullptr;
+  ScriptParticleHost* ScriptParticles() override { return ScriptParticleConsumer; }
+  std::optional<ScenarioDateEnvironment> DateSettings;
+  const ScenarioDateEnvironment* DateConfig() const override { return DateSettings?&*DateSettings:nullptr; }
+  void ResetParticles(bool fresh) override { if (ParticleReset) ParticleReset(fresh); }
+  bool StartParticleEffect(const GameEvent& event) override {
+    if (!ParticleRequest) return false;
+    ParticleRequest(event); return true;
+  }
+  SceneImageDriver* SceneImages = nullptr;
+  SceneImageDriver* Images() override { return SceneImages; }
+  CharacterPoseDriver* CharacterPoses = nullptr;
+  CharacterPoseDriver* Poses() override { return CharacterPoses; }
+  ApproachResources* ApproachResourceBank = nullptr;
+  ApproachResources* ApproachAssets() override { return ApproachResourceBank; }
+  BattleResources* BattleResourceBank=nullptr;
+  BattleResources* BattleAssets() override { return BattleResourceBank; }
+  std::optional<BattleVersusEnvironment> BattleVersusSettings;
+  std::optional<BattleSelectionEnvironment> BattleSelectionSettings;
+  BattleSelectionHost* BattleSelectionConsumerHost=nullptr;
+  std::optional<BattleResultEnvironment> BattleResultSettings;
+  BattleResultHost* BattleResultConsumerHost=nullptr;
+  const BattleResultEnvironment* BattleResultConfig()const override{return BattleResultSettings?&*BattleResultSettings:nullptr;}
+  BattleResultHost* BattleResultConsumer()override{return BattleResultConsumerHost;}
+  SkipAutoState* ScenePolicy=nullptr;
+  SkipAutoState* AutoPolicy()override{return ScenePolicy;}
+  const BattleSelectionEnvironment* BattleSelectionConfig()const override {
+    return BattleSelectionSettings?&*BattleSelectionSettings:nullptr;
+  }
+  BattleSelectionHost* BattleSelectionConsumer()override{return BattleSelectionConsumerHost;}
+  const BattleVersusEnvironment* BattleVersusConfig() const override {
+    return BattleVersusSettings?&*BattleVersusSettings:nullptr;
+  }
+  ApproachMissionAudio* MissionVoiceBank=nullptr;
+  std::optional<ApproachMissionEnvironment> MissionSettings;
+  std::optional<ApproachSelectionEnvironment> SelectionSettings;
+  std::optional<SharedSelectionEnvironment> OrdinaryChoiceSettings;
+  std::optional<BacklogTextEnvironment> BacklogSettings;
+  const BacklogTextEnvironment* BacklogConfig() const override {
+    return BacklogSettings ? &*BacklogSettings : nullptr;
+  }
+  const SharedSelectionEnvironment* OrdinaryChoiceConfig() const override {
+    return OrdinaryChoiceSettings ? &*OrdinaryChoiceSettings : nullptr;
+  }
+  std::optional<ApproachResultEnvironment> ApproachResultSettings;
+  ApproachResultHost* ResultConsumer=nullptr;
+  const ApproachResultEnvironment* ApproachResultConfig() const override {
+    return ApproachResultSettings?&*ApproachResultSettings:nullptr;
+  }
+  ApproachResultHost* ResultHost() override { return ResultConsumer; }
+  const ApproachSelectionEnvironment* SelectionConfig() const override {
+    return SelectionSettings?&*SelectionSettings:nullptr;
+  }
+  ApproachMissionAudio* MissionVoices() override { return MissionVoiceBank; }
+  const ApproachMissionEnvironment* MissionConfig() const override {
+    return MissionSettings ? &*MissionSettings : nullptr;
+  }
+  Live2dDriver* SceneModels = nullptr;
+  Live2dDriver* Models() override { return SceneModels; }
+  BgmResources* MusicResources = nullptr;
+  BgmResources* Music() override { return MusicResources; }
+  SeResources* SeArchives = nullptr;
+  SeResources* SoundEffects() override { return SeArchives; }
+  ScriptMovieServices* MovieOutput = nullptr;
+  std::optional<GlobalUiEnvironment> GlobalUiSettings;
+  ScriptMovieServices* Movies() override { return MovieOutput; }
+  const GlobalUiEnvironment* GlobalUiConfig() const override {
+    return GlobalUiSettings ? &*GlobalUiSettings : nullptr;
+  }
+  std::optional<BattleGaugeEnvironment> BattleConfig;
+  std::optional<ApproachGaugeEnvironment> ApproachConfig;
+  std::optional<ChapterEnvironment> ChapterSettings;
+  std::optional<ProfileEnvironment> ProfileSettings;
+  std::optional<ModeResultEnvironment> ModeResultSettings;
+  std::optional<TextTimingEnvironment> TextTimingSettings;
+  std::optional<TextFormatEnvironment> TextFormatSettings;
+  ProfileServices* ProfileConsumer = nullptr;
+  ProfileServices* ProfileHost() override { return ProfileConsumer; }
+  const ModeResultEnvironment* ModeResultConfig() const override {
+    return ModeResultSettings ? &*ModeResultSettings : nullptr;
+  }
+  const ProfileEnvironment* ProfileConfig() const override {
+    return ProfileSettings ? &*ProfileSettings : nullptr;
+  }
+  const ChapterEnvironment* ChapterConfig() const override {
+    return ChapterSettings ? &*ChapterSettings : nullptr;
+  }
+  const ApproachGaugeEnvironment* ApproachEnvironment() const override {
+    return ApproachConfig ? &*ApproachConfig : nullptr;
+  }
+  const BattleGaugeEnvironment* BattleEnvironment() const override {
+    return BattleConfig ? &*BattleConfig : nullptr;
+  }
+  void BeginMessage(size_t command, const MessageCommand&, size_t side, uint64_t) override {
+    revealed_[command] = AutoReveal;
+    cursorVisible_ = false; messageSide_ = side;
+  }
+  bool MessageRevealed(size_t command, uint64_t) override {
+    if(revealed_.at(command))cursorVisible_=true;
+    return revealed_.at(command);
+  }
+  bool CursorVisible() const override { return cursorVisible_; }
+  void CompleteMessage(size_t, uint64_t) override { cursorVisible_=false; }
+  void ClearMessage(size_t side) override { if(side==messageSide_)cursorVisible_=false; }
+  bool MessageAdvanceAllowed(size_t, uint64_t) override { return AutoAdvanceEnabled(); }
+  void RevealMessage(size_t command) override { revealed_.at(command) = true; }
+
+ private:
+  bool cursorVisible_ = false;
+  size_t messageSide_ = 0;
+  std::map<size_t, bool> revealed_;
+};
+
+}  // namespace Impacto::Saekano

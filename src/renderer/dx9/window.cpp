@@ -19,7 +19,8 @@ namespace DirectX9 {
 
 void DirectX9Window::UpdateDimensions() {
   WindowDimensionsChanged = false;
-  // SDL_Vulkan_GetDrawableSize(SDLWindow, &WindowWidth, &WindowHeight);
+  if (!SDL_GetWindowSizeInPixels(SDLWindow, &WindowWidth, &WindowHeight))
+    throw std::runtime_error(SDL_GetError());
   if (WindowWidth != lastWidth || WindowHeight != lastHeight ||
       MsaaCount != lastMsaa || RenderScale != lastRenderScale) {
     WindowDimensionsChanged = true;
@@ -58,11 +59,19 @@ void DirectX9Window::Init() {
 }
 
 void DirectX9Window::SetDimensions(int width, int height, int msaa,
-                                   float renderScale) {}
+                                   float renderScale) {
+  WindowWidth = width;
+  WindowHeight = height;
+  MsaaCount = msaa;
+  RenderScale = renderScale;
+  if (!SDL_SetWindowSize(SDLWindow, width, height))
+    throw std::runtime_error(SDL_GetError());
+  UpdateDimensions();
+}
 
 void DirectX9Window::SwapRTs() {}
 
-void DirectX9Window::Update() {}
+void DirectX9Window::Update() { UpdateDimensions(); }
 
 void DirectX9Window::Draw() {
 #ifndef IMPACTO_DISABLE_IMGUI
@@ -73,11 +82,10 @@ void DirectX9Window::Draw() {
 #endif
 }
 
-void DirectX9Window::Shutdown() {
+void DirectX9Window::Shutdown(bool exitProcess) {
   SDL_DestroyWindow(SDLWindow);
   SDL_Quit();
-  // TODO move exit to users
-  exit(0);
+  if (exitProcess) exit(0);
 }
 
 }  // namespace DirectX9

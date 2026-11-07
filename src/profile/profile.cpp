@@ -94,7 +94,8 @@ static int LuaInclude(lua_State* ctx) {
   char const prefix[] = "do\n";
   char const suffix[] = "\nend";
 
-  size_t script_len = strlen(prefix) + stream->Meta.Size + strlen(suffix) + 1;
+  size_t script_len =
+      Io::MemorySize(stream->Meta.Size, strlen(prefix) + strlen(suffix) + 1);
   auto script = std::make_unique<char[]>(script_len);
 
   script[script_len - 1] = '\0';
@@ -157,6 +158,7 @@ static void DefineEnums() {
   DefineEnum<AudioBackendType>(LuaState);
   DefineEnum<TextAlignment>(LuaState);
   DefineEnum<GameFeature>(LuaState);
+  DefineEnum<GameRuntimeType>(LuaState);
   DefineEnum<CharacterTypeFlags>(LuaState);
   DefineEnum<Impacto::Vm::InstructionSet>(LuaState);
   DefineEnum<Impacto::Game::DrawComponentType>(LuaState);
@@ -230,7 +232,7 @@ void Init() {
   DefineEnums();
 }
 
-void Configure() {
+void ConfigureDefinitions() {
   const auto setupScriptPath = [](std::string const& fileName,
                                   std::string& path) {
     // Override
@@ -278,6 +280,10 @@ void Configure() {
 
   BasePaths::Configure();
   GameDefinition::Configure();
+}
+
+void Configure() {
+  ConfigureDefinitions();
   UserConfig::Configure();
 }
 

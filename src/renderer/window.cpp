@@ -58,7 +58,7 @@ void SetWindowIcon(SDL_Window* window) {
     return;
   }
   std::unique_ptr<Io::Stream> stream(streamPtr);
-  size_t fileSize = stream->Meta.Size;
+  size_t fileSize = Io::MemorySize(stream->Meta.Size);
   std::vector<uint8_t> fileData(fileSize);
   int64_t bytesRead = stream->Read(fileData.data(), fileSize);
 
@@ -113,7 +113,7 @@ static SDL_Cursor* LoadCursorFromFile(const std::string& path) {
     return nullptr;
   }
   std::unique_ptr<Io::Stream> stream(streamPtr);
-  size_t fileSize = stream->Meta.Size;
+  size_t fileSize = Io::MemorySize(stream->Meta.Size);
   std::vector<uint8_t> fileData(fileSize);
   int64_t bytesRead = stream->Read(fileData.data(), fileSize);
   if (bytesRead != (int64_t)fileSize) {
@@ -296,6 +296,7 @@ void BaseWindow::SetWindowedSizing() {
 }
 
 RectF BaseWindow::GetViewport() {
+  if(FullFramebuffer)return RectF(0,0,float(WindowWidth),float(WindowHeight));
   RectF viewport;
 
   const float designWidth =

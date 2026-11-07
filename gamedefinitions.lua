@@ -1,4 +1,11 @@
 root.GameDefinitions = {
+  saekano = {
+    Name = "Saekano",
+    LauncherOrderId = 10,
+    LauncherTheme = 0xEFA8C7,
+    Runtime = GameRuntimeType.Saekano,
+    GameProfile = root.BasePaths.RootProfilesDir .. "/saekano/game.lua",
+  },
   chlcc = {
     Name = "CHAOS;HEAD Love Chu☆Chu!",
     LauncherOrderId = 0,

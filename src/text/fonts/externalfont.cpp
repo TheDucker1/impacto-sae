@@ -77,7 +77,7 @@ ExternalFont::ExternalFont(std::string const& path,
     return;
   }
 
-  FontImpl->FontData.resize(stream->Meta.Size);
+  FontImpl->FontData.resize(Io::MemorySize(stream->Meta.Size));
   int64_t readSize =
       stream->Read(FontImpl->FontData.data(), FontImpl->FontData.size());
   delete stream;

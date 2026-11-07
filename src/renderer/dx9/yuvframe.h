@@ -16,14 +16,16 @@ class DX9YUVFrame : public YUVFrame {
   void Init(float width, float height) override;
 
   void Submit(const void* luma, const void* cb, const void* cr) override;
+  void SubmitStrided(const void* y, int ys, const void* u, int us,
+                     const void* v, int vs) override;
   void Release() override;
 
  protected:
   IDirect3DDevice9* Device;
 
-  IDirect3DTexture9* Luma;
-  IDirect3DTexture9* Cb;
-  IDirect3DTexture9* Cr;
+  IDirect3DTexture9* Luma = nullptr;
+  IDirect3DTexture9* Cb = nullptr;
+  IDirect3DTexture9* Cr = nullptr;
 };
 
 }  // namespace DirectX9

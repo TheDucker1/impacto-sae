@@ -10,6 +10,7 @@ class GLYUVFrame : public YUVFrame {
   void Init(float width, float height) override;
 
   void Submit(const void* luma, const void* cb, const void* cr) override;
+  void SubmitStrided(const void* luma,int lumaStride,const void* cb,int cbStride,const void* cr,int crStride) override;
   void Release() override;
 };
 

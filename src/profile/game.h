@@ -35,6 +35,7 @@ inline float DesignHeight;
 inline int PlatformId = 0;
 
 inline bool HasInit = false;
+inline bool OpenGLCompatibility = false;
 
 void Configure();
 }  // namespace Game

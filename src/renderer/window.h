@@ -35,6 +35,7 @@ enum GraphicsApi {
 
 class BaseWindow {
  public:
+  virtual ~BaseWindow() = default;
   virtual void Init() = 0;
   virtual void SetDimensions(int width, int height, int msaa,
                              float renderScale) = 0;
@@ -46,7 +47,8 @@ class BaseWindow {
   virtual void SwapRTs() = 0;
   virtual void Update() = 0;
   virtual void Draw() = 0;
-  virtual void Shutdown() = 0;
+  // Existing fatal paths terminate; runtime handoff releases the frontend only.
+  virtual void Shutdown(bool exitProcess = true) = 0;
   void ApplyWindowSettings();
 
   SDL_Window* SDLWindow;
@@ -64,6 +66,8 @@ class BaseWindow {
   bool WindowDimensionsChanged;
 
   bool RecreateFBOs = false;
+  // Standalone frontends perform their own layout/letterboxing.
+  bool FullFramebuffer = false;
 
  protected:
   bool CreateSDLWindow(SDL_WindowFlags flags);

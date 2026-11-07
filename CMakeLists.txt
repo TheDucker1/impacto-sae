@@ -1,5 +1,17 @@
 cmake_minimum_required(VERSION 3.28)
 
+# The command engine can be built as a library without graphical dependencies.
+option(IMPACTO_SAEKANO_CORE_ONLY "Build only the Saekano core library" OFF)
+option(IMPACTO_ENABLE_SAEKANO "Include the Saekano VM and legacy Live2D backend" OFF)
+if(IMPACTO_SAEKANO_CORE_ONLY)
+    # Keep debug records in object files: this also avoids requiring a matching
+    # running mspdbsrv when using a standalone Build Tools installation.
+    set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT Embedded)
+    project(impacto_saekano_core LANGUAGES C CXX)
+    add_subdirectory(src/games/saekano)
+    return()
+endif()
+
 if (POLICY CMP0141)
   cmake_policy(SET CMP0141 NEW)
 endif()
@@ -65,6 +77,7 @@ set(Impacto_Src
     src/effects/chlcc/eyecatch.cpp
 
     src/renderer/renderer.cpp
+    src/renderer/frontend.cpp
     src/renderer/window.cpp
 
     src/data/savesystem.cpp
@@ -794,6 +807,8 @@ if (WIN32)
     )
 endif ()
 
+add_subdirectory(src/io)
+
 add_library(clHCA STATIC vendor/clHCA/clHCA.c)
 target_include_directories(clHCA PUBLIC vendor/clHCA)
 
@@ -1076,7 +1091,7 @@ if (NOT DEFINED IMPACTO_DISABLE_LIBASS)
     list(APPEND Impacto_Header src/subtitle/ass/subtitlerenderer.h)
 
     pkg_check_modules(ass REQUIRED IMPORTED_TARGET GLOBAL libass)
-    # Libass links libc++ which overrides the static stllib linkage 
+    # Libass links libc++ which overrides the static stllib linkage
     if(ANDROID)
         get_target_property(ASS_LINK_LIBS PkgConfig::ass INTERFACE_LINK_LIBRARIES)
         set(CLEANED_ASS_LINK_LIBS "")
@@ -1262,6 +1277,7 @@ endif ()
 if (NOT DEFINED IMPACTO_DISABLE_DX9)
     list(APPEND Impacto_Src
         src/renderer/dx9/renderer.cpp
+        src/renderer/dx9/texture.cpp
         src/renderer/dx9/window.cpp
         src/renderer/dx9/shader.cpp
         src/renderer/dx9/yuvframe.cpp
@@ -1297,6 +1313,48 @@ else()
     add_executable(impacto ${Impacto_Src} ${Impacto_Header})
 endif()
 
+if(IMPACTO_ENABLE_SAEKANO)
+    add_subdirectory(src/games/saekano)
+    if(NOT TARGET saekano_cubism2)
+        message(FATAL_ERROR "Saekano PC build requires SAEKANO_CUBISM2_SDK_ROOT")
+    endif()
+    target_link_libraries(impacto PRIVATE saekano_live2d_driver)
+    target_sources(impacto PRIVATE src/renderer/scene2d.cpp)
+    if(NOT DEFINED IMPACTO_DISABLE_OPENGL)
+        target_sources(impacto PRIVATE src/renderer/opengl/scene2d.cpp)
+    endif()
+    if(NOT DEFINED IMPACTO_DISABLE_DX9)
+        target_sources(impacto PRIVATE src/renderer/dx9/scene2d.cpp)
+    endif()
+    target_sources(impacto PRIVATE src/profile/games/saekano/game.cpp src/profile/games/saekano/titlemenu.cpp)
+    target_sources(impacto PRIVATE src/games/saekano/desktop.cpp src/games/saekano/musicplayback.cpp src/games/saekano/movieplayback.cpp src/games/saekano/scriptmovieplayback.cpp src/games/saekano/fontface.cpp src/renderer/legacyfontraster.c src/games/saekano/pcconfig.cpp src/games/saekano/pcinput.cpp src/games/saekano/pcvalidation.cpp src/games/saekano/pclauncher.cpp src/games/saekano/pcdiagnostics.cpp)
+    if(DEFINED IMPACTO_DISABLE_IMGUI)
+        message(FATAL_ERROR "The Saekano launcher requires the existing ImGui frontend")
+    endif()
+    target_compile_definitions(impacto PRIVATE IMPACTO_HAS_SAEKANO)
+    add_custom_command(TARGET impacto POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:impacto> $<TARGET_FILE_DIR:impacto>
+        COMMAND_EXPAND_LISTS VERBATIM)
+    add_custom_target(saekano_runtime_assets
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/shaders $<TARGET_FILE_DIR:impacto>/shaders
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources $<TARGET_FILE_DIR:impacto>/resources
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/saekano/launcher $<TARGET_FILE_DIR:impacto>/saekano-launcher
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/profiles $<TARGET_FILE_DIR:impacto>/profiles
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_CURRENT_SOURCE_DIR}/gamedefinitions.lua $<TARGET_FILE_DIR:impacto>/gamedefinitions.lua
+        COMMAND ${CMAKE_COMMAND}
+            -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DOUTPUT_DIR=$<TARGET_FILE_DIR:impacto>
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_basepaths.cmake
+        VERBATIM)
+    add_dependencies(impacto saekano_runtime_assets)
+endif()
+
 if (APPLE)
     set(MACOSX_BUNDLE_ICON_FILE icon.icns)
     set(APP_ICON_MACOS "${CMAKE_SOURCE_DIR}/resources/common/icons/icon.icns")
@@ -1326,7 +1384,7 @@ if(MSVC)
 endIf()
 
 list(APPEND Impacto_Libs ${Impacto_Lib_Targets})
-target_link_libraries(impacto PRIVATE ${Impacto_Libs})
+target_link_libraries(impacto PRIVATE ${Impacto_Libs} impacto_gpda)
 
 target_compile_options(impacto PRIVATE "$<$<C_COMPILER_ID:MSVC>:/utf-8>")
 target_compile_options(impacto PRIVATE "$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
@@ -1501,5 +1559,3 @@ else()
     install(DIRECTORY resources DESTINATION ${CMAKE_SOURCE_DIR}/android/app/src/main/assets PATTERN "*/gamedata/*" EXCLUDE)
     install(FILES gamedefinitions.lua DESTINATION ${CMAKE_SOURCE_DIR}/android/app/src/main/assets)
 endif()
-
-

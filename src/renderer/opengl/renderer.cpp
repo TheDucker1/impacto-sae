@@ -17,6 +17,11 @@
 
 namespace Impacto {
 namespace OpenGL {
+uint32_t Renderer::CreateRenderTexture(int width, int height) {
+  if(width<=0 || height<=0)throw std::runtime_error("invalid render texture size");
+  std::vector<uint8_t> zero(size_t(width)*height*4);
+  return SubmitTexture(TexFmt_RGBA,zero.data(),width,height);
+}
 
 static CornersQuad FlipUvVertical(CornersQuad quad) {
   quad.BottomLeft.y = 1.0f - quad.BottomLeft.y;
@@ -283,6 +288,11 @@ uint32_t Renderer::SubmitTexture(TexFmt format, uint8_t* buffer, int width,
   const auto [internalFormat,
               texFormat] = [format]() -> std::pair<GLint, GLenum> {
     switch (format) {
+      case TexFmt_RGB565LowRed:
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, GL_BLUE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, GL_RED);
+        return {GL_RGB565, GL_RGB};
       case TexFmt_RGBA:
         glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
         return {GL_RGBA, GL_RGBA};
@@ -308,7 +318,7 @@ uint32_t Renderer::SubmitTexture(TexFmt format, uint8_t* buffer, int width,
     }
   }();
   glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, texFormat,
-               GL_UNSIGNED_BYTE, buffer);
+               format == TexFmt_RGB565LowRed ? GL_UNSIGNED_SHORT_5_6_5 : GL_UNSIGNED_BYTE, buffer);
 
   // Build mip chain
   // TODO do this ourselves outside of Submit(), this can easily cause a
@@ -316,6 +326,40 @@ uint32_t Renderer::SubmitTexture(TexFmt format, uint8_t* buffer, int width,
   glGenerateMipmap(GL_TEXTURE_2D);
   glBindTexture(GL_TEXTURE_2D, prevBound);
   return result;
+}
+
+void Renderer::ConfigureTextureSampling(uint32_t id, TextureSampling sampling) {
+  GLint previous=0;glGetIntegerv(GL_TEXTURE_BINDING_2D,&previous);
+  glBindTexture(GL_TEXTURE_2D,id);
+  const auto filter=sampling==TextureSampling::NearestClamp?GL_NEAREST:GL_LINEAR;
+  const auto wrap=sampling==TextureSampling::LinearRepeat?GL_REPEAT:GL_CLAMP_TO_EDGE;
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,filter);
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,filter);
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,wrap);
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,wrap);
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAX_LEVEL,0);
+  // Explicit nearest/linear modes must not retain SubmitTexture's anisotropy.
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAX_ANISOTROPY_EXT,1);
+  glBindTexture(GL_TEXTURE_2D,GLuint(previous));
+}
+
+void Renderer::UpdateTexture(uint32_t id, TexFmt format,const uint8_t* pixels,
+    int width,int height,size_t stride) {
+  const size_t bytes=format==TexFmt_RGBA?4:format==TexFmt_RGB?3:
+      format==TexFmt_UA8 || format==TexFmt_RGB565LowRed?2:1;
+  if(!pixels || width<=0 || height<=0 || stride<size_t(width)*bytes || stride%bytes)
+    throw std::invalid_argument("invalid texture update layout");
+  GLint previous=0,alignment=0,rowLength=0;
+  glGetIntegerv(GL_TEXTURE_BINDING_2D,&previous);
+  glGetIntegerv(GL_UNPACK_ALIGNMENT,&alignment);glGetIntegerv(GL_UNPACK_ROW_LENGTH,&rowLength);
+  glBindTexture(GL_TEXTURE_2D,id);glPixelStorei(GL_UNPACK_ALIGNMENT,1);
+  glPixelStorei(GL_UNPACK_ROW_LENGTH,GLint(stride/bytes));
+  const auto channels=format==TexFmt_RGBA?GL_RGBA:
+      format==TexFmt_RGB || format==TexFmt_RGB565LowRed?GL_RGB:format==TexFmt_UA8?GL_RG:GL_RED;
+  glTexSubImage2D(GL_TEXTURE_2D,0,0,0,width,height,channels,
+      format==TexFmt_RGB565LowRed?GL_UNSIGNED_SHORT_5_6_5:GL_UNSIGNED_BYTE,pixels);
+  glPixelStorei(GL_UNPACK_ALIGNMENT,alignment);glPixelStorei(GL_UNPACK_ROW_LENGTH,rowLength);
+  glBindTexture(GL_TEXTURE_2D,GLuint(previous));
 }
 
 int Renderer::GetSpriteSheetImage(SpriteSheet const& sheet,
@@ -326,18 +370,34 @@ int Renderer::GetSpriteSheetImage(SpriteSheet const& sheet,
   const size_t bufferSize = rowBytes * height;
   assert(outBuffer.size() >= bufferSize);
 
-  glBindTexture(GL_TEXTURE_2D, sheet.Texture);
-
-  GLuint fbo;
-  glGenFramebuffers(1, &fbo);
-  glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
-                         sheet.Texture, 0);
-  glReadPixels(0, 0, static_cast<GLsizei>(width), static_cast<GLsizei>(height),
-               GL_RGBA, GL_UNSIGNED_BYTE, outBuffer.data());
-
-  glBindFramebuffer(GL_FRAMEBUFFER, 0);
-  glDeleteFramebuffers(1, &fbo);
+  GLint previousRead=0,previousReadBuffer=0,previousTexture=0;
+  GLint packAlignment=0,packRowLength=0,packSkipRows=0,packSkipPixels=0;
+  glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&previousRead);
+  glGetIntegerv(GL_READ_BUFFER,&previousReadBuffer);
+  glGetIntegerv(GL_TEXTURE_BINDING_2D,&previousTexture);
+  glGetIntegerv(GL_PACK_ALIGNMENT,&packAlignment);glGetIntegerv(GL_PACK_ROW_LENGTH,&packRowLength);
+  glGetIntegerv(GL_PACK_SKIP_ROWS,&packSkipRows);glGetIntegerv(GL_PACK_SKIP_PIXELS,&packSkipPixels);
+  glBindTexture(GL_TEXTURE_2D,sheet.Texture);
+  std::array<GLint,4> swizzle{};glGetTexParameteriv(GL_TEXTURE_2D,GL_TEXTURE_SWIZZLE_RGBA,swizzle.data());
+  GLuint fbo=0;glGenFramebuffers(1,&fbo);glBindFramebuffer(GL_READ_FRAMEBUFFER,fbo);
+  glFramebufferTexture2D(GL_READ_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,sheet.Texture,0);
+  glReadBuffer(GL_COLOR_ATTACHMENT0);glPixelStorei(GL_PACK_ALIGNMENT,1);glPixelStorei(GL_PACK_ROW_LENGTH,0);
+  glPixelStorei(GL_PACK_SKIP_ROWS,0);glPixelStorei(GL_PACK_SKIP_PIXELS,0);
+  glReadPixels(0,0,GLsizei(width),GLsizei(height),GL_RGBA,GL_UNSIGNED_BYTE,outBuffer.data());
+  glBindFramebuffer(GL_READ_FRAMEBUFFER,GLuint(previousRead));glReadBuffer(GLenum(previousReadBuffer));
+  glDeleteFramebuffers(1,&fbo);glBindTexture(GL_TEXTURE_2D,GLuint(previousTexture));
+  glPixelStorei(GL_PACK_ALIGNMENT,packAlignment);glPixelStorei(GL_PACK_ROW_LENGTH,packRowLength);
+  glPixelStorei(GL_PACK_SKIP_ROWS,packSkipRows);glPixelStorei(GL_PACK_SKIP_PIXELS,packSkipPixels);
+  if(swizzle!=std::array<GLint,4>{GL_RED,GL_GREEN,GL_BLUE,GL_ALPHA}) {
+    for(size_t i=0;i<width*height;++i) {
+      const std::array<uint8_t,4> raw{outBuffer[i*4],outBuffer[i*4+1],outBuffer[i*4+2],outBuffer[i*4+3]};
+      for(size_t channel=0;channel<4;++channel) {
+        const auto component=swizzle[channel];
+        outBuffer[i*4+channel]=component==GL_ONE?255:component==GL_ZERO?0:
+            raw[component==GL_RED?0:component==GL_GREEN?1:component==GL_BLUE?2:3];
+      }
+    }
+  }
 
   if (sheet.IsScreenCap) {
     uint8_t* data = outBuffer.data();
@@ -1118,6 +1178,8 @@ void Renderer::Flush() {
     return;
   }
   if (!VertexBuffer.empty() && !IndexBuffer.empty()) {
+    // Native SDK/scene passes can bind their own vertex layout within a frame.
+    glBindVertexArray(VAOSprites);
     glBindBuffer(GL_ARRAY_BUFFER, VBO);
     glBufferData(GL_ARRAY_BUFFER,
                  VertexBuffer.size() * sizeof(VertexBufferSprites),

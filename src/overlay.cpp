@@ -282,7 +282,12 @@ static void ShowGamePicker(std::string& selectedGame) {
   for (auto&& [key, def] : Profile::GameDefinitions) {
     using std::filesystem::path;
     if (def.Hidden) continue;
-    if (Io::PathExists(
+#ifndef IMPACTO_HAS_SAEKANO
+    if (def.Runtime == GameRuntimeType::Saekano) continue;
+#endif
+    // Game-owned launchers select and validate their own data directory.
+    if (def.Runtime == GameRuntimeType::Impacto &&
+        Io::PathExists(
             (path(Profile::BasePaths::RootGamedataDir) / key).string()) ==
         IoError_NotFound)
       continue;
