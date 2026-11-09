@@ -8,7 +8,7 @@ class PcExtrasMusic final:public ExtrasMusicServices {
        childHelp_(ExtrasChildButtonHelpEnvironment::Decode(ReadGameFile(root, Profile::Saekano::GameAsset::HelpEnvironment))),
        style_(ButtonHelpStyle::Decode(ReadGameFile(root, Profile::Saekano::GameAsset::GlobalEnvironment))),
        markerEnv_(NewMarkerEnvironment::Decode(ReadGameFile(root, Profile::Saekano::GameAsset::GlobalEnvironment))),
-       marker_(StartNewMarker(markerEnv_,now)),bank_(std::make_shared<AwbBank>(root/"music.awb")),
+       marker_(StartNewMarker(markerEnv_,now)),bank_(std::make_shared<AwbBank>(Profile::Saekano::AssetPath(root, Profile::Saekano::GameAsset::MusicBank))),
        screen_(env_,owner,*this,repeats,hold,unlockAll,now){
     if(!restoreMusic_ || childHelp_.AlbumRows[1].size()<6)throw FormatError("music child help/audio owner missing");
     for(const auto& t:env_.MusicTracks)(void)bank_->Index().Find(uint32_t(t.Wave));

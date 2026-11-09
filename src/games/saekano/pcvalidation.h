@@ -5,8 +5,6 @@
 #include <thread>
 
 namespace Impacto::Saekano {
-struct PcRequiredFile {const char* Path;const char* Sha256;uint64_t Bytes;};
-const std::vector<PcRequiredFile>& PcRequiredFiles();
 void PcRequireOutsideData(const std::filesystem::path& writable,const std::filesystem::path& usrdir);
 struct PcValidationStatus {
   bool Running=false,Passed=false,Cancelled=false,Strict=false;

@@ -1,11 +1,13 @@
 #include "missionvoice.h"
+
+#include "../../profile/games/saekano/game.h"
 #include "commands.h"
 
 namespace Impacto::Saekano {
 ClockedMissionVoice::ClockedMissionVoice(const std::filesystem::path& usrdir)
-    : bank_(std::make_shared<AwbBank>(usrdir/"voice.awb")),owned_(std::make_unique<ClockedOrdinaryVoice>(usrdir)),output_(owned_.get()) {}
+    : bank_(std::make_shared<AwbBank>(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::VoiceBank))),owned_(std::make_unique<ClockedOrdinaryVoice>(usrdir)),output_(owned_.get()) {}
 ClockedMissionVoice::ClockedMissionVoice(const std::filesystem::path& usrdir,ClockedOrdinaryVoice& shared)
-    : bank_(std::make_shared<AwbBank>(usrdir/"voice.awb")),output_(&shared) {}
+    : bank_(std::make_shared<AwbBank>(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::VoiceBank))),output_(&shared) {}
 void ClockedMissionVoice::Register(std::span<const int32_t> ids) {
   std::set<int32_t> prepared;
   for(const auto id:ids) {

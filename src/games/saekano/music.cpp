@@ -1,5 +1,7 @@
 #include "music.h"
 
+#include "../../profile/games/saekano/game.h"
+
 #include "commands.h"
 
 #include <algorithm>
@@ -156,8 +158,8 @@ BgmPlayRequest BgmRequest(int32_t track, int32_t master, int32_t command,
 }
 
 ArchiveBgmResources::ArchiveBgmResources(const std::filesystem::path& usrdir)
-    : bank_(std::make_shared<AwbBank>(usrdir / "bgm.awb")) {
-  std::ifstream input(usrdir / "env" / "env_game_utility.dat",
+    : bank_(std::make_shared<AwbBank>(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::BgmBank))) {
+  std::ifstream input(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::UtilityEnvironment),
                       std::ios::binary | std::ios::ate);
   if (!input) throw FormatError("cannot open original audio environment");
   const auto size = input.tellg();

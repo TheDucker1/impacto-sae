@@ -12,7 +12,7 @@ class PcExtrasCg final:public ExtrasCgServices {
        style_(ButtonHelpStyle::Decode(ReadGameFile(root, Profile::Saekano::GameAsset::GlobalEnvironment))),
        markerEnv_(NewMarkerEnvironment::Decode(ReadGameFile(root, Profile::Saekano::GameAsset::GlobalEnvironment))),
        marker_(StartNewMarker(markerEnv_,now)),
-       comments_(std::make_shared<AwbBank>(root/"comment.awb")),
+       comments_(std::make_shared<AwbBank>(Profile::Saekano::AssetPath(root, Profile::Saekano::GameAsset::CommentBank))),
        screen_(env_,AlbumGalleryCatalogue(DecodeAlbumEntries(shared.Resources.LoadExtrasCgCatalogue().Data,env_.Common.ImageColumns)),
            owner,*this,repeats,hold,unlockAll,now),commentHelp_(commentHelp){
     for(const auto& [key,texture]:shared.Renderer.Textures){(void)texture;prior_.insert(key);}

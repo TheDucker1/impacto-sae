@@ -86,6 +86,6 @@ class Scene2D {
   virtual std::vector<uint8_t> ReadTarget(const SceneRenderTarget* target,
                                           std::array<int, 4> area) = 0;
 };
-std::unique_ptr<Scene2D> CreateScene2D();
+std::unique_ptr<Scene2D> CreateScene2D(std::array<int, 2> canvasSize);
 
 }  // namespace Impacto

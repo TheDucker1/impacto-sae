@@ -125,7 +125,8 @@ GLenum Factor(uint8_t factor, bool alpha) {
 const char VertexShader[] = R"GLSL(#version 330
 layout(location=0) in vec2 position;layout(location=1) in vec2 uv;
 out vec2 texturePosition;
-void main(){texturePosition=uv;gl_Position=vec4(position.x/480.0-1.0,1.0-position.y/272.0,0.0,1.0);}
+uniform vec2 halfCanvasSize;
+void main(){texturePosition=uv;gl_Position=vec4(position.x/halfCanvasSize.x-1.0,1.0-position.y/halfCanvasSize.y,0.0,1.0);}
 )GLSL";
 const char FragmentShader[] = R"SCENEFRAG(#version 330
 #extension GL_ARB_shading_language_packing : require
@@ -212,6 +213,7 @@ void main(){
 }
 )SCENEFRAG";
 class Pass final : public Scene2D {
+  const std::array<int, 2> CanvasSize;
   GLuint Program = 0, Vao = 0, Buffer = 0, ParticleVao = 0, ParticleBuffer = 0;
   std::array<GLuint, 7> ParticlePrograms{};
   void Uniform(const char* name, int value) {
@@ -219,7 +221,7 @@ class Pass final : public Scene2D {
   }
 
  public:
-  Pass() {
+  explicit Pass(std::array<int, 2> canvasSize) : CanvasSize(canvasSize) {
     try {
       Program = Link(VertexShader, FragmentShader);
       glGenVertexArrays(1, &Vao);
@@ -236,6 +238,8 @@ class Pass final : public Scene2D {
       glGenVertexArrays(1, &ParticleVao);
       glGenBuffers(1, &ParticleBuffer);
       Bind();
+      glUniform2f(glGetUniformLocation(Program, "halfCanvasSize"),
+                  CanvasSize[0] * 0.5f, CanvasSize[1] * 0.5f);
     } catch (...) {
       Release();
       throw;
@@ -369,8 +373,9 @@ class Pass final : public Scene2D {
     const auto v = GetViewport();
     const auto r = *rect;
     glEnable(GL_SCISSOR_TEST);
-    glScissor(v[0] + r[0] * v[2] / 960, v[1] + (544 - r[1] - r[3]) * v[3] / 544,
-              r[2] * v[2] / 960, r[3] * v[3] / 544);
+    glScissor(v[0] + r[0] * v[2] / CanvasSize[0],
+              v[1] + (CanvasSize[1] - r[1] - r[3]) * v[3] / CanvasSize[1],
+              r[2] * v[2] / CanvasSize[0], r[3] * v[3] / CanvasSize[1]);
   }
   std::unique_ptr<SceneRenderState> SaveState() override {
     return std::make_unique<State>();
@@ -525,7 +530,7 @@ class Pass final : public Scene2D {
   }
 };
 }  // namespace
-std::unique_ptr<Scene2D> CreateScene2DPass() {
-  return std::make_unique<Pass>();
+std::unique_ptr<Scene2D> CreateScene2DPass(std::array<int, 2> canvasSize) {
+  return std::make_unique<Pass>(canvasSize);
 }
 }  // namespace Impacto::OpenGL

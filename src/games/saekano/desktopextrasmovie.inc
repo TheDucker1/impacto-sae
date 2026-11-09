@@ -45,8 +45,7 @@ class PcExtrasMovie final:public ExtrasMovieServices {
   }
   void PrepareMovie(size_t index)override{
     const auto& name=env_.Movies.at(index).Name;
-    const auto path=std::filesystem::weakly_canonical(root_/name);
-    if(name.empty() || path.parent_path()!=root_)throw FormatError("Extras movie resolves outside USRDIR");
+    const auto path = Profile::Saekano::MoviePath(root_, name);
     frame_.Retire();movie_.Prepare(path);
     movie_.SetVolume(int32_t(owner_.SystemProgress->Bytes6022c[7])*10);
   }

@@ -111,7 +111,7 @@ std::optional<int> RunGameProfile(const LaunchOptions& options,
 #ifdef IMPACTO_HAS_SAEKANO
       if (launcherInitialized) Shutdown();
       Profile::ConfigureGameProfile();
-      Profile::Game::Configure();
+      Profile::Game::ConfigureFrontend();
       Profile::Saekano::Configure();
       Profile::ClearProfile();
       return Saekano::RunPcLauncher(options.UserConfigPath,

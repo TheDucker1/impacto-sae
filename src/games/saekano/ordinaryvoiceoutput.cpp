@@ -1,4 +1,6 @@
 #include "ordinaryvoiceoutput.h"
+
+#include "../../profile/games/saekano/game.h"
 #include "commands.h"
 
 namespace Impacto::Saekano {
@@ -10,7 +12,7 @@ size_t Slot(uint32_t channel) {
 }
 }  // namespace
 ClockedOrdinaryVoice::ClockedOrdinaryVoice(const std::filesystem::path& usrdir)
-    : bank_(std::make_shared<AwbBank>(usrdir / "voice.awb")) {}
+    : bank_(std::make_shared<AwbBank>(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::VoiceBank))) {}
 void ClockedOrdinaryVoice::Prepare(uint32_t channel, int16_t voiceId) {
   const auto slot = Slot(channel);
   if (voiceId < 0) throw FormatError("negative ordinary voice ID");

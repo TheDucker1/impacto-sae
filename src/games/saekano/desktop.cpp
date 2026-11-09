@@ -9,6 +9,7 @@
 #include "slotviewport.h"
 #include "newmarker.h"
 #include "desktop.h"
+#include "canvas.h"
 
 #include "../../renderer/cubism2.h"
 #include "../../renderer/renderer.h"
@@ -155,7 +156,7 @@ struct ViewerWindow {
     Window = Frontend->GetWindow();
     ActiveFrontend = Frontend.get();
     SdlCheck(SDL_InitSubSystem(SDL_INIT_JOYSTICK), "joystick initialization");
-    Pass = CreateScene2D();
+    Pass = CreateScene2D({NativeCanvasWidth, NativeCanvasHeight});
     Gpu = Pass.get();
     Input = std::make_unique<PcInputRouter>(Window,
                                             RuntimePcSettings().InputProfile());
@@ -172,6 +173,62 @@ struct ViewerWindow {
     ActiveFrontend = nullptr;
   }
 };
+
+// The profile defines the displayed aspect. Scene draws and widgets use the
+// Vita coordinate grid inside that fitted viewport.
+std::array<int, 4> FitSceneViewport(int width, int height) {
+  const float designWidth = Profile::Game::DesignWidth;
+  const float designHeight = Profile::Game::DesignHeight;
+  const auto scale = std::min(width / designWidth, height / designHeight);
+  const int fittedWidth = std::clamp(int(designWidth * scale), 1, width);
+  const int fittedHeight = std::clamp(int(designHeight * scale), 1, height);
+  return {(width - fittedWidth) / 2, (height - fittedHeight) / 2, fittedWidth,
+          fittedHeight};
+}
+
+std::array<int, 4> SetSceneViewport(int width, int height) {
+  auto viewport = FitSceneViewport(width, height);
+  // Scene2D's OpenGL pass uses a bottom-left framebuffer origin.
+  if (!Impacto::Renderer->NativeDeviceHandle())
+    viewport[1] = height - viewport[1] - viewport[3];
+  ViewerWindow::Gpu->SetViewport(viewport);
+  return viewport;
+}
+
+RectF SceneViewportInWindow(SDL_Window* window) {
+  int width = 0, height = 0, pixelWidth = 0, pixelHeight = 0;
+  SdlCheck(SDL_GetWindowSize(window, &width, &height), "scene window size");
+  SdlCheck(SDL_GetWindowSizeInPixels(window, &pixelWidth, &pixelHeight),
+           "scene drawable size");
+  if (width <= 0 || height <= 0 || pixelWidth <= 0 || pixelHeight <= 0)
+    return {0, 0, 0, 0};
+  const auto viewport = FitSceneViewport(pixelWidth, pixelHeight);
+  const float scaleX = float(width) / pixelWidth;
+  const float scaleY = float(height) / pixelHeight;
+  return {viewport[0] * scaleX, viewport[1] * scaleY, viewport[2] * scaleX,
+          viewport[3] * scaleY};
+}
+
+std::optional<WidgetTouch> SceneTouch(SDL_Window* window,
+                                      std::array<float, 2> position) {
+  const auto viewport = SceneViewportInWindow(window);
+  if (viewport.Width <= 0 || viewport.Height <= 0) return std::nullopt;
+  const auto x =
+      (position[0] - viewport.X) * NativeCanvasWidth / viewport.Width;
+  const auto y =
+      (position[1] - viewport.Y) * NativeCanvasHeight / viewport.Height;
+  return WidgetTouch{
+      0,
+      {int16_t(std::clamp(x, float(INT16_MIN), float(INT16_MAX))),
+       int16_t(std::clamp(y, float(INT16_MIN), float(INT16_MAX)))}};
+}
+
+std::array<float, 2> SceneWindowPoint(SDL_Window* window, float x, float y) {
+  const auto viewport = SceneViewportInWindow(window);
+  return {viewport.X + x * viewport.Width / NativeCanvasWidth,
+          viewport.Y + y * viewport.Height / NativeCanvasHeight};
+}
+
 void ApplyParticleBlend(size_t index) {
   const auto b = ParticleBlend(index);
   ViewerWindow::Gpu->SetBlend({b.Enabled, b.ColorSource, b.ColorDestination,
@@ -514,9 +571,7 @@ struct UiBlitRenderer {
     ViewerWindow::BeginFrame();
     Gpu().SetViewport({0, 0, width, height});
     Gpu().Clear({1, 1, 1, 1});
-    const auto scale = std::min(float(width) / 960, float(height) / 544);
-    const int w = int(960 * scale), h = int(544 * scale);
-    Gpu().SetViewport({(width - w) / 2, (height - h) / 2, w, h});
+    SetSceneViewport(width, height);
     Bind();
     for (const auto& blit : blits)
       DrawQuad(blit, Textures.at(blit.Texture), false);
@@ -1169,7 +1224,7 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
   auto registeredHistory=vm->State().SystemProgress?RestoreSystemReadHistory(*vm->State().SystemProgress):
       RegisteredReadHistory::LoadFirst(ReadGameFile(root, Profile::Saekano::GameAsset::FirstArchive),historySettings.InitiallyRead!=0);
   backend.RegisteredHistory=&registeredHistory;backend.HistorySettings=historySettings;
-  AwbBank selectionVoiceBank(root/"voice.awb");
+  AwbBank selectionVoiceBank(Profile::Saekano::AssetPath(root, Profile::Saekano::GameAsset::VoiceBank));
   std::unique_ptr<ArchiveBattleSelectionHost> battleHost;
   std::unique_ptr<ArchiveBattleResultHost> battleResultHost;
   std::optional<uint64_t> battleFrame;
@@ -1551,10 +1606,12 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
         const auto regions=BuildApproachSelectionHitRegions(selectionLayout,selectionShared,*backend.SelectionSettings,
             menu.OriginalOrdinals.size(),children);
         const auto& r=menuCaptureStep<2?regions.Parents.at(0):regions.Children.at(0);
-        int w=0,h=0;SdlCheck(SDL_GetWindowSize(window.Window,&w,&h),"menu capture pointer viewport");
         SDL_Event e{};e.type=menuCaptureStep%2==0?SDL_EVENT_MOUSE_BUTTON_DOWN:SDL_EVENT_MOUSE_BUTTON_UP;
         e.button.windowID=SDL_GetWindowID(window.Window);e.button.button=SDL_BUTTON_LEFT;e.button.down=menuCaptureStep%2==0;
-        e.button.x=float(r[0]+r[2]/2)*float(w)/960;e.button.y=float(r[1]+r[3]/2)*float(h)/544;
+        const auto [x, y] = SceneWindowPoint(
+            window.Window, float(r[0] + r[2] / 2), float(r[1] + r[3] / 2));
+        e.button.x = x;
+        e.button.y = y;
         SdlCheck(SDL_PushEvent(&e),"menu capture explicit pointer");++menuCaptureStep;
         events << "{\"kind\":\"menu_pointer_input\",\"source\":\"SDL_mouse\",\"step\":" << menuCaptureStep
             << ",\"down\":" << e.button.down << ",\"now\":" << now << ",\"logical_position\":["
@@ -1562,10 +1619,11 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       }
     }
     if(captureResultPointer && resultConfirmationDue) {
-      int w=0,h=0;SdlCheck(SDL_GetWindowSize(window.Window,&w,&h),"result pointer capture viewport");
       SDL_Event e{};e.type=resultPointerCaptureStage==0?SDL_EVENT_MOUSE_BUTTON_DOWN:SDL_EVENT_MOUSE_BUTTON_UP;
       e.button.windowID=SDL_GetWindowID(window.Window);e.button.button=SDL_BUTTON_LEFT;e.button.down=resultPointerCaptureStage==0;
-      e.button.x=40.0f*float(w)/960;e.button.y=40.0f*float(h)/544;
+      const auto [x, y] = SceneWindowPoint(window.Window, 40, 40);
+      e.button.x = x;
+      e.button.y = y;
       SdlCheck(SDL_PushEvent(&e),"result capture explicit pointer");
       events << "{\"kind\":\"result_pointer_input\",\"source\":\"SDL_mouse\",\"now\":" << now
         << ",\"down\":" << e.button.down << ",\"logical_position\":[40,40]}\n";
@@ -1729,15 +1787,8 @@ int RunScenarioSceneOnce(ViewerWindow& window, UiBlitRenderer& renderer,
       }
     }
     if (quit) break;
-    if(pointerDown) {
-      int logicalWidth=0,logicalHeight=0;
-      SdlCheck(SDL_GetWindowSize(window.Window,&logicalWidth,&logicalHeight),"pointer viewport size");
-      if(logicalWidth>0 && logicalHeight>0) {
-        const float x=pointerPosition[0]*960.0f/float(logicalWidth),y=pointerPosition[1]*544.0f/float(logicalHeight);
-        if(x>=INT16_MIN && x<=INT16_MAX && y>=INT16_MIN && y<=INT16_MAX)
-          pointerSnapshot[0]=WidgetTouch{0,{int16_t(x),int16_t(y)}};
-      }
-    }
+    if (pointerDown)
+      pointerSnapshot[0] = SceneTouch(window.Window, pointerPosition);
     input.RevealOnly=hideTextPressed;
     if(replayScript && requestSystemMenu){replayInterrupt=true;requestSystemMenu=false;}
     if(modalOwned()) {
@@ -3852,13 +3903,13 @@ int RunFontSample(const std::filesystem::path& usrdir,
       if (file.bad()) throw FormatError("cannot read font sample input");
       return bytes;
     };
-    PcFontFace font(read(usrdir / "DFHSR4.TTC"),
-                    GsfFont::Decode(read(usrdir / "Font.gsf")));
+    PcFontFace font(read(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::FontFace)),
+                    GsfFont::Decode(read(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::FontMetrics))));
     const auto utility =
-        GameUtilityFont::Decode(read(usrdir / "env/env_game_utility.dat"));
+        GameUtilityFont::Decode(read(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::UtilityEnvironment)));
     if (utility.Size < 0 || utility.Size > 1024)
       throw FormatError("font sample UI size outside display budget");
-    const auto catalog = LoadProfileItemCatalog(read(usrdir / "first.dat"));
+    const auto catalog = LoadProfileItemCatalog(read(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::FirstArchive)));
     if (catalog.empty() || catalog.front().Rows.size() < 10)
       throw FormatError("font sample requires authored item rows");
     ViewerWindow window(capture);
@@ -4095,9 +4146,7 @@ int RunModelScenes(const std::filesystem::path& resourceDat,
       scene->Tick(capture ? 500 : SDL_GetTicks() - epoch);
       ViewerWindow::BeginFrame();ViewerWindow::Gpu->SetViewport({0,0,width,height});
       ViewerWindow::Gpu->Clear({32.f/255,32.f/255,32.f/255,1});
-      const auto scale = std::min(float(width) / 960, float(height) / 544);
-      const auto viewWidth = int(960 * scale), viewHeight = int(544 * scale);
-      ViewerWindow::Gpu->SetViewport({(width-viewWidth)/2,(height-viewHeight)/2,viewWidth,viewHeight});
+      SetSceneViewport(width, height);
       ViewerWindow::Gpu->DrawExternal([&]{scene->Driver.Draw(scene->State.Live2d);});
       GlCheck("authored model scene draw");
       if (capture) {
@@ -4173,21 +4222,21 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
     if (itemScene) {
       const auto usrdir = resourceDat.parent_path();
       authoredScene = resources.LoadProfileScene(*itemScene);
-      catalog = LoadProfileItemCatalog(read(usrdir / "first.dat"));
+      catalog = LoadProfileItemCatalog(read(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::FirstArchive)));
       font = std::make_unique<PcFontFace>(
-          read(usrdir / "DFHSR4.TTC"),
-          GsfFont::Decode(read(usrdir / "Font.gsf")));
+          read(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::FontFace)),
+          GsfFont::Decode(read(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::FontMetrics))));
       utility =
-          GameUtilityFont::Decode(read(usrdir / "env/env_game_utility.dat"));
+          GameUtilityFont::Decode(read(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::UtilityEnvironment)));
       descriptionFormat =
-          ProfileDescriptionFormat::Decode(read(usrdir / "env/env_global.dat"));
+          ProfileDescriptionFormat::Decode(read(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::GlobalEnvironment)));
       dialogEnvironment =
-          DialogEnvironment::Decode(read(usrdir / "env/env_dialog.dat"));
+          DialogEnvironment::Decode(read(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::DialogEnvironment)));
       const auto format = TextFormatEnvironment::Decode(
-          read(usrdir / "env/env_string_format.dat"), true);
+          read(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::StringFormatEnvironment)), true);
       const auto metrics = TextLayoutMetrics::Decode(
-          read(usrdir / "env/env_global.dat"),
-          read(usrdir / "env/env_message_window.dat"));
+          read(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::GlobalEnvironment)),
+          read(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::MessageEnvironment)));
       VoiceTextReveal prompt;
       prompt.PrepareUtf16(DecodeProfileConfirmationPrompt(read(environmentDat)),
                           format, 0);
@@ -4318,35 +4367,35 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
       InitializeFreshAudioOwner(*flowOwner);
       InitializeFreshBattleOwner(*flowOwner);
       InitializeFreshMessageOwner(*flowOwner);
-      InitializeFreshCgHistory(*flowOwner, LoadAlbumConfiguration(read(root / "first.dat"),
-          read(root / "env/env_omake.dat")).RequiredImages);
+      InitializeFreshCgHistory(*flowOwner, LoadAlbumConfiguration(read(Profile::Saekano::AssetPath(root, Profile::Saekano::GameAsset::FirstArchive)),
+          read(Profile::Saekano::AssetPath(root, Profile::Saekano::GameAsset::ExtrasEnvironment))).RequiredImages);
       InitializeFreshProfileEntry(
           *flowOwner, ProfileInitialStats::Decode(read(environmentDat)),
           catalog);
-      const auto historySettings=HistoryEnvironment::DecodeDebug(read(root/"env/env_debug.dat"));
-      auto progress=MakeFreshSystemProgress(read(root/"first.dat"),historySettings.InitiallyRead!=0);
+      const auto historySettings=HistoryEnvironment::DecodeDebug(read(Profile::Saekano::AssetPath(root, Profile::Saekano::GameAsset::DebugEnvironment)));
+      auto progress=MakeFreshSystemProgress(read(Profile::Saekano::AssetPath(root, Profile::Saekano::GameAsset::FirstArchive)),historySettings.InitiallyRead!=0);
       if(!capture){flowProgressRoot=std::filesystem::current_path()/"saves/saekano";flowProgress=OpenProgressStore(flowProgressRoot,progress);progress=flowProgress->System;}
       LoadSystemOwner(*flowOwner,progress,flowOwner->CgHistory.Required);
       flowOwner->OtakuMode = int32_t(*itemScene);
       flowFormat = TextFormatEnvironment::Decode(
-          read(root / "env/env_string_format.dat"), true);
+          read(Profile::Saekano::AssetPath(root, Profile::Saekano::GameAsset::StringFormatEnvironment)), true);
       flowMetrics =
-          TextLayoutMetrics::Decode(read(root / "env/env_global.dat"),
-                                    read(root / "env/env_message_window.dat"));
+          TextLayoutMetrics::Decode(read(Profile::Saekano::AssetPath(root, Profile::Saekano::GameAsset::GlobalEnvironment)),
+                                    read(Profile::Saekano::AssetPath(root, Profile::Saekano::GameAsset::MessageEnvironment)));
       flowResultVisual = ModeResultVisualEnvironment::DecodeApproach(
-          read(root / "env/env_approach.dat"));
+          read(Profile::Saekano::AssetPath(root, Profile::Saekano::GameAsset::ApproachEnvironment)));
       flowResponseVisual =
           ProfileResponseVisualEnvironment::Decode(read(environmentDat));
       flowCursorEnvironment =
           ProfileCursorEnvironment::Decode(read(environmentDat));
       flowMessageCursor = MessageCursorEnvironment::Decode(
-          read(root / "env/env_message_window.dat"));
+          read(Profile::Saekano::AssetPath(root, Profile::Saekano::GameAsset::MessageEnvironment)));
       flowMusic = std::make_unique<ArchiveBgmResources>(root);
       flowSounds = std::make_unique<ArchiveSeResources>(root);
       flowPlayback = std::make_unique<MusicPlayback>(*flowMusic, capture,
                                                      flowSounds.get());
       flowSystemSounds =
-          std::make_unique<SystemSoundAssets>(read(root / "first.dat"));
+          std::make_unique<SystemSoundAssets>(read(Profile::Saekano::AssetPath(root, Profile::Saekano::GameAsset::FirstArchive)));
       // Fresh settings7350: option S60235=8; channel coefficient starts at1.
       flowPlayback->BindUiSounds(*flowSystemSounds, ProfileVoiceGain(flowOwner->SystemProgress?flowOwner->SystemProgress->Bytes6022c[9]:8, 1.0f));
       // Fresh settings7350 writes S60236=10; fresh channel coefficient is1.
@@ -4354,9 +4403,9 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
           std::make_unique<PlaybackProfileVoice>(*flowPlayback, 10, 1.0f);
       flowServices = std::make_unique<ArchiveProfileServices>(
           resources,
-          ScriptNameIndex::FromFirstArchive(read(root / "first.dat")),
+          ScriptNameIndex::FromFirstArchive(read(Profile::Saekano::AssetPath(root, Profile::Saekano::GameAsset::FirstArchive))),
           flowFormat,
-          TextTimingEnvironment::Decode(read(root / "env/env_config.dat"),
+          TextTimingEnvironment::Decode(read(Profile::Saekano::AssetPath(root, Profile::Saekano::GameAsset::ConfigurationEnvironment)),
                                         true),
           flowVoice.get());
       // Standalone fresh viewer: record its host clock seed explicitly.
@@ -4365,7 +4414,7 @@ int RunProfileBackdropViewer(const std::filesystem::path& resourceDat,
       flowOwner->Random.Seed(flowBlinkSeed);
       flowServices->InitializeActorBlink(flowBlinkSeed, flowOwner->Random);
       flowShared = ModeResultEnvironment::DecodeApproach(
-          read(root / "env/env_approach.dat"));
+          read(Profile::Saekano::AssetPath(root, Profile::Saekano::GameAsset::ApproachEnvironment)));
       flowMode = std::make_unique<ProfileMode>(
           *flowOwner, *flowServices, *chromeEnvironment, flowShared, 0);
       for (const auto& texture : flowServices->MenuTextures())
@@ -5287,8 +5336,10 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
         event.key.down=type==SDL_EVENT_KEY_DOWN;SdlCheck(SDL_PushEvent(&event),"title capture explicit keyboard input");}};
       const auto mouse=[&](uint32_t step,int32_t x,int32_t y){
         SDL_Event event{};
-        if(step==1){event.type=SDL_EVENT_MOUSE_MOTION;event.motion.windowID=SDL_GetWindowID(window.Window);event.motion.x=float(x);event.motion.y=float(y);}
-        else{event.type=step==0?SDL_EVENT_MOUSE_BUTTON_DOWN:SDL_EVENT_MOUSE_BUTTON_UP;event.button.windowID=SDL_GetWindowID(window.Window);event.button.button=SDL_BUTTON_LEFT;event.button.down=step==0;event.button.x=float(x);event.button.y=float(y);}
+        const auto [windowX, windowY] =
+            SceneWindowPoint(window.Window, float(x), float(y));
+        if(step==1){event.type=SDL_EVENT_MOUSE_MOTION;event.motion.windowID=SDL_GetWindowID(window.Window);event.motion.x=windowX;event.motion.y=windowY;}
+        else{event.type=step==0?SDL_EVENT_MOUSE_BUTTON_DOWN:SDL_EVENT_MOUSE_BUTTON_UP;event.button.windowID=SDL_GetWindowID(window.Window);event.button.button=SDL_BUTTON_LEFT;event.button.down=step==0;event.button.x=windowX;event.button.y=windowY;}
         SdlCheck(SDL_PushEvent(&event),"Options capture explicit pointer input");
       };
       if(capture){
@@ -5307,7 +5358,12 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
             const auto box=env.RectangleTables.at(0x358).at(0);SDL_Event event{};
             event.type=pointerCapture==0?SDL_EVENT_MOUSE_BUTTON_DOWN:SDL_EVENT_MOUSE_BUTTON_UP;
             event.button.windowID=SDL_GetWindowID(window.Window);event.button.button=SDL_BUTTON_LEFT;
-            event.button.down=pointerCapture==0;event.button.x=float(box[0])+float(box[2])/2;event.button.y=float(box[1])+float(box[3])/2;
+            event.button.down=pointerCapture==0;
+            const auto [x, y] = SceneWindowPoint(
+                window.Window, float(box[0]) + float(box[2]) / 2,
+                float(box[1]) + float(box[3]) / 2);
+            event.button.x = x;
+            event.button.y = y;
             SdlCheck(SDL_PushEvent(&event),"title capture explicit pointer input");if(++pointerCapture==2)chose=true;
           }
         }
@@ -5403,12 +5459,7 @@ int RunTitleScene(const std::filesystem::path& usrdir,const std::filesystem::pat
         if(event.type==SDL_EVENT_WINDOW_FOCUS_LOST){held={};horizontalHeld={};galleryPageHeld={};title.NavigationInput={};title.OptionsInput={};title.SlotInput={};title.ExtrasInput={};pointerDown=false;title.Contacts.CancelPointer();if(title.Config())title.Config()->CancelPointer();if(title.Continue())title.Continue()->CancelPointer();if(title.Extras())title.Extras()->CancelPointer();}
       }
       WidgetInputHistory::Snapshot contacts{};
-      if(pointerDown){
-        int w=0,h=0;SdlCheck(SDL_GetWindowSize(window.Window,&w,&h),"title pointer viewport");
-        const float scale=std::min(float(w)/960,float(h)/544);
-        if(scale>0)contacts[0]=WidgetTouch{0,{int16_t(std::clamp((pointer[0]-(w-960*scale)/2)/scale,-32768.f,32767.f)),
-          int16_t(std::clamp((pointer[1]-(h-544*scale)/2)/scale,-32768.f,32767.f))}};
-      }
+      if (pointerDown) contacts[0] = SceneTouch(window.Window, pointer);
       title.Input.AnyActivity|=pointerDown||held[0]||held[1];title.Contacts.BeginFrame(contacts);title.FrameContacts=contacts;
       if(quit)break;
       const uint32_t playingBefore=(audio.Playing(6)?1u:0u)|(audio.Playing(7)?2u:0u);

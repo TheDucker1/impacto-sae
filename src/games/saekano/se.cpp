@@ -1,5 +1,7 @@
 #include "se.h"
 
+#include "../../profile/games/saekano/game.h"
+
 #include "commands.h"
 
 #include <bit>
@@ -32,8 +34,8 @@ BgmVolume SeVolume(int32_t master, int32_t command, float coefficient) {
   return {master, converted, float(converted) / 100.0f};
 }
 ArchiveSeResources::ArchiveSeResources(const std::filesystem::path& usrdir)
-    : bank_(std::make_shared<AwbBank>(usrdir / "se.awb")) {
-  std::ifstream input(usrdir / "env" / "env_game_utility.dat",
+    : bank_(std::make_shared<AwbBank>(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::SoundEffectBank))) {
+  std::ifstream input(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::UtilityEnvironment),
                       std::ios::binary | std::ios::ate);
   if (!input) throw FormatError("cannot open original audio environment");
   const auto size = input.tellg();

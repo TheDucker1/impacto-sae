@@ -1,5 +1,7 @@
 #include "musicplayback.h"
 
+#include "../../profile/games/saekano/game.h"
+
 #include "headlessbackend.h"
 #include "resources.h"
 #include "profilearchive.h"
@@ -842,7 +844,7 @@ int32_t MusicPlayback::OrdinaryVoicePosition(uint32_t channel) const {
 }
 PlaybackOrdinaryVoice::PlaybackOrdinaryVoice(MusicPlayback& playback,
     const std::filesystem::path& usrdir, uint8_t volume, float coefficient)
-    : playback_(playback), bank_(std::make_shared<AwbBank>(usrdir / "voice.awb")),
+    : playback_(playback), bank_(std::make_shared<AwbBank>(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::VoiceBank))),
       gain_(ProfileVoiceGain(volume, coefficient)) {
   if (!std::isfinite(gain_) || gain_ < 0 || gain_ > 1)
     throw FormatError("ordinary voice gain outside supported range");
@@ -904,7 +906,7 @@ int32_t MusicPlayback::MissionVoicePosition() const {
 }
 PlaybackMissionVoice::PlaybackMissionVoice(MusicPlayback& playback,
     const std::filesystem::path& usrdir,uint8_t volume,float coefficient)
-    : playback_(playback),bank_(std::make_shared<AwbBank>(usrdir/"voice.awb")),
+    : playback_(playback),bank_(std::make_shared<AwbBank>(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::VoiceBank))),
       gain_(ProfileVoiceGain(volume,coefficient)) {
   if(!std::isfinite(gain_) || gain_<0 || gain_>1)throw FormatError("mission voice gain outside supported range");
 }
@@ -1011,7 +1013,7 @@ int RunBattleResultVoiceSession(const std::filesystem::path& usrdir,const std::f
   bool created=false;
   try{
     CreateCaptureDirectory(usrdir,captureDirectory);created=true;
-    std::ifstream file(usrdir/"resource.dat",std::ios::binary);
+    std::ifstream file(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::ResourceArchive),std::ios::binary);
     if(!file)throw FormatError("cannot open result voice resources");
     GameResources resources(Bytes{std::istreambuf_iterator<char>(file),{}});
     if(!SDL_Init(SDL_INIT_EVENTS))throw FormatError(SDL_GetError());
@@ -1167,7 +1169,7 @@ int RunMissionVoiceSession(const std::filesystem::path& usrdir,
     if(!SDL_Init(SDL_INIT_EVENTS))throw FormatError(SDL_GetError());
     struct Cleanup { ~Cleanup(){SDL_Quit();} } cleanup;
     ArchiveBgmResources music(usrdir);MusicPlayback playback(music,true);
-    auto bank=std::make_shared<AwbBank>(usrdir/"voice.awb");
+    auto bank=std::make_shared<AwbBank>(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::VoiceBank));
     const auto info=HcaWaveReader(bank,10579).Info();
     std::ofstream report(captureDirectory/"mission.json");
     report << "{\"voice\":10579,\"source_rate\":" << info.SampleRate
@@ -1224,10 +1226,10 @@ int RunVoiceAttenuationSession(const std::filesystem::path& usrdir,const std::fi
     if(!SDL_Init(SDL_INIT_EVENTS))throw FormatError(SDL_GetError());
     struct Cleanup{~Cleanup(){SDL_Quit();}}cleanup;
     const auto read=[](const std::filesystem::path& p){std::ifstream f(p,std::ios::binary);if(!f)throw FormatError("missing attenuation resource");return Bytes{std::istreambuf_iterator<char>(f),{}};};
-    auto resources=std::make_unique<GameResources>(read(usrdir/"resource.dat"));const auto clip=resources->LoadSystemVoice(4,0).Data;
+    auto resources=std::make_unique<GameResources>(read(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::ResourceArchive)));const auto clip=resources->LoadSystemVoice(4,0).Data;
     ArchiveBgmResources music(usrdir);music.Prepare(0);MusicPlayback playback(music,true);
     GameEvent bgm{GameEventKind::PlayBgm,0};bgm.Bgm=BgmPlayRequest{0,100,BgmVolume{100,60,0.6f}};playback.Submit(bgm);
-    PlaybackVoiceAttenuation attenuation(playback,60,50,true);SystemSoundAssets ui(read(usrdir/"first.dat"));playback.BindUiSounds(ui,0.5f);
+    PlaybackVoiceAttenuation attenuation(playback,60,50,true);SystemSoundAssets ui(read(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::FirstArchive)));playback.BindUiSounds(ui,0.5f);
     const auto serial=playback.BgmVoices().Current;uint64_t now=0;std::vector<int16_t> pcm;
     const auto advance=[&](uint32_t ms){
       if(ms%10)throw FormatError("attenuation diagnostic requires exact10ms blocks");
@@ -1273,10 +1275,10 @@ int RunAudioOwnerSession(const std::filesystem::path& usrdir,const std::filesyst
     struct Cleanup{~Cleanup(){SDL_Quit();}} cleanup;
     const auto read=[](const std::filesystem::path& p){std::ifstream f(p,std::ios::binary);
       if(!f)throw FormatError("missing audio-owner resource");return Bytes{std::istreambuf_iterator<char>(f),{}};};
-    GameResources resources(read(usrdir/"resource.dat"));
+    GameResources resources(read(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::ResourceArchive)));
     const auto clip=resources.LoadSystemVoice(4,0).Data;
     ArchiveBgmResources music(usrdir);MusicPlayback playback(music,true);
-    SystemSoundAssets ui(read(usrdir/"first.dat"));playback.BindUiSounds(ui,0.5f);
+    SystemSoundAssets ui(read(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::FirstArchive)));playback.BindUiSounds(ui,0.5f);
     int32_t peak=0;uint64_t frames=0;std::vector<int32_t> gains;
     const auto advance=[&](uint32_t ms){
       if(ms%10)throw FormatError("audio-owner interval requires exact10ms blocks");
@@ -1383,7 +1385,7 @@ int RunOptionsMixerSession(const std::filesystem::path& usrdir,const std::filesy
     if(!SDL_Init(SDL_INIT_EVENTS))throw FormatError(SDL_GetError());
     struct Cleanup{~Cleanup(){SDL_Quit();}} cleanup;
     const auto read=[](const std::filesystem::path& p){std::ifstream f(p,std::ios::binary);if(!f)throw FormatError("missing mixer resource");return Bytes{std::istreambuf_iterator<char>(f),{}};};
-    auto resources=std::make_unique<GameResources>(read(usrdir/"resource.dat"));SystemSoundAssets ui(read(usrdir/"first.dat"));
+    auto resources=std::make_unique<GameResources>(read(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::ResourceArchive)));SystemSoundAssets ui(read(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::FirstArchive)));
     ArchiveBgmResources music(usrdir);ArchiveSeResources sounds(usrdir);MusicPlayback playback(music,true,&sounds);
     PlaybackTitleAudio title(playback,ui,1,1);
     title.PlayVoice(resources->LoadSystemVoice(4,0).Data);title.PlayUi(2);
@@ -1443,7 +1445,7 @@ int RunOptionsPreviewSession(const std::filesystem::path& usrdir,const std::file
     if(!SDL_Init(SDL_INIT_EVENTS))throw FormatError(SDL_GetError());
     struct Cleanup{~Cleanup(){SDL_Quit();}} cleanup;
     const auto read=[](const std::filesystem::path& path){std::ifstream f(path,std::ios::binary);if(!f)throw FormatError("missing preview resource");return Bytes{std::istreambuf_iterator<char>(f),{}};};
-    auto resources=std::make_unique<GameResources>(read(usrdir/"resource.dat"));ArchiveBgmResources music(usrdir);
+    auto resources=std::make_unique<GameResources>(read(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::ResourceArchive)));ArchiveBgmResources music(usrdir);
     MusicPlayback playback(music,true);PlaybackProfileVoice output(playback,10,1);OptionsPreviewVoices samples(*resources,output);
     const auto render=[&](size_t frames){std::vector<int16_t> pcm(frames*2);playback.Render(pcm);return pcm;};
     output.Prepare(resources->LoadSystemVoice(6,0).Data);output.Start(0);render(2400);
@@ -1473,8 +1475,8 @@ int RunTitleAudioSession(const std::filesystem::path& usrdir,const std::filesyst
     if(!SDL_Init(SDL_INIT_EVENTS))throw FormatError(SDL_GetError());
     struct Cleanup{~Cleanup(){SDL_Quit();}} cleanup;
     const auto read=[](const std::filesystem::path& path){std::ifstream f(path,std::ios::binary);if(!f)throw FormatError("missing title audio resource");return Bytes{std::istreambuf_iterator<char>(f),{}};};
-    auto resources=std::make_unique<GameResources>(read(usrdir/"resource.dat"));
-    SystemSoundAssets ui(read(usrdir/"first.dat"));ArchiveBgmResources music(usrdir);
+    auto resources=std::make_unique<GameResources>(read(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::ResourceArchive)));
+    SystemSoundAssets ui(read(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::FirstArchive)));ArchiveBgmResources music(usrdir);
     MusicPlayback playback(music,true);PlaybackTitleAudio output(playback,ui,ProfileVoiceGain(10,1),ProfileVoiceGain(8,1));
     TitleAudioOwner owner(*resources,output);owner.Load(0);
     const auto render=[&](std::vector<int16_t>& pcm,size_t frames){const auto at=pcm.size();pcm.resize(at+frames*2);playback.Render(std::span(pcm).subspan(at));};
@@ -1516,7 +1518,7 @@ int RunSharedAudioStopSession(const std::filesystem::path& usrdir,
     CreateCaptureDirectory(usrdir, captureDirectory); created = true;
     if (!SDL_Init(SDL_INIT_EVENTS)) throw FormatError(SDL_GetError());
     struct Cleanup { ~Cleanup() { SDL_Quit(); } } cleanup;
-    std::ifstream first(usrdir / "first.dat", std::ios::binary);
+    std::ifstream first(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::FirstArchive), std::ios::binary);
     if (!first) throw FormatError("missing UI sound bank");
     SystemSoundAssets ui(Bytes{std::istreambuf_iterator<char>(first), {}});
     ArchiveBgmResources music(usrdir); ArchiveSeResources sounds(usrdir);
@@ -1649,7 +1651,7 @@ int RunUiSoundSession(const std::filesystem::path& usrdir,
   try {
     CreateCaptureDirectory(usrdir, captureDirectory);
     created = true;
-    std::ifstream first(usrdir / "first.dat", std::ios::binary);
+    std::ifstream first(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::FirstArchive), std::ios::binary);
     if (!first) throw FormatError("cannot open original UI sound bank");
     Bytes bytes{std::istreambuf_iterator<char>(first), {}};
     if (first.bad()) throw FormatError("cannot read original UI sound bank");
@@ -2063,7 +2065,7 @@ int RunOrdinaryVoiceSession(const std::filesystem::path& usrdir,
   try {
     CreateCaptureDirectory(usrdir, captureDirectory);
     created = true;
-    std::ifstream file(usrdir / "resource.dat", std::ios::binary);
+    std::ifstream file(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::ResourceArchive), std::ios::binary);
     if (!file) throw FormatError("cannot open script voice resources");
     Bytes raw{std::istreambuf_iterator<char>(file), {}};
     if (file.bad()) throw FormatError("cannot read script voice resources");
@@ -2103,7 +2105,7 @@ int RunOrdinaryVoiceSession(const std::filesystem::path& usrdir,
     const auto secondSlot = PrepareOrdinaryVoice(queue, second, true, voice);
     if (secondSlot != 1 || !voice.Playing(8) || !voice.Ready(7) || voice.Playing(7))
       throw FormatError("ordinary cached-slot reuse mismatch");
-    auto bank = std::make_shared<AwbBank>(usrdir / "voice.awb");
+    auto bank = std::make_shared<AwbBank>(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::VoiceBank));
     const auto secondInfo = HcaWaveReader(bank, uint32_t(second)).Info();
     if (!secondInfo.SampleRate || secondInfo.Frames / secondInfo.SampleRate > 30)
       throw FormatError("ordinary voice diagnostic duration budget");
@@ -2182,7 +2184,7 @@ int RunProfileVoiceSession(const std::filesystem::path& usrdir,
       CreateCaptureDirectory(usrdir, captureDirectory);
       captureCreated = true;
     }
-    std::ifstream file(usrdir / "resource.dat", std::ios::binary);
+    std::ifstream file(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::ResourceArchive), std::ios::binary);
     if (!file) throw FormatError("cannot open profile voice resources");
     Bytes raw{std::istreambuf_iterator<char>(file), {}};
     if (file.bad()) throw FormatError("cannot read profile voice resources");
@@ -2325,7 +2327,7 @@ int RunProfileServiceSession(const std::filesystem::path& usrdir,
       if (file.bad()) throw FormatError("cannot read profile service data");
       return bytes;
     };
-    GameResources resources(read(usrdir / "resource.dat"));
+    GameResources resources(read(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::ResourceArchive)));
     ArchiveBgmResources music(usrdir);
     if (!SDL_Init(SDL_INIT_EVENTS)) throw FormatError(SDL_GetError());
     struct Cleanup {
@@ -2337,10 +2339,10 @@ int RunProfileServiceSession(const std::filesystem::path& usrdir,
     PlaybackProfileVoice voice(playback, volume, 1.0f);
     ArchiveProfileServices services(
         resources,
-        ScriptNameIndex::FromFirstArchive(read(usrdir / "first.dat")),
+        ScriptNameIndex::FromFirstArchive(read(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::FirstArchive))),
         TextFormatEnvironment::Decode(
-            read(usrdir / "env/env_string_format.dat"), true),
-        TextTimingEnvironment::Decode(read(usrdir / "env/env_config.dat"),
+            read(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::StringFormatEnvironment)), true),
+        TextTimingEnvironment::Decode(read(Profile::Saekano::AssetPath(usrdir, Profile::Saekano::GameAsset::ConfigurationEnvironment)),
                                       true),
         &voice);
     services.BeginMenu(int32_t(scene), 2);  // Explicit diagnostic text option.

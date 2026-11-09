@@ -38,6 +38,7 @@ inline bool HasInit = false;
 inline bool OpenGLCompatibility = false;
 
 void Configure();
+void ConfigureFrontend();
 }  // namespace Game
 }  // namespace Profile
 }  // namespace Impacto

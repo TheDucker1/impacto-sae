@@ -116,7 +116,7 @@ class PcTitleOwner final:public TitleServices {
     ConfigPreviews+=config_->PreviewStarts;ConfigQuestions+=config_->QuestionBegins;ConfigCancels+=config_->QuestionCancels;ConfigSaves+=size_t(config_->Dialogs().Save.State().Accepted);
     config_.reset();++ConfigReturns;
   }
-  void PrepareMovie()override{movieFrame_.Retire();movie_.Prepare(root_/"OP1.usm");}
+  void PrepareMovie()override{movieFrame_.Retire();movie_.Prepare(Profile::Saekano::AssetPath(root_, Profile::Saekano::GameAsset::OpeningMovie));}
   bool MovieReady()override{return movie_.Ready();}
   void StartMovie()override{movie_.Start(Now);}
   bool MovieBusy()override{return movie_.State().Prepared && !movie_.State().Finished;}

@@ -1,4 +1,5 @@
 #pragma once
+#include "canvas.h"
 #include <SDL3/SDL.h>
 #include <array>
 #include <filesystem>
@@ -30,7 +31,7 @@ struct PcInputProfile {
   std::vector<std::string> RawDevices;
 };
 struct PcSettings {
-  int Width=960,Height=544;
+  int Width = NativeCanvasWidth, Height = NativeCanvasHeight;
   bool SkipLogos=false,StrictData=false;
   std::filesystem::path Usrdir;
   std::string ActiveProfile="Default";

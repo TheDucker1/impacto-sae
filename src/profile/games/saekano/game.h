@@ -1,6 +1,5 @@
 #pragma once
 
-#include <array>
 #include <filesystem>
 
 namespace Impacto::Profile::Saekano {
@@ -34,17 +33,30 @@ enum class GameAsset {
   StringFormatEnvironment,
   SystemMenuEnvironment,
   BattleEnvironment,
+  BgmBank,
+  SoundEffectBank,
+  VoiceBank,
+  CommentBank,
+  MusicBank,
+  SystemVoiceBank,
+  OpeningMovie,
+  EririEndingMovie,
+  UtahaEndingMovie,
+  MichiruEndingMovie,
+  MegumiEndingMovie,
+  IzumiEndingMovie,
+  CommonEndingMovie,
   Count,
 };
 
 inline bool Configured = false;
 inline std::filesystem::path GameDataPath;
 inline std::filesystem::path LauncherAssetsPath;
-inline std::array<std::filesystem::path, static_cast<size_t>(GameAsset::Count)>
-    Files;
 
 void Configure();
 std::filesystem::path AssetPath(const std::filesystem::path& gameData,
                                 GameAsset asset);
+std::filesystem::path MoviePath(const std::filesystem::path& gameData,
+                                const std::filesystem::path& originalName);
 
 }  // namespace Impacto::Profile::Saekano

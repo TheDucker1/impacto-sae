@@ -73,6 +73,7 @@ D3DBLEND Factor(uint8_t value, bool alpha) {
   }
 }
 class Pass final : public Scene2D, DeviceResource {
+  const std::array<int, 2> CanvasSize;
   ComPtr<IDirect3DVertexDeclaration9> Declaration, ParticleDeclaration;
   Shader UiShader, ParticleShader;
   float FilterMode = 0, FilterValue = 0, AlphaMode = 0;
@@ -96,7 +97,7 @@ class Pass final : public Scene2D, DeviceResource {
   }
 
  public:
-  Pass() {
+  explicit Pass(std::array<int, 2> canvasSize) : CanvasSize(canvasSize) {
     const D3DVERTEXELEMENT9 desc[] = {
         {0, 0, D3DDECLTYPE_FLOAT2, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION,
          0},
@@ -226,8 +227,9 @@ class Pass final : public Scene2D, DeviceResource {
     Sampler(0);
     Sampler(1);
     const auto vp = GetViewport();
-    const float offset[]{-1.f / vp[2], 1.f / vp[3], 0, 0};
-    d->SetVertexShaderConstantF(0, offset, 1);
+    const float transform[]{-1.f / vp[2], 1.f / vp[3],
+                            CanvasSize[0] * 0.5f, CanvasSize[1] * 0.5f};
+    d->SetVertexShaderConstantF(0, transform, 1);
     const float tint[]{q.Color[0] / 255.f, q.Color[1] / 255.f,
                        q.Color[2] / 255.f, q.Color[3] / 255.f};
     const float flags[]{float(q.Solid), float(q.Glyph), float(q.AlphaGlyph),
@@ -285,9 +287,10 @@ class Pass final : public Scene2D, DeviceResource {
     if (!rect) return;
     const auto v = GetViewport();
     const auto r = *rect;
-    RECT area{v[0] + r[0] * v[2] / 960, v[1] + r[1] * v[3] / 544,
-              v[0] + (r[0] + r[2]) * v[2] / 960,
-              v[1] + (r[1] + r[3]) * v[3] / 544};
+    RECT area{v[0] + r[0] * v[2] / CanvasSize[0],
+              v[1] + r[1] * v[3] / CanvasSize[1],
+              v[0] + (r[0] + r[2]) * v[2] / CanvasSize[0],
+              v[1] + (r[1] + r[3]) * v[3] / CanvasSize[1]};
     Check(Device()->SetScissorRect(&area), "Set scene scissor");
   }
   void DrawExternal(const std::function<void()>& draw) override {
@@ -381,7 +384,7 @@ class Pass final : public Scene2D, DeviceResource {
   }
 };
 }  // namespace
-std::unique_ptr<Scene2D> CreateScene2DPass() {
-  return std::make_unique<Pass>();
+std::unique_ptr<Scene2D> CreateScene2DPass(std::array<int, 2> canvasSize) {
+  return std::make_unique<Pass>(canvasSize);
 }
 }  // namespace Impacto::DirectX9

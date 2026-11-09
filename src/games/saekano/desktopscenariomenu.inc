@@ -136,10 +136,7 @@ const auto handleModalEvent=[&](const SDL_Event& e) {
 };
 const auto updateScenarioModal=[&](uint64_t now) {
   WidgetInputHistory::Snapshot contacts;
-  if(pointerDown) {
-    int width=0,height=0;SdlCheck(SDL_GetWindowSize(window.Window,&width,&height),"modal input viewport");
-    contacts[0]=WidgetTouch{0,{int16_t(pointerPosition[0]*960/width),int16_t(pointerPosition[1]*544/height)}};
-  }
+  if (pointerDown) contacts[0] = SceneTouch(window.Window, pointerPosition);
   scenarioSlotInput.Vertical.Held=modalVertical;scenarioOptionsInput.Vertical.Held=modalVertical;
   scenarioOptionsInput.HorizontalHeld=modalHorizontal;
   scenarioBacklogInput.Vertical.Held=modalVertical;
@@ -225,10 +222,9 @@ const auto updateScenarioModal=[&](uint64_t now) {
   playback.Update(float(now-previous)/1000);previous=now;
   if(capture){std::array<int16_t,1536> samples{};playback.Render(samples);}
   int width=0,height=0;SdlCheck(SDL_GetWindowSizeInPixels(window.Window,&width,&height),"modal viewport");
+  if (width <= 0 || height <= 0) return;
   ViewerWindow::BeginFrame();ViewerWindow::Gpu->SetViewport({0,0,width,height});ViewerWindow::Gpu->Clear({0,0,0,1});
-  const float scale=std::min(float(width)/960,float(height)/544);
-  const std::array<GLint,4> viewport{GLint((width-960*scale)/2),GLint((height-544*scale)/2),GLint(960*scale),GLint(544*scale)};
-  ViewerWindow::Gpu->SetViewport(viewport);sceneThumbnail.Present(viewport);
+  sceneThumbnail.Present(SetSceneViewport(width, height));
   if(systemMenu)systemMenu->Draw(vm->State().ChapterId,vm->State().Titles.empty()?u"":vm->State().Titles[0]);
   if(scenarioSlots)scenarioSlots->Draw();if(scenarioOptions)scenarioOptions->Draw();
   if(scenarioBacklog)scenarioBacklog->Draw();

@@ -81,7 +81,7 @@ bool RunStartupPresentation(ViewerWindow& window,
   }
   if(!quit && !debug[34]) {
     const int32_t volume=int32_t(owner.SystemProgress->Bytes6022c[7])*10;
-    movieFrame.Retire();movie.Prepare(root/"OP1.usm");movie.SetVolume(volume);
+    movieFrame.Retire();movie.Prepare(Profile::Saekano::AssetPath(root, Profile::Saekano::GameAsset::OpeningMovie));movie.SetVolume(volume);
     auto& viewed=owner.SystemProgress->Histories[4];
     if(viewed.Values.empty())viewed.Values.resize(1,viewed.Fallback);viewed.Values[0]=1;
     while(!movie.Ready() && !quit){input();movie.Update(now());begin();finish();SDL_Delay(1);}

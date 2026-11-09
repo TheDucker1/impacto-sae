@@ -26,7 +26,7 @@ std::optional<int> RunPcDiagnostics(int argc, char* argv[]) {
   Profile::ConfigureDefinitions();
   UserConfig::SetActiveGame("saekano");
   Profile::ConfigureGameProfile();
-  Profile::Game::Configure();
+  Profile::Game::ConfigureFrontend();
   Profile::Saekano::Configure();
   Profile::ClearProfile();
   if (argc == 5 && std::string_view(argv[1]) == "--saekano-ui-sounds" &&

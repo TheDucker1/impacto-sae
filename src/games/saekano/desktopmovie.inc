@@ -258,7 +258,7 @@ int RunMoviePlaybackSession(const std::filesystem::path& root,const std::filesys
       }
       video<<"}\n";
     };
-    auto moviePath=root/"OP1.usm";std::array<int32_t,4> destination{0,0,960,544};
+    auto moviePath=Profile::Saekano::AssetPath(root, Profile::Saekano::GameAsset::OpeningMovie);std::array<int32_t,4> destination{0,0,960,544};
     if(controls){
       const auto environment=ExtrasScreenEnvironment::DecodeThroughMovies(ReadGameFile(root, Profile::Saekano::GameAsset::ExtrasEnvironment));
       if(environment.Movies.empty())throw FormatError("Extras movie catalogue is empty");

@@ -1,5 +1,4 @@
-root.LayerCount = 100;
-root.GameFeatures = GameFeature.Renderer2D | GameFeature.Input | GameFeature.Audio | GameFeature.Video;
+-- The native UI and script coordinates are converted into this design aspect.
 root.DesignWidth = 960;
 root.DesignHeight = 544;
 root.WindowName = "Saekano";

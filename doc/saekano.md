@@ -62,8 +62,13 @@ In a Saekano-enabled build, the shared game picker lists Saekano even before a
 default data directory exists. Selecting it and choosing Start Game opens the
 Saekano launcher; Save and Play enters the game after validation.
 The game is registered in gamedefinitions.lua. Its Runtime selects the existing
-Saekano implementation; profiles/saekano/game.lua defines the game and
-profiles/saekano/files.lua supplies original archive, font and environment paths.
+Saekano implementation, and profiles/saekano/game.lua configures its frontend.
+Set entries in profiles/saekano/files.lua to override archive, font, environment,
+audio bank, and movie paths. Omitted entries use the original USRDIR filenames.
+Movie overrides must resolve within USRDIR. The launcher validates the same
+resolved paths the runtime opens.
+DesignWidth and DesignHeight set the displayed aspect and default window size.
+Rendering and pointer input map the native 960 by 544 canvas into that viewport.
 The shared -bp, -gc and -p options apply to profile loading. Environment files
 continue to supply their authored UI and game settings through the existing
 binary readers. Lua profiles do not replace the game's bytecode or logic.

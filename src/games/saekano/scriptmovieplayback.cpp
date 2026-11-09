@@ -1,5 +1,6 @@
 #include "scriptmovieplayback.h"
 
+#include "../../profile/games/saekano/game.h"
 #include "musicplayback.h"
 #include "scenemessage.h"
 
@@ -30,9 +31,8 @@ void PlaybackScriptMovie::Prepare(std::u16string_view name) {
   for (const auto c : name)
     if (c < 32 || std::u16string_view(u"/\\:<>\"|?*").find(c) != std::u16string_view::npos)
       throw FormatError("scenario movie stem is not a file name");
-  const auto path = std::filesystem::weakly_canonical(root_ / (std::u16string(name) + u".usm"));
-  if (path.parent_path() != root_)
-    throw FormatError("scenario movie resolves outside USRDIR");
+  const auto path = Profile::Saekano::MoviePath(
+      root_, std::u16string(name) + u".usm");
   if (!retired_)
     throw FormatError("scenario movie replacement before retirement");
   retired_ = false;
