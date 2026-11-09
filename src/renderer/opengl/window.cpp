@@ -224,8 +224,7 @@ void GLWindow::Init() {
   }
 #endif
 
-  // Vsync
-  SDL_GL_SetSwapInterval(0);
+  SDL_GL_SetSwapInterval(VSync ? 1 : 0);
 }
 
 void GLWindow::SetDimensions(int width, int height, int msaa,
@@ -241,6 +240,13 @@ void GLWindow::SetDimensions(int width, int height, int msaa,
 
   MsaaCount = msaa;
   RenderScale = renderScale;
+}
+
+void GLWindow::SetVSync(bool vsync) {
+  VSync = vsync;
+  if (IsInit) {
+    SDL_GL_SetSwapInterval(vsync ? 1 : 0);
+  }
 }
 
 void GLWindow::CleanFBOs() {

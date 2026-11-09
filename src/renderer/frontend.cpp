@@ -71,7 +71,8 @@ RendererFrontend::RendererFrontend(std::string_view title, int width,
     ImGui::CreateContext();
     ImGui::GetIO().IniFilename = nullptr;
 #endif
-    InitWindow();
+    // Standalone frontends leave frame pacing to the calling runtime.
+    InitWindow(false);
     Window->FullFramebuffer = true;
     Window->RenderScale = 1.0f;
     CreateRenderer();

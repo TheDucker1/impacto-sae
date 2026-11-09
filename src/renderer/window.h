@@ -9,7 +9,7 @@ enum class DisplayMode { Windowed, Fullscreen, Borderless };
 enum class CursorType { Default, Pointer };
 inline CursorType ActiveCursorType = CursorType::Default;
 
-void InitWindow();
+void InitWindow(std::optional<bool> vsyncOverride = std::nullopt);
 void SetWindowIcon(SDL_Window* window);
 void InitCursors();
 void RequestCursor(CursorType type);
@@ -39,6 +39,7 @@ class BaseWindow {
   virtual void Init() = 0;
   virtual void SetDimensions(int width, int height, int msaa,
                              float renderScale) = 0;
+  virtual void SetVSync(bool vsync) { VSync = vsync; }
   // Aspect ratio corrected viewport in pixel window coordinates
   RectF GetViewport();
   RectF GetLogicalViewport();
@@ -73,6 +74,7 @@ class BaseWindow {
   bool CreateSDLWindow(SDL_WindowFlags flags);
   virtual void UpdateDimensions() = 0;
   bool IsInit = false;
+  bool VSync = true;
 
   int lastWidth = -1;
   int lastHeight = -1;

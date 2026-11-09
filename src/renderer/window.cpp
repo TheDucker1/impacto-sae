@@ -15,7 +15,7 @@
 
 namespace Impacto {
 
-void InitWindow() {
+void InitWindow(std::optional<bool> vsyncOverride) {
   switch (UserConfig::AdvancedSettings.ActiveRenderer) {
 #ifndef IMPACTO_DISABLE_OPENGL
     case RendererType::OpenGL:
@@ -38,7 +38,8 @@ void InitWindow() {
              "selected!\n");
       exit(1);
   }
-
+  Window->SetVSync(vsyncOverride ? *vsyncOverride
+                                : UserConfig::GetEffectiveVSync());
   Window->Init();
 }
 
@@ -367,6 +368,7 @@ void BaseWindow::ApplyWindowSettings() {
   auto const& config = UserConfig::CommonSettings;
   WindowWidth = config.ResolutionWidth;
   WindowHeight = config.ResolutionHeight;
+  VSync = UserConfig::GetEffectiveVSync();
 
   DisplayMode dispMode = GetDefaultDispMode();
 
@@ -413,6 +415,7 @@ void BaseWindow::ApplyWindowSettings() {
          WindowHeight);
   SDL_ShowWindow(SDLWindow);
   SDL_GetWindowSizeInPixels(SDLWindow, &WindowWidth, &WindowHeight);
+  SetVSync(VSync);
   DpiScale = SDL_GetWindowDisplayScale(SDLWindow);
   RecreateFBOs = true;
   Update();
